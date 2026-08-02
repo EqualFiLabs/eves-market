@@ -6,7 +6,7 @@ import {SafeERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC
 import {Strings} from "../../../lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 
 import {IParlayTicketToken} from "../../interfaces/IParlayTicketToken.sol";
-import {ISEveUSDCVault} from "../../interfaces/ISEveUSDCVault.sol";
+import {ISeniorCapitalPool} from "../../interfaces/ISeniorCapitalPool.sol";
 import {Errors} from "../../libraries/Errors.sol";
 import {Events} from "../../libraries/Events.sol";
 import {LibCollateralProfile} from "../../libraries/LibCollateralProfile.sol";
@@ -241,30 +241,25 @@ abstract contract ParlayBase {
 
         LibParlay.Config storage config = _requireConfig();
         LibEveMarket.MarketConfig storage marketConfig = LibEveMarket.store().config;
-        uint256 rawVaultAmount = (fee * config.vaultFeeBps) / LibParlay.BPS_DENOMINATOR;
-        uint256 feeRecipientAmount = fee - rawVaultAmount;
+        uint256 rawSeniorPoolAmount = (fee * config.vaultFeeBps) / LibParlay.BPS_DENOMINATOR;
+        uint256 feeRecipientAmount = fee - rawSeniorPoolAmount;
 
-        LibFeeRouting.VaultFeeRoute memory route = LibFeeRouting.previewVaultFeeRoute(
-            marketConfig.stakingVault, marketConfig.secondaryStakingVault, address(collateralToken), rawVaultAmount
+        LibFeeRouting.SeniorPoolFeeRoute memory route = LibFeeRouting.previewSeniorPoolFeeRoute(
+            marketConfig.seniorCapitalPool, address(collateralToken), rawSeniorPoolAmount
         );
-        uint256 vaultAmount = route.primaryAmount + route.secondaryAmount;
+        uint256 seniorPoolAmount = route.seniorPoolAmount;
         feeRecipientAmount += route.treasuryAmount;
 
-        if (route.primaryAmount != 0) {
-            collateralToken.forceApprove(marketConfig.stakingVault, route.primaryAmount);
-            ISEveUSDCVault(marketConfig.stakingVault).notifyRevenue(address(collateralToken), route.primaryAmount);
-        }
-        if (route.secondaryAmount != 0) {
-            collateralToken.forceApprove(marketConfig.secondaryStakingVault, route.secondaryAmount);
-            ISEveUSDCVault(marketConfig.secondaryStakingVault)
-                .notifyRevenue(address(collateralToken), route.secondaryAmount);
+        if (seniorPoolAmount != 0) {
+            collateralToken.forceApprove(marketConfig.seniorCapitalPool, seniorPoolAmount);
+            ISeniorCapitalPool(marketConfig.seniorCapitalPool).notifyRevenue(address(collateralToken), seniorPoolAmount);
         }
 
         if (feeRecipientAmount != 0) {
             collateralToken.safeTransfer(config.feeRecipient, feeRecipientAmount);
         }
 
-        emit Events.ParlayFlatFeeRouted(ticketId, sourceId, sourceType, fee, vaultAmount, feeRecipientAmount);
+        emit Events.ParlayFlatFeeRouted(ticketId, sourceId, sourceType, fee, seniorPoolAmount, feeRecipientAmount);
     }
 
     function _scoreTemplate(LibParlay.Storage storage state, uint256 templateId)

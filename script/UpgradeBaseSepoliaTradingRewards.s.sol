@@ -131,14 +131,17 @@ contract UpgradeBaseSepoliaTradingRewards is Script {
     }
 
     function _obrResolutionSelectors() private pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](10);
         selectors[0] = IOBRResolutionFacet.settleMarket.selector;
         selectors[1] = IOBRResolutionFacet.openResolution.selector;
         selectors[2] = IOBRResolutionFacet.disputeResolution.selector;
-        selectors[3] = IOBRResolutionFacet.getResolutionHistory.selector;
-        selectors[4] = IOBRResolutionFacet.finalizeResolution.selector;
-        selectors[5] = IOBRResolutionFacet.getMarketStatus.selector;
-        selectors[6] = IOBRResolutionFacet.settleMarketEarly.selector;
+        selectors[3] = IOBRResolutionFacet.adminFinalizeResolution.selector;
+        selectors[4] = IOBRResolutionFacet.getResolutionHistory.selector;
+        selectors[5] = IOBRResolutionFacet.finalizeResolution.selector;
+        selectors[6] = IOBRResolutionFacet.getMarketStatus.selector;
+        selectors[7] = IOBRResolutionFacet.settleMarketEarly.selector;
+        selectors[8] = IOBRResolutionFacet.finalizeFromJury.selector;
+        selectors[9] = IOBRResolutionFacet.resolutionMode.selector;
     }
 
     function _existingFeeRouterSelectors() private pure returns (bytes4[] memory selectors) {

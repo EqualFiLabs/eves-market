@@ -41,9 +41,10 @@ contract ResolverJuryConfigHarness is OwnershipFacet {
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
         config.identityMintFeeToken = mintFeeToken;
         config.identityMintFee = uint128(mintFee);
-        config.resolverStakeRequirement = uint128(stakeRequirement);
-        config.resolverStakeCap = uint128(stakeCap);
-        config.resolverPoolCap = uint16(poolCap);
+        config.resolverSeatStake = uint128(stakeRequirement);
+        config.epochCandidateFeeToken = mintFeeToken;
+        config.epochCandidateFeeAmount = uint128(stakeCap);
+        config.activeEpochSize = uint16(poolCap);
         config.activationDelay = 1 days;
         config.exitCooldown = 7 days;
         config.participationThresholdBps = 8_000;
@@ -95,15 +96,23 @@ contract ResolverJuryConfigHarness is OwnershipFacet {
     function resolverJuryIdentityConfigSample()
         external
         view
-        returns (address mintFeeToken, uint128 mintFee, uint128 stakeRequirement, uint128 stakeCap, uint16 poolCap)
+        returns (
+            address mintFeeToken,
+            uint128 mintFee,
+            uint128 stakeRequirement,
+            address candidateFeeToken,
+            uint128 candidateFeeAmount,
+            uint16 poolCap
+        )
     {
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
         return (
             config.identityMintFeeToken,
             config.identityMintFee,
-            config.resolverStakeRequirement,
-            config.resolverStakeCap,
-            config.resolverPoolCap
+            config.resolverSeatStake,
+            config.epochCandidateFeeToken,
+            config.epochCandidateFeeAmount,
+            config.activeEpochSize
         );
     }
 
@@ -120,7 +129,7 @@ contract ResolverJuryConfigHarness is OwnershipFacet {
     {
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
         return (
-            config.resolverPoolCap,
+            config.activeEpochSize,
             config.activationDelay,
             config.exitCooldown,
             config.participationThresholdBps,
@@ -182,8 +191,11 @@ contract ResolverJuryConfigHarness is OwnershipFacet {
         jury.identityByOwner[msg.sender] = identityId;
         jury.identities[identityId].resolverStake = uint128(stake);
         jury.identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle.ResolverActive;
-        jury.activeResolverSet.push(identityId);
-        jury.activeResolverIndex[identityId] = jury.activeResolverSet.length;
+        jury.currentResolverEpoch = 1;
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[1];
+        epoch.epochId = 1;
+        epoch.activeSet.push(identityId);
+        epoch.activeIndex[identityId] = epoch.activeSet.length;
     }
 
     function resolverJuryStorageSample(address owner, uint256 identityId)
@@ -197,7 +209,7 @@ contract ResolverJuryConfigHarness is OwnershipFacet {
             jury.identityByOwner[owner],
             jury.identities[identityId].resolverStake,
             uint8(jury.identities[identityId].lifecycle),
-            jury.activeResolverSet.length
+            jury.resolverEpochs[jury.currentResolverEpoch].activeSet.length
         );
     }
 
@@ -243,7 +255,7 @@ contract ResolverJuryConfigTest is Test {
 
         assertNotEq(jurySlot, marketSlot);
         assertEq(address(uint160(uint256(vm.load(address(harness), marketSlot)))), conditionalTokens);
-        assertEq(address(uint160(uint256(vm.load(address(harness), bytes32(uint256(jurySlot) + 8))))), eveIdentity);
+        assertEq(address(uint160(uint256(vm.load(address(harness), bytes32(uint256(jurySlot) + 10))))), eveIdentity);
 
         (address storedIdentity, uint256 ownerIdentityId, uint128 storedStake, uint8 lifecycle, uint256 activeCount) =
             harness.resolverJuryStorageSample(address(this), identityId);
@@ -270,13 +282,20 @@ contract ResolverJuryConfigTest is Test {
         assertEq(storedEveToken, eveToken);
         assertEq(comboMarketCreationFee, 999);
 
-        (address storedMintFeeToken, uint128 mintFee, uint128 stakeRequirement, uint128 stakeCap, uint16 poolCap) =
-            harness.resolverJuryIdentityConfigSample();
+        (
+            address storedMintFeeToken,
+            uint128 mintFee,
+            uint128 stakeRequirement,
+            address candidateFeeToken,
+            uint128 candidateFeeAmount,
+            uint16 poolCap
+        ) = harness.resolverJuryIdentityConfigSample();
 
         assertEq(storedMintFeeToken, legacyMintFeeToken);
         assertEq(mintFee, 10e18);
         assertEq(stakeRequirement, 100e18);
-        assertEq(stakeCap, 250e18);
+        assertEq(candidateFeeToken, legacyMintFeeToken);
+        assertEq(candidateFeeAmount, 250e18);
         assertEq(poolCap, 50);
 
         (
@@ -301,8 +320,8 @@ contract ResolverJuryConfigTest is Test {
         harness.revertInvalidCommitteeSize();
 
         vm.expectEmit(false, false, false, true);
-        emit Events.ConfigUpdated("resolverPoolCap", 10, 50);
-        harness.emitConfigUpdated("resolverPoolCap", 10, 50);
+        emit Events.ConfigUpdated("activeEpochSize", 10, 50);
+        harness.emitConfigUpdated("activeEpochSize", 10, 50);
     }
 
     function test_OwnerCanSetResolverJuryConfigWithEvents() public {
@@ -312,16 +331,23 @@ contract ResolverJuryConfigTest is Test {
             OwnershipConfigTypes.ResolverJuryIdentitySettings({
                 identityMintFeeToken: address(mintFeeToken),
                 identityMintFee: 10e18,
-                resolverStakeRequirement: 100e18,
-                resolverStakeCap: 250e18
+                resolverSeatStake: 100e18,
+                epochCandidateFeeToken: address(mintFeeToken),
+                epochCandidateFeeAmount: 5e18
             })
         );
 
         vm.expectEmit(false, false, false, true);
-        emit Events.ConfigUpdated("resolverPoolCap", 0, 50);
+        emit Events.ConfigUpdated("activeEpochSize", 0, 50);
         harness.setResolverJuryPoolSettings(
             OwnershipConfigTypes.ResolverJuryPoolSettings({
-                resolverPoolCap: 50,
+                activeEpochSize: 50,
+                resolverEpochDuration: 180 days,
+                resolverRotationWindow: 30 days,
+                epochRandomnessCommitDuration: 1 days,
+                epochRandomnessRevealDuration: 1 days,
+                epochSelectionDuration: 1 days,
+                minEpochRandomnessReveals: 1,
                 activationDelay: 1 days,
                 exitCooldown: 7 days,
                 participationThresholdBps: 8_000,
@@ -382,12 +408,19 @@ contract ResolverJuryConfigTest is Test {
             })
         );
 
-        (address storedMintFeeToken, uint128 mintFee, uint128 stakeRequirement, uint128 stakeCap, uint16 poolCap) =
-            harness.resolverJuryIdentityConfigSample();
+        (
+            address storedMintFeeToken,
+            uint128 mintFee,
+            uint128 stakeRequirement,
+            address candidateFeeToken,
+            uint128 candidateFeeAmount,
+            uint16 poolCap
+        ) = harness.resolverJuryIdentityConfigSample();
         assertEq(storedMintFeeToken, address(mintFeeToken));
         assertEq(mintFee, 10e18);
         assertEq(stakeRequirement, 100e18);
-        assertEq(stakeCap, 250e18);
+        assertEq(candidateFeeToken, address(mintFeeToken));
+        assertEq(candidateFeeAmount, 5e18);
         assertEq(poolCap, 50);
 
         (
@@ -437,7 +470,13 @@ contract ResolverJuryConfigTest is Test {
         vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, address(0xBEEF)));
         harness.setResolverJuryPoolSettings(
             OwnershipConfigTypes.ResolverJuryPoolSettings({
-                resolverPoolCap: 50,
+                activeEpochSize: 50,
+                resolverEpochDuration: 180 days,
+                resolverRotationWindow: 30 days,
+                epochRandomnessCommitDuration: 1 days,
+                epochRandomnessRevealDuration: 1 days,
+                epochSelectionDuration: 1 days,
+                minEpochRandomnessReveals: 1,
                 activationDelay: 0,
                 exitCooldown: 0,
                 participationThresholdBps: 0,
@@ -449,20 +488,27 @@ contract ResolverJuryConfigTest is Test {
     }
 
     function test_RevertWhen_InvalidResolverJuryConfigBounds() public {
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidConfigValue.selector, bytes32("resolverStakeCap")));
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidConfigValue.selector, bytes32("resolverSeatStake")));
         harness.setResolverJuryIdentitySettings(
             OwnershipConfigTypes.ResolverJuryIdentitySettings({
                 identityMintFeeToken: address(mintFeeToken),
                 identityMintFee: 10e18,
-                resolverStakeRequirement: 250e18,
-                resolverStakeCap: 100e18
+                resolverSeatStake: 0,
+                epochCandidateFeeToken: address(0),
+                epochCandidateFeeAmount: 0
             })
         );
 
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidConfigValue.selector, bytes32("resolverPoolCap")));
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidConfigValue.selector, bytes32("activeEpochSize")));
         harness.setResolverJuryPoolSettings(
             OwnershipConfigTypes.ResolverJuryPoolSettings({
-                resolverPoolCap: 0,
+                activeEpochSize: 0,
+                resolverEpochDuration: 180 days,
+                resolverRotationWindow: 30 days,
+                epochRandomnessCommitDuration: 1 days,
+                epochRandomnessRevealDuration: 1 days,
+                epochSelectionDuration: 1 days,
+                minEpochRandomnessReveals: 1,
                 activationDelay: 0,
                 exitCooldown: 0,
                 participationThresholdBps: 0,
@@ -474,7 +520,13 @@ contract ResolverJuryConfigTest is Test {
 
         harness.setResolverJuryPoolSettings(
             OwnershipConfigTypes.ResolverJuryPoolSettings({
-                resolverPoolCap: 5,
+                activeEpochSize: 5,
+                resolverEpochDuration: 180 days,
+                resolverRotationWindow: 30 days,
+                epochRandomnessCommitDuration: 1 days,
+                epochRandomnessRevealDuration: 1 days,
+                epochSelectionDuration: 1 days,
+                minEpochRandomnessReveals: 1,
                 activationDelay: 0,
                 exitCooldown: 0,
                 participationThresholdBps: 0,

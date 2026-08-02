@@ -10,12 +10,16 @@ import {IResolverRegistryFacet} from "../interfaces/IResolverRegistryFacet.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Events} from "../libraries/Events.sol";
 import {LibCLOBBook} from "../libraries/LibCLOBBook.sol";
+import {LibDiamond} from "../libraries/LibDiamond.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 import {LibResolverJury} from "../libraries/LibResolverJury.sol";
+import {LibResolverRewards} from "../libraries/LibResolverRewards.sol";
 
 contract ResolverRegistryFacet is IResolverRegistryFacet {
     using SafeERC20 for IERC20;
+
+    uint256 internal constant EPOCH_BLOCKHASH_LOOKUP_WINDOW = 256;
 
     modifier nonReentrant() {
         LibReentrancy.enter();
@@ -31,7 +35,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         }
 
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
-        _collectMintFee(config.identityMintFeeToken, config.identityMintFee);
+        _collectMintFee(config.identityMintFeeToken, LibEveMarket.store().config.eveTreasury, config.identityMintFee);
 
         identityId = IEveIdentity(identityContract).mint(msg.sender);
         jury.identityByOwner[msg.sender] = identityId;
@@ -110,7 +114,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         if (nextStake > type(uint128).max) {
             revert Errors.InvalidAmount(nextStake);
         }
-        if (nextStake > marketConfig.resolverJuryConfig.resolverStakeCap) {
+        if (nextStake > marketConfig.resolverJuryConfig.resolverSeatStake) {
             revert Errors.InvalidAmount(nextStake);
         }
 
@@ -119,34 +123,295 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         emit Events.ResolverStakeDeposited(identityId, msg.sender, uint128(amount), record.resolverStake);
     }
 
-    function activateResolver() external override {
+    function openResolverEpochRotation() external override returns (uint64 epochId) {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
+        epochId = jury.currentResolverEpoch + 1;
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
+        if (epoch.rotationOpenedAt != 0) {
+            revert Errors.ResolverEpochClosed(epochId);
+        }
+        if (jury.currentResolverEpoch == 0) {
+            LibDiamond.enforceIsContractOwner();
+        } else {
+            LibResolverJury.ResolverEpoch storage current = jury.resolverEpochs[jury.currentResolverEpoch];
+            if (block.timestamp + config.resolverRotationWindow < current.endTime) {
+                revert Errors.ResolverEpochNotReady(epochId);
+            }
+        }
+
+        uint64 startTime = jury.currentResolverEpoch == 0
+            ? uint64(block.timestamp)
+            : jury.resolverEpochs[jury.currentResolverEpoch].endTime;
+        epoch.epochId = epochId;
+        epoch.startTime = startTime;
+        epoch.endTime = uint64(uint256(startTime) + config.resolverEpochDuration);
+        epoch.rotationOpenedAt = uint64(block.timestamp);
+        epoch.commitDeadline = uint64(block.timestamp + config.epochRandomnessCommitDuration);
+
+        emit Events.ResolverEpochRotationOpened(
+            epochId, epoch.startTime, epoch.endTime, epoch.commitDeadline, epoch.revealDeadline, epoch.selectionDeadline
+        );
+    }
+
+    function optIntoResolverEpoch(bytes32 randomnessCommitment) external override returns (uint64 epochId) {
+        if (randomnessCommitment == bytes32(0)) {
+            revert Errors.InvalidConfigValue("randomnessCommitment");
+        }
+
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         IEveIdentity identityToken = IEveIdentity(_requireEveIdentity(jury));
         uint256 identityId = LibResolverJury.requireIdentityId(address(identityToken), msg.sender);
-        if (!identityToken.hasResolverRole(identityId)) {
-            revert Errors.NotResolverRole(identityId);
+        _requireResolverCandidate(jury, identityToken, identityId);
+
+        epochId = jury.currentResolverEpoch + 1;
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
+        _requireEpochCommitOpen(epoch, epochId);
+
+        LibResolverJury.ResolverEpochCandidate storage candidate = epoch.candidateByIdentity[identityId];
+        if (candidate.optedIn) {
+            revert Errors.ResolverEpochCandidateExists(epochId, identityId);
+        }
+        _collectEpochCandidateFee(epochId, identityId, LibEveMarket.store().config);
+
+        candidate.optedIn = true;
+        candidate.randomness.commitment = randomnessCommitment;
+        candidate.randomness.hasCommitted = true;
+        epoch.candidates.push(identityId);
+        jury.identities[identityId].activationTimestamp = uint64(block.timestamp);
+        jury.identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle.ResolverCandidate;
+
+        emit Events.ResolverEpochCandidateOptedIn(epochId, identityId);
+    }
+
+    function commitResolverEpochRandomness(uint64 epochId, bytes32 randomnessCommitment) external override {
+        if (randomnessCommitment == bytes32(0)) {
+            revert Errors.InvalidConfigValue("randomnessCommitment");
+        }
+
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        IEveIdentity identityToken = IEveIdentity(_requireEveIdentity(jury));
+        uint256 identityId = LibResolverJury.requireIdentityId(address(identityToken), msg.sender);
+        if (!_isCurrentEpochMember(jury, identityId)) {
+            revert Errors.ResolverNotActive(identityId);
+        }
+
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
+        _requireEpochCommitOpen(epoch, epochId);
+        LibResolverJury.ResolverEpochRandomness storage randomness = epoch.activeRandomness[identityId];
+        if (randomness.hasCommitted) {
+            revert Errors.AlreadyCommitted(identityId);
+        }
+
+        randomness.commitment = randomnessCommitment;
+        randomness.hasCommitted = true;
+    }
+
+    function closeResolverEpochRandomnessCommit(uint64 epochId) external override {
+        LibResolverJury.ResolverEpoch storage epoch = LibResolverJury.store().resolverEpochs[epochId];
+        if (epoch.rotationOpenedAt == 0 || block.timestamp <= epoch.commitDeadline) {
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+        if (epoch.randomnessReferenceBlock != 0) {
+            revert Errors.ResolverEpochClosed(epochId);
         }
 
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
-        LibResolverJury.ResolverIdentityRecord storage record = jury.identities[identityId];
-        if (record.resolverStake < config.resolverStakeRequirement) {
-            revert Errors.InsufficientResolverStake(config.resolverStakeRequirement, record.resolverStake);
-        }
-        if (jury.activeResolverIndex[identityId] == 0 && jury.activeResolverSet.length >= config.resolverPoolCap) {
-            revert Errors.ResolverPoolFull(config.resolverPoolCap);
-        }
+        epoch.randomnessReferenceBlock = uint64(block.number + 1);
+        epoch.revealDeadline = uint64(block.timestamp + config.epochRandomnessRevealDuration);
+        epoch.selectionDeadline = uint64(uint256(epoch.revealDeadline) + config.epochSelectionDuration);
+    }
+
+    function revealResolverEpochRandomness(uint64 epochId, bytes32 value, bytes32 salt) external override {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        IEveIdentity identityToken = IEveIdentity(_requireEveIdentity(jury));
+        uint256 identityId = LibResolverJury.requireIdentityId(address(identityToken), msg.sender);
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
         if (
-            record.lifecycle != LibResolverJury.ResolverLifecycle.Minted
-                && record.lifecycle != LibResolverJury.ResolverLifecycle.Exited
+            epoch.randomnessReferenceBlock == 0 || block.timestamp > epoch.revealDeadline || epoch.seedFinalized
+                || epoch.selectionFinalized
         ) {
-            revert Errors.CannotExitFromState(uint8(record.lifecycle));
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+        LibResolverJury.ResolverEpochRandomness storage randomness =
+            _epochRandomnessForIdentity(jury, epoch, identityId);
+        if (!randomness.hasCommitted) {
+            revert Errors.ResolverEpochCandidateMissing(epochId, identityId);
+        }
+        if (randomness.hasRevealed) {
+            revert Errors.AlreadyRevealed(identityId);
+        }
+        bytes32 expected = keccak256(abi.encode(epochId, identityId, value, salt));
+        if (expected != randomness.commitment) {
+            revert Errors.JuryCommitmentMismatch(identityId);
         }
 
-        record.activationTimestamp = uint64(block.timestamp);
-        record.lifecycle = LibResolverJury.ResolverLifecycle.ResolverPendingActivation;
-        _addActiveResolver(jury, identityId);
+        randomness.hasRevealed = true;
+        randomness.revealedValue = value;
+        epoch.validRevealCount += 1;
+        epoch.randomnessAccumulator = keccak256(abi.encode(epoch.randomnessAccumulator, identityId, value));
 
-        emit Events.ResolverActivationRequested(identityId, record.activationTimestamp);
+        emit Events.ResolverEpochRandomnessRevealed(epochId, identityId);
+    }
+
+    function finalizeResolverEpochSeed(uint64 epochId) external override returns (bytes32 seed) {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
+        LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
+        if (epoch.seedFinalized) {
+            revert Errors.ResolverEpochAlreadyFinalized(epochId);
+        }
+        if (epoch.randomnessReferenceBlock == 0 || block.timestamp <= epoch.revealDeadline) {
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+
+        if (epoch.seedReferenceBlock == 0) {
+            epoch.seedReferenceBlock = uint64(block.number + 1);
+            emit Events.ResolverEpochSeedReferenceBlockSet(epochId, epoch.seedReferenceBlock);
+            return bytes32(0);
+        }
+        if (block.number <= epoch.seedReferenceBlock) {
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+        if (block.number > uint256(epoch.seedReferenceBlock) + EPOCH_BLOCKHASH_LOOKUP_WINDOW) {
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+
+        _slashMissedEpochRandomnessDuties(jury, epoch, epochId, config);
+
+        bytes32 referenceHash = blockhash(epoch.seedReferenceBlock);
+        seed = keccak256(
+            abi.encode(
+                epoch.randomnessAccumulator,
+                epochId,
+                block.chainid,
+                address(this),
+                referenceHash,
+                epoch.candidates.length
+            )
+        );
+        epoch.seed = seed;
+        epoch.seedFinalized = true;
+
+        emit Events.ResolverEpochSeedFinalized(epochId, seed, epoch.validRevealCount);
+    }
+
+    function submitResolverEpochCandidateScore(uint64 epochId, uint256 identityId)
+        external
+        override
+        returns (uint256 score)
+    {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
+        LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
+        if (!epoch.seedFinalized || block.timestamp > epoch.selectionDeadline || epoch.selectionFinalized) {
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+
+        LibResolverJury.ResolverEpochCandidate storage candidate = epoch.candidateByIdentity[identityId];
+        if (!candidate.optedIn) {
+            revert Errors.ResolverEpochCandidateMissing(epochId, identityId);
+        }
+        if (candidate.scoreSubmitted) {
+            revert Errors.ResolverEpochScoreSubmitted(epochId, identityId);
+        }
+        if (!_isSelectableEpochCandidate(jury, config, identityId)) {
+            revert Errors.ResolverEpochCandidateIneligible(epochId, identityId);
+        }
+
+        score = uint256(keccak256(abi.encode(epoch.seed, epochId, identityId)));
+        candidate.score = score;
+        candidate.scoreSubmitted = true;
+        epoch.scoreSubmittedCount += 1;
+        _pruneEpochSelection(jury, epoch, config);
+        _insertEpochSelection(epoch, identityId, score, config.activeEpochSize);
+
+        emit Events.ResolverEpochCandidateScoreSubmitted(epochId, identityId, score);
+    }
+
+    function finalizeResolverEpochSelection(uint64 epochId) external override {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
+        if (!epoch.seedFinalized || block.timestamp <= epoch.selectionDeadline) {
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+        if (epoch.selectionFinalized) {
+            revert Errors.ResolverEpochAlreadyFinalized(epochId);
+        }
+        LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
+        _pruneEpochSelection(jury, epoch, config);
+        if (epoch.selected.length != config.activeEpochSize) {
+            revert Errors.ResolverEpochUnderfilled(epochId, epoch.selected.length, config.activeEpochSize);
+        }
+
+        uint256 selectedCount = epoch.selected.length;
+        uint256[] memory selected = new uint256[](selectedCount);
+        for (uint256 index; index < selectedCount; ++index) {
+            uint256 identityId = epoch.selected[index].identityId;
+            selected[index] = identityId;
+            epoch.candidateByIdentity[identityId].selected = true;
+        }
+        epoch.selectionFinalized = true;
+
+        emit Events.ResolverEpochSelectionFinalized(epochId, selected);
+        if (jury.currentResolverEpoch == 0) {
+            _activateResolverEpoch(jury, epoch, epochId);
+        }
+    }
+
+    function activateFinalizedResolverEpoch(uint64 epochId) external override {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        if (epochId != jury.currentResolverEpoch + 1) {
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+        if (jury.currentResolverEpoch != 0 && block.timestamp < jury.resolverEpochs[jury.currentResolverEpoch].endTime)
+        {
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
+        if (!epoch.selectionFinalized) {
+            revert Errors.ResolverEpochNotReady(epochId);
+        }
+        _activateResolverEpoch(jury, epoch, epochId);
+    }
+
+    function finalizeResolverTradingRewards(uint64 epochId, address token)
+        external
+        override
+        nonReentrant
+        returns (uint128 amount)
+    {
+        amount = LibResolverRewards.finalizeTradingRewards(epochId, token);
+    }
+
+    function claimResolverRewards(address token) external override nonReentrant returns (uint128 amount) {
+        if (token == address(0)) {
+            revert Errors.ZeroAddress();
+        }
+
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        uint256 identityId = LibResolverJury.requireIdentityId(_requireEveIdentity(jury), msg.sender);
+        (,, amount) = LibResolverRewards.claimable(identityId, token);
+        LibResolverRewards.recordClaim(identityId, token, amount);
+        IERC20(token).safeTransfer(msg.sender, amount);
+
+        emit Events.ResolverRewardsClaimed(identityId, msg.sender, token, amount);
+    }
+
+    function _requireResolverCandidate(
+        LibResolverJury.ResolverJuryStorage storage jury,
+        IEveIdentity identityToken,
+        uint256 identityId
+    ) internal view {
+        if (!identityToken.hasResolverRole(identityId)) {
+            revert Errors.NotResolverRole(identityId);
+        }
+        LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
+        LibResolverJury.ResolverIdentityRecord storage record = jury.identities[identityId];
+        if (record.resolverStake != config.resolverSeatStake) {
+            revert Errors.InsufficientResolverStake(config.resolverSeatStake, record.resolverStake);
+        }
     }
 
     function requestResolverExit() external override {
@@ -158,15 +423,18 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
             _effectiveLifecycle(record, LibEveMarket.store().config.resolverJuryConfig);
 
         if (
-            lifecycle != LibResolverJury.ResolverLifecycle.ResolverPendingActivation
+            lifecycle != LibResolverJury.ResolverLifecycle.ResolverCandidate
                 && lifecycle != LibResolverJury.ResolverLifecycle.ResolverActive
+                && lifecycle != LibResolverJury.ResolverLifecycle.Minted
         ) {
             revert Errors.CannotExitFromState(uint8(record.lifecycle));
+        }
+        if (_isSelectedForLockedEpoch(jury, identityId)) {
+            revert Errors.StakeLocked(identityId);
         }
 
         record.exitTimestamp = uint64(block.timestamp);
         record.lifecycle = LibResolverJury.ResolverLifecycle.ExitCooldown;
-        _removeActiveResolver(jury, identityId);
 
         emit Events.ResolverExitRequested(identityId, record.exitTimestamp);
     }
@@ -178,16 +446,20 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         LibResolverJury.ResolverIdentityRecord storage record = jury.identities[identityId];
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
 
-        if (record.lifecycle != LibResolverJury.ResolverLifecycle.ExitCooldown) {
+        bool unselectedCandidateWithdraw = _canWithdrawUnselectedCandidate(jury, identityId);
+        if (record.lifecycle != LibResolverJury.ResolverLifecycle.ExitCooldown && !unselectedCandidateWithdraw) {
             revert Errors.CannotExitFromState(uint8(record.lifecycle));
         }
-        if (block.timestamp < uint256(record.exitTimestamp) + config.exitCooldown) {
+        if (!unselectedCandidateWithdraw && block.timestamp < uint256(record.exitTimestamp) + config.exitCooldown) {
             revert Errors.StakeLocked(identityId);
         }
         if (record.slashLockActive && block.timestamp < record.slashLockUntil) {
             revert Errors.StakeLocked(identityId);
         }
         if (record.unresolvedCommittees != 0) {
+            revert Errors.StakeLocked(identityId);
+        }
+        if (_isSelectedForLockedEpoch(jury, identityId)) {
             revert Errors.StakeLocked(identityId);
         }
 
@@ -202,7 +474,6 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
 
         record.resolverStake = 0;
         record.lifecycle = LibResolverJury.ResolverLifecycle.Exited;
-        _removeActiveResolver(jury, identityId);
         IERC20(eveToken).safeTransfer(msg.sender, stake);
 
         emit Events.ResolverStakeWithdrawn(identityId, msg.sender, stake);
@@ -219,7 +490,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         returns (
             IResolverRegistryFacet.ResolverIdentityView memory identity,
             IResolverRegistryFacet.ResolverJuryConfigView memory config,
-            IResolverRegistryFacet.ResolverPoolView memory pool
+            IResolverRegistryFacet.ResolverEpochPoolView memory epochPool
         )
     {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
@@ -231,7 +502,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
 
         identity = _resolverIdentityView(jury, state, identityId);
         config = _resolverJuryConfigView(jury.eveIdentity, state.config.resolverJuryConfig);
-        pool = _resolverPoolView(jury, state);
+        epochPool = _resolverEpochPoolView(jury, state);
     }
 
     function resolverIdentity(uint256 identityId)
@@ -333,15 +604,75 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
     }
 
     function activeResolverCount() external view override returns (uint256) {
-        return LibResolverJury.store().activeResolverSet.length;
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        return jury.resolverEpochs[jury.currentResolverEpoch].activeSet.length;
     }
 
-    function resolverPoolCapacity() external view override returns (uint16) {
-        return LibEveMarket.store().config.resolverJuryConfig.resolverPoolCap;
+    function activeResolverEpochSize() external view override returns (uint16) {
+        return LibEveMarket.store().config.resolverJuryConfig.activeEpochSize;
     }
 
-    function resolverPoolMemberAt(uint256 index) external view override returns (uint256 identityId) {
-        return LibResolverJury.store().activeResolverSet[index];
+    function activeResolverAt(uint256 index) external view override returns (uint256 identityId) {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        return jury.resolverEpochs[jury.currentResolverEpoch].activeSet[index];
+    }
+
+    function currentResolverEpoch() external view override returns (uint64) {
+        return LibResolverJury.store().currentResolverEpoch;
+    }
+
+    function resolverEpoch(uint64 epochId)
+        external
+        view
+        override
+        returns (IResolverRegistryFacet.ResolverEpochView memory view_)
+    {
+        LibResolverJury.ResolverEpoch storage epoch = LibResolverJury.store().resolverEpochs[epochId];
+        view_ = IResolverRegistryFacet.ResolverEpochView({
+            epochId: epoch.epochId,
+            startTime: epoch.startTime,
+            endTime: epoch.endTime,
+            rotationOpenedAt: epoch.rotationOpenedAt,
+            commitDeadline: epoch.commitDeadline,
+            revealDeadline: epoch.revealDeadline,
+            selectionDeadline: epoch.selectionDeadline,
+            seedReferenceBlock: epoch.seedReferenceBlock,
+            validRevealCount: epoch.validRevealCount,
+            seed: epoch.seed,
+            seedFinalized: epoch.seedFinalized,
+            selectionFinalized: epoch.selectionFinalized,
+            candidateCount: epoch.candidates.length,
+            scoreSubmittedCount: epoch.scoreSubmittedCount,
+            selectedCount: epoch.selected.length,
+            activeCount: epoch.activeSet.length
+        });
+    }
+
+    function resolverEpochCandidate(uint64 epochId, uint256 identityId)
+        external
+        view
+        override
+        returns (IResolverRegistryFacet.ResolverEpochCandidateView memory view_)
+    {
+        LibResolverJury.ResolverEpochCandidate storage candidate =
+            LibResolverJury.store().resolverEpochs[epochId].candidateByIdentity[identityId];
+        view_ = IResolverRegistryFacet.ResolverEpochCandidateView({
+            optedIn: candidate.optedIn,
+            selected: candidate.selected,
+            scoreSubmitted: candidate.scoreSubmitted,
+            score: candidate.score,
+            hasCommitted: candidate.randomness.hasCommitted,
+            hasRevealed: candidate.randomness.hasRevealed
+        });
+    }
+
+    function previewResolverRewards(uint256 identityId, address token)
+        external
+        view
+        override
+        returns (uint128 accrued, uint128 claimed, uint128 claimable)
+    {
+        return LibResolverRewards.claimable(identityId, token);
     }
 
     function applyFinalityReputation(bytes32 disputeId, uint8 finalResult) external override {
@@ -365,11 +696,11 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         _applyResolverFinalityReputation(jury, dispute, finalResult);
     }
 
-    function _collectMintFee(address mintFeeToken, uint128 mintFee) internal {
+    function _collectMintFee(address mintFeeToken, address treasury, uint128 mintFee) internal {
         if (mintFee == 0) {
             return;
         }
-        if (mintFeeToken == address(0)) {
+        if (mintFeeToken == address(0) || treasury == address(0)) {
             revert Errors.ZeroAddress();
         }
 
@@ -378,7 +709,26 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
             revert Errors.MintFeeCollectionFailed();
         }
 
-        token.safeTransferFrom(msg.sender, address(this), mintFee);
+        token.safeTransferFrom(msg.sender, treasury, mintFee);
+    }
+
+    function _collectEpochCandidateFee(
+        uint64 epochId,
+        uint256 identityId,
+        LibEveMarket.MarketConfig storage marketConfig
+    ) internal {
+        uint128 feeAmount = marketConfig.resolverJuryConfig.epochCandidateFeeAmount;
+        if (epochId == 1 || feeAmount == 0) {
+            return;
+        }
+        address feeToken = marketConfig.resolverJuryConfig.epochCandidateFeeToken;
+        address treasury = marketConfig.eveTreasury;
+        if (feeToken == address(0) || treasury == address(0)) {
+            revert Errors.ZeroAddress();
+        }
+
+        IERC20(feeToken).safeTransferFrom(msg.sender, treasury, feeAmount);
+        emit Events.ResolverEpochCandidateFeePaid(epochId, identityId, feeToken, feeAmount);
     }
 
     function _resolverIdentityView(
@@ -418,7 +768,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
             unresolvedCommittees: record.unresolvedCommittees,
             slashLockUntil: record.slashLockUntil,
             slashLockActive: record.slashLockActive,
-            activePoolMember: jury.activeResolverIndex[identityId] != 0,
+            currentEpochMember: _isCurrentEpochMember(jury, identityId),
             globallyEligible: _isEligibleResolver(jury, state, identityId, bytes32(0))
         });
     }
@@ -438,9 +788,16 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
             eveIdentity: identityContract,
             identityMintFeeToken: config.identityMintFeeToken,
             identityMintFee: config.identityMintFee,
-            resolverStakeRequirement: config.resolverStakeRequirement,
-            resolverStakeCap: config.resolverStakeCap,
-            resolverPoolCap: config.resolverPoolCap,
+            resolverSeatStake: config.resolverSeatStake,
+            epochCandidateFeeToken: config.epochCandidateFeeToken,
+            epochCandidateFeeAmount: config.epochCandidateFeeAmount,
+            activeEpochSize: config.activeEpochSize,
+            resolverEpochDuration: config.resolverEpochDuration,
+            resolverRotationWindow: config.resolverRotationWindow,
+            epochRandomnessCommitDuration: config.epochRandomnessCommitDuration,
+            epochRandomnessRevealDuration: config.epochRandomnessRevealDuration,
+            epochSelectionDuration: config.epochSelectionDuration,
+            minEpochRandomnessReveals: config.minEpochRandomnessReveals,
             activationDelay: config.activationDelay,
             exitCooldown: config.exitCooldown,
             participationThresholdBps: config.participationThresholdBps,
@@ -479,14 +836,15 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         });
     }
 
-    function _resolverPoolView(
+    function _resolverEpochPoolView(
         LibResolverJury.ResolverJuryStorage storage jury,
         LibEveMarket.EveMarketStorage storage state
-    ) internal view returns (IResolverRegistryFacet.ResolverPoolView memory view_) {
-        view_ = IResolverRegistryFacet.ResolverPoolView({
-            activeResolverCount: jury.activeResolverSet.length,
+    ) internal view returns (IResolverRegistryFacet.ResolverEpochPoolView memory view_) {
+        view_ = IResolverRegistryFacet.ResolverEpochPoolView({
+            currentEpochId: jury.currentResolverEpoch,
+            activeResolverCount: jury.resolverEpochs[jury.currentResolverEpoch].activeSet.length,
             eligibleResolverCount: _eligibleResolverCount(jury, state),
-            resolverPoolCapacity: state.config.resolverJuryConfig.resolverPoolCap
+            activeEpochSize: state.config.resolverJuryConfig.activeEpochSize
         });
     }
 
@@ -494,9 +852,11 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         LibResolverJury.ResolverJuryStorage storage jury,
         LibEveMarket.EveMarketStorage storage state
     ) internal view returns (uint256 count) {
-        uint256 length = jury.activeResolverSet.length;
+        uint256 length = jury.resolverEpochs[jury.currentResolverEpoch].activeSet.length;
         for (uint256 index; index < length; ++index) {
-            if (_isEligibleResolver(jury, state, jury.activeResolverSet[index], bytes32(0))) {
+            if (_isEligibleResolver(
+                    jury, state, jury.resolverEpochs[jury.currentResolverEpoch].activeSet[index], bytes32(0)
+                )) {
                 ++count;
             }
         }
@@ -547,7 +907,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
     ) internal view returns (LibResolverJury.ResolverLifecycle lifecycle) {
         lifecycle = record.lifecycle;
         if (
-            lifecycle == LibResolverJury.ResolverLifecycle.ResolverPendingActivation
+            lifecycle == LibResolverJury.ResolverLifecycle.ResolverCandidate
                 && block.timestamp >= uint256(record.activationTimestamp) + config.activationDelay
         ) {
             return LibResolverJury.ResolverLifecycle.ResolverActive;
@@ -561,7 +921,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         bytes32 disputeId
     ) internal view returns (bool) {
         address identityContract = jury.eveIdentity;
-        if (identityContract == address(0) || jury.activeResolverIndex[identityId] == 0) {
+        if (identityContract == address(0) || !_isCurrentEpochMember(jury, identityId)) {
             return false;
         }
         if (!IEveIdentity(identityContract).hasResolverRole(identityId)) {
@@ -573,7 +933,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         if (_effectiveLifecycle(record, config) != LibResolverJury.ResolverLifecycle.ResolverActive) {
             return false;
         }
-        if (record.resolverStake < config.resolverStakeRequirement) {
+        if (record.resolverStake != config.resolverSeatStake) {
             return false;
         }
         if (record.slashLockActive && block.timestamp < record.slashLockUntil) {
@@ -839,30 +1199,232 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         return history[history.length - 1].proposedOutcome;
     }
 
-    function _addActiveResolver(LibResolverJury.ResolverJuryStorage storage jury, uint256 identityId) internal {
-        if (jury.activeResolverIndex[identityId] != 0) {
-            return;
+    function _requireEpochCommitOpen(LibResolverJury.ResolverEpoch storage epoch, uint64 epochId) internal view {
+        if (epoch.rotationOpenedAt == 0 || block.timestamp > epoch.commitDeadline || epoch.seedFinalized) {
+            revert Errors.ResolverEpochClosed(epochId);
         }
-
-        jury.activeResolverSet.push(identityId);
-        jury.activeResolverIndex[identityId] = jury.activeResolverSet.length;
     }
 
-    function _removeActiveResolver(LibResolverJury.ResolverJuryStorage storage jury, uint256 identityId) internal {
-        uint256 indexPlusOne = jury.activeResolverIndex[identityId];
-        if (indexPlusOne == 0) {
+    function _epochRandomnessForIdentity(
+        LibResolverJury.ResolverJuryStorage storage jury,
+        LibResolverJury.ResolverEpoch storage epoch,
+        uint256 identityId
+    ) internal view returns (LibResolverJury.ResolverEpochRandomness storage randomness) {
+        if (_isCurrentEpochMember(jury, identityId)) {
+            LibResolverJury.ResolverEpochRandomness storage activeRandomness = epoch.activeRandomness[identityId];
+            if (activeRandomness.hasCommitted && !activeRandomness.hasRevealed) {
+                return activeRandomness;
+            }
+        }
+        LibResolverJury.ResolverEpochCandidate storage candidate = epoch.candidateByIdentity[identityId];
+        if (candidate.optedIn) {
+            return candidate.randomness;
+        }
+        return candidate.randomness;
+    }
+
+    function _pruneEpochSelection(
+        LibResolverJury.ResolverJuryStorage storage jury,
+        LibResolverJury.ResolverEpoch storage epoch,
+        LibEveMarket.ResolverJuryConfig storage config
+    ) internal {
+        uint256 index;
+        while (index < epoch.selected.length) {
+            uint256 identityId = epoch.selected[index].identityId;
+            if (_isSelectableEpochCandidate(jury, config, identityId)) {
+                ++index;
+                continue;
+            }
+
+            epoch.selectedIdentity[identityId] = false;
+            epoch.candidateByIdentity[identityId].selected = false;
+
+            uint256 lastIndex = epoch.selected.length - 1;
+            if (index != lastIndex) {
+                epoch.selected[index] = epoch.selected[lastIndex];
+            }
+            epoch.selected.pop();
+        }
+    }
+
+    function _isSelectableEpochCandidate(
+        LibResolverJury.ResolverJuryStorage storage jury,
+        LibEveMarket.ResolverJuryConfig storage config,
+        uint256 identityId
+    ) internal view returns (bool) {
+        address identityContract = jury.eveIdentity;
+        if (identityContract == address(0) || !IEveIdentity(identityContract).hasResolverRole(identityId)) {
+            return false;
+        }
+
+        LibResolverJury.ResolverIdentityRecord storage record = jury.identities[identityId];
+        if (record.resolverStake != config.resolverSeatStake) {
+            return false;
+        }
+        if (record.slashLockActive && block.timestamp < record.slashLockUntil) {
+            return false;
+        }
+
+        return true;
+    }
+
+    function _insertEpochSelection(
+        LibResolverJury.ResolverEpoch storage epoch,
+        uint256 identityId,
+        uint256 score,
+        uint16 activeEpochSize
+    ) internal {
+        if (epoch.selectedIdentity[identityId]) {
             return;
         }
 
-        uint256 index = indexPlusOne - 1;
-        uint256 lastIndex = jury.activeResolverSet.length - 1;
-        if (index != lastIndex) {
-            uint256 movedIdentityId = jury.activeResolverSet[lastIndex];
-            jury.activeResolverSet[index] = movedIdentityId;
-            jury.activeResolverIndex[movedIdentityId] = indexPlusOne;
+        if (epoch.selected.length < activeEpochSize) {
+            epoch.selected.push(LibResolverJury.ResolverEpochSelection({identityId: identityId, score: score}));
+            epoch.selectedIdentity[identityId] = true;
+            return;
         }
 
-        jury.activeResolverSet.pop();
-        delete jury.activeResolverIndex[identityId];
+        uint256 worstIndex;
+        uint256 worstScore = epoch.selected[0].score;
+        for (uint256 index = 1; index < epoch.selected.length; ++index) {
+            if (epoch.selected[index].score > worstScore) {
+                worstScore = epoch.selected[index].score;
+                worstIndex = index;
+            }
+        }
+
+        if (score >= worstScore) {
+            return;
+        }
+
+        uint256 removedIdentityId = epoch.selected[worstIndex].identityId;
+        epoch.selectedIdentity[removedIdentityId] = false;
+        epoch.selected[worstIndex] = LibResolverJury.ResolverEpochSelection({identityId: identityId, score: score});
+        epoch.selectedIdentity[identityId] = true;
+    }
+
+    function _slashMissedEpochRandomnessDuties(
+        LibResolverJury.ResolverJuryStorage storage jury,
+        LibResolverJury.ResolverEpoch storage epoch,
+        uint64 epochId,
+        LibEveMarket.ResolverJuryConfig storage config
+    ) internal {
+        if (jury.currentResolverEpoch == 0) {
+            return;
+        }
+
+        LibResolverJury.ResolverEpoch storage current = jury.resolverEpochs[jury.currentResolverEpoch];
+        uint256 activeCount = current.activeSet.length;
+        for (uint256 index; index < activeCount; ++index) {
+            uint256 identityId = current.activeSet[index];
+            LibResolverJury.ResolverEpochRandomness storage randomness = epoch.activeRandomness[identityId];
+            if (!randomness.hasCommitted) {
+                jury.resolverRep[identityId].missedCommitCount += 1;
+                _slashEpochDuty(jury, epochId, identityId, config.missedCommitSlashBps, config, 1);
+            } else if (!randomness.hasRevealed) {
+                jury.resolverRep[identityId].missedRevealCount += 1;
+                _slashEpochDuty(jury, epochId, identityId, config.missedRevealSlashBps, config, 2);
+            }
+        }
+    }
+
+    function _slashEpochDuty(
+        LibResolverJury.ResolverJuryStorage storage jury,
+        uint64 epochId,
+        uint256 identityId,
+        uint16 slashBps,
+        LibEveMarket.ResolverJuryConfig storage config,
+        uint8 duty
+    ) internal {
+        if (slashBps == 0 || slashBps > 10_000) {
+            revert Errors.InvalidConfigValue("slashBps");
+        }
+
+        LibResolverJury.ResolverIdentityRecord storage record = jury.identities[identityId];
+        uint128 slashAmount = uint128((uint256(record.resolverStake) * slashBps) / 10_000);
+        if (slashAmount != 0) {
+            record.resolverStake -= slashAmount;
+            LibResolverRewards.distributeSlashedStake(identityId, LibEveMarket.store().config.eveToken, slashAmount);
+        }
+        record.slashLockActive = true;
+        record.slashLockUntil = uint64(block.timestamp + config.slashCooldown);
+        jury.resolverRep[identityId].slashCount += 1;
+
+        emit Events.ResolverEpochDutySlashed(epochId, identityId, slashAmount, duty);
+    }
+
+    function _activateResolverEpoch(
+        LibResolverJury.ResolverJuryStorage storage jury,
+        LibResolverJury.ResolverEpoch storage epoch,
+        uint64 epochId
+    ) internal {
+        uint256 selectedCount = epoch.selected.length;
+        LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
+        if (selectedCount != config.activeEpochSize) {
+            revert Errors.ResolverEpochUnderfilled(epochId, selectedCount, config.activeEpochSize);
+        }
+
+        uint256[] memory activeSet = new uint256[](selectedCount);
+        for (uint256 index; index < selectedCount; ++index) {
+            uint256 identityId = epoch.selected[index].identityId;
+            if (!_isSelectableEpochCandidate(jury, config, identityId)) {
+                revert Errors.ResolverEpochCandidateIneligible(epochId, identityId);
+            }
+            if (epoch.activeIndex[identityId] == 0) {
+                epoch.activeSet.push(identityId);
+                epoch.activeIndex[identityId] = epoch.activeSet.length;
+            }
+            jury.identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle.ResolverActive;
+            activeSet[index] = identityId;
+        }
+        jury.currentResolverEpoch = epochId;
+        epoch.compliantActiveCount = uint16(selectedCount);
+
+        emit Events.ResolverEpochActivated(epochId, activeSet);
+    }
+
+    function _isCurrentEpochMember(LibResolverJury.ResolverJuryStorage storage jury, uint256 identityId)
+        internal
+        view
+        returns (bool)
+    {
+        return jury.resolverEpochs[jury.currentResolverEpoch].activeIndex[identityId] != 0;
+    }
+
+    function _canWithdrawUnselectedCandidate(LibResolverJury.ResolverJuryStorage storage jury, uint256 identityId)
+        internal
+        view
+        returns (bool)
+    {
+        uint64 currentEpochId = jury.currentResolverEpoch;
+        if (_isUnselectedFinalizedCandidate(jury.resolverEpochs[currentEpochId], identityId)) {
+            return true;
+        }
+        return _isUnselectedFinalizedCandidate(jury.resolverEpochs[currentEpochId + 1], identityId);
+    }
+
+    function _isUnselectedFinalizedCandidate(LibResolverJury.ResolverEpoch storage epoch, uint256 identityId)
+        internal
+        view
+        returns (bool)
+    {
+        return epoch.selectionFinalized && epoch.candidateByIdentity[identityId].optedIn
+            && !epoch.selectedIdentity[identityId] && epoch.activeIndex[identityId] == 0;
+    }
+
+    function _isSelectedForLockedEpoch(LibResolverJury.ResolverJuryStorage storage jury, uint256 identityId)
+        internal
+        view
+        returns (bool)
+    {
+        uint64 currentEpochId = jury.currentResolverEpoch;
+        if (currentEpochId != 0 && jury.resolverEpochs[currentEpochId].activeIndex[identityId] != 0) {
+            return true;
+        }
+        LibResolverJury.ResolverEpoch storage nextEpoch = jury.resolverEpochs[currentEpochId + 1];
+        if (!nextEpoch.selectionFinalized && nextEpoch.candidateByIdentity[identityId].optedIn) {
+            return true;
+        }
+        return nextEpoch.selectionFinalized && nextEpoch.selectedIdentity[identityId];
     }
 }

@@ -265,6 +265,8 @@ library Events {
     event OpenResolutionStarted(bytes32 indexed marketId, address indexed proposer, uint8 outcome);
     event ResolutionDisputed(bytes32 indexed marketId, address disputer, uint8 counterOutcome, uint8 escalationLevel);
     event ResolutionFinalized(bytes32 indexed marketId, uint8 outcome);
+    event AdminResolutionFinalized(bytes32 indexed marketId, address indexed admin, uint8 outcome);
+    event ResolutionModeSet(uint8 previousMode, uint8 newMode);
     event CreatorSettlementEvaluated(
         bytes32 indexed marketId,
         address indexed creator,
@@ -321,12 +323,36 @@ library Events {
         uint64 finalAgreementCount,
         uint64 slashCount
     );
-    event ResolverActivationRequested(uint256 indexed identityId, uint64 activationTimestamp);
-    event ResolverBecameEligible(uint256 indexed identityId, uint64 eligibleAt);
+    event ResolverEpochRotationOpened(
+        uint64 indexed epochId,
+        uint64 startTime,
+        uint64 endTime,
+        uint64 commitDeadline,
+        uint64 revealDeadline,
+        uint64 selectionDeadline
+    );
+    event ResolverEpochCandidateOptedIn(uint64 indexed epochId, uint256 indexed identityId);
+    event ResolverEpochCandidateFeePaid(
+        uint64 indexed epochId, uint256 indexed identityId, address indexed token, uint128 amount
+    );
+    event ResolverEpochRandomnessRevealed(uint64 indexed epochId, uint256 indexed identityId);
+    event ResolverEpochSeedReferenceBlockSet(uint64 indexed epochId, uint64 referenceBlock);
+    event ResolverEpochSeedFinalized(uint64 indexed epochId, bytes32 seed, uint256 validRevealCount);
+    event ResolverEpochCandidateScoreSubmitted(uint64 indexed epochId, uint256 indexed identityId, uint256 score);
+    event ResolverEpochSelectionFinalized(uint64 indexed epochId, uint256[] identityIds);
+    event ResolverEpochActivated(uint64 indexed epochId, uint256[] identityIds);
+    event ResolverEpochDutySlashed(uint64 indexed epochId, uint256 indexed identityId, uint128 amount, uint8 duty);
+    event ResolverRewardAccrued(
+        uint64 indexed epochId, uint256 indexed identityId, address indexed token, uint128 amount
+    );
+    event ResolverRewardsClaimed(
+        uint256 indexed identityId, address indexed owner, address indexed token, uint128 amount
+    );
+    event ResolverTradingRewardsFinalized(uint64 indexed epochId, address indexed token, uint128 amount);
+    event ResolverRewardExcluded(uint64 indexed epochId, uint256 indexed identityId);
     event ResolverExitRequested(uint256 indexed identityId, uint64 exitTimestamp);
     event ResolverStakeDeposited(uint256 indexed identityId, address indexed owner, uint128 amount, uint128 newStake);
     event ResolverStakeWithdrawn(uint256 indexed identityId, address indexed owner, uint128 amount);
-    event ResolverPoolCapacityUpdated(uint16 priorValue, uint16 newValue);
     event ResolverJuryInitiated(bytes32 indexed disputeId, bytes32 indexed marketId, uint8 round);
     event RandomnessCommitted(bytes32 indexed disputeId, uint8 indexed round, uint256 indexed identityId);
     event RandomnessRevealed(bytes32 indexed disputeId, uint8 indexed round, uint256 indexed identityId);

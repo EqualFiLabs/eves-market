@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
+import {IEveIdentity} from "../interfaces/IEveIdentity.sol";
 import {LibDiamond} from "../libraries/LibDiamond.sol";
 import {LibCollateralProfile} from "../libraries/LibCollateralProfile.sol";
 import {LibDelayedOrderConfigAdmin} from "../libraries/LibDelayedOrderConfigAdmin.sol";
@@ -9,19 +10,40 @@ import {LibFeeConfigAdmin} from "../libraries/LibFeeConfigAdmin.sol";
 import {LibMarketConfigAdmin} from "../libraries/LibMarketConfigAdmin.sol";
 import {LibResolverJuryConfigAdmin} from "../libraries/LibResolverJuryConfigAdmin.sol";
 import {Errors} from "../libraries/Errors.sol";
+import {Events} from "../libraries/Events.sol";
+import {LibResolverJury} from "../libraries/LibResolverJury.sol";
 import {OwnershipConfigTypes} from "../types/OwnershipConfigTypes.sol";
 
 contract OwnershipFacet {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event StakingVaultSet(address indexed previousStakingVault, address indexed newStakingVault);
-    event SecondaryStakingVaultSet(address indexed previousStakingVault, address indexed newStakingVault);
-    event OrderbookFeeSplitSet(uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps);
+    event OrderbookFeeSplitSet(
+        uint16 makerFeeBps,
+        uint16 creatorFeeBps,
+        uint16 protocolFeeBps,
+        uint16 vaultFeeBps,
+        uint16 resolverFeeBps,
+        uint16 evRiskFeeBps
+    );
     event OrderbookEntryFeeBpsSet(uint16 previousEntryFeeBps, uint16 newEntryFeeBps);
-    event SpotFeeSplitSet(uint16 makerFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps);
+    event SpotFeeSplitSet(
+        uint16 makerFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps, uint16 resolverFeeBps, uint16 evRiskFeeBps
+    );
     event SpotTradeFeeBpsSet(uint16 previousTradeFeeBps, uint16 newTradeFeeBps);
-    event ComboFeeSplitSet(uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps);
+    event ComboFeeSplitSet(
+        uint16 makerFeeBps,
+        uint16 creatorFeeBps,
+        uint16 protocolFeeBps,
+        uint16 vaultFeeBps,
+        uint16 resolverFeeBps,
+        uint16 evRiskFeeBps
+    );
     event ComboTradeFeeBpsSet(uint16 previousTradeFeeBps, uint16 newTradeFeeBps);
-    event ParimutuelFeeSplitSet(uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps);
+    event ParimutuelFeeSplitSet(
+        uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps, uint16 resolverFeeBps, uint16 evRiskFeeBps
+    );
+    event EvRiskStakingRewardsSet(
+        address indexed previousEvRiskStakingRewards, address indexed newEvRiskStakingRewards
+    );
     event ParimutuelConfigSet(address indexed shareToken, uint16 entryFeeBps, uint128 minEntry);
     event ResolutionBondConfigSet(
         address indexed previousBondToken,
@@ -98,6 +120,23 @@ contract OwnershipFacet {
         return LibDiamond.contractOwner();
     }
 
+    function setResolutionMode(uint8 newMode) external {
+        LibDiamond.enforceIsContractOwner();
+        if (newMode > uint8(LibEveMarket.ResolutionMode.ObrJury)) {
+            revert Errors.InvalidConfigValue("resolutionMode");
+        }
+
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibEveMarket.ResolutionMode mode = LibEveMarket.ResolutionMode(newMode);
+        if (mode == LibEveMarket.ResolutionMode.ObrJury) {
+            _enforceFullHealthyResolverEpoch(state);
+        }
+
+        uint8 previousMode = uint8(state.config.resolutionMode);
+        state.config.resolutionMode = mode;
+        emit Events.ResolutionModeSet(previousMode, newMode);
+    }
+
     function setOrderbookEntryFeeBps(uint16 newEntryFeeBps) external {
         LibDiamond.enforceIsContractOwner();
         uint16 previousEntryFeeBps =
@@ -124,6 +163,38 @@ contract OwnershipFacet {
         emit ResolutionBondConfigSet(
             previousBondToken, bondToken, previousL1Amount, l1Amount, previousL2Amount, l2Amount
         );
+    }
+
+    function _enforceFullHealthyResolverEpoch(LibEveMarket.EveMarketStorage storage state) private view {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        LibEveMarket.ResolverJuryConfig storage config = state.config.resolverJuryConfig;
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[jury.currentResolverEpoch];
+        uint256 requiredCount = config.activeEpochSize;
+        uint256 activeCount = epoch.activeSet.length;
+        if (requiredCount == 0 || activeCount != requiredCount) {
+            revert Errors.ResolverSetNotReady(activeCount, requiredCount);
+        }
+
+        address identityContract = jury.eveIdentity;
+        if (identityContract == address(0)) {
+            revert Errors.ZeroAddress();
+        }
+
+        for (uint256 index; index < activeCount; ++index) {
+            uint256 identityId = epoch.activeSet[index];
+            if (!IEveIdentity(identityContract).hasResolverRole(identityId)) {
+                revert Errors.ResolverEpochCandidateIneligible(jury.currentResolverEpoch, identityId);
+            }
+
+            LibResolverJury.ResolverIdentityRecord storage record = jury.identities[identityId];
+            if (
+                record.lifecycle != LibResolverJury.ResolverLifecycle.ResolverActive
+                    || record.resolverStake != config.resolverSeatStake
+                    || (record.slashLockActive && block.timestamp < record.slashLockUntil)
+            ) {
+                revert Errors.ResolverEpochCandidateIneligible(jury.currentResolverEpoch, identityId);
+            }
+        }
     }
 
     function setResolverJuryIdentitySettings(OwnershipConfigTypes.ResolverJuryIdentitySettings calldata settings)
@@ -295,49 +366,83 @@ contract OwnershipFacet {
         emit EveTreasurySet(previousEveTreasury, eveTreasury);
     }
 
-    function setStakingVault(address stakingVault) external {
+    function setEvRiskStakingRewards(address evRiskStakingRewards) external {
         LibDiamond.enforceIsContractOwner();
-        address previousStakingVault = LibMarketConfigAdmin.setStakingVault(LibEveMarket.store().config, stakingVault);
-        emit StakingVaultSet(previousStakingVault, stakingVault);
+        address previousEvRiskStakingRewards =
+            LibMarketConfigAdmin.setEvRiskStakingRewards(LibEveMarket.store().config, evRiskStakingRewards);
+        emit EvRiskStakingRewardsSet(previousEvRiskStakingRewards, evRiskStakingRewards);
     }
 
-    function setSecondaryStakingVault(address stakingVault) external {
-        LibDiamond.enforceIsContractOwner();
-        address previousStakingVault =
-            LibMarketConfigAdmin.setSecondaryStakingVault(LibEveMarket.store().config, stakingVault);
-        emit SecondaryStakingVaultSet(previousStakingVault, stakingVault);
-    }
-
-    function setOrderbookFeeSplit(uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps)
-        external
-    {
+    function setOrderbookFeeSplit(
+        uint16 makerFeeBps,
+        uint16 creatorFeeBps,
+        uint16 protocolFeeBps,
+        uint16 vaultFeeBps,
+        uint16 resolverFeeBps,
+        uint16 evRiskFeeBps
+    ) external {
         LibDiamond.enforceIsContractOwner();
         LibFeeConfigAdmin.setOrderbookFeeSplit(
-            LibEveMarket.store().config, makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps
+            LibEveMarket.store().config,
+            makerFeeBps,
+            creatorFeeBps,
+            protocolFeeBps,
+            vaultFeeBps,
+            resolverFeeBps,
+            evRiskFeeBps
         );
-        emit OrderbookFeeSplitSet(makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps);
+        emit OrderbookFeeSplitSet(
+            makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps
+        );
     }
 
-    function setSpotFeeSplit(uint16 makerFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps) external {
+    function setSpotFeeSplit(
+        uint16 makerFeeBps,
+        uint16 protocolFeeBps,
+        uint16 vaultFeeBps,
+        uint16 resolverFeeBps,
+        uint16 evRiskFeeBps
+    ) external {
         LibDiamond.enforceIsContractOwner();
-        LibFeeConfigAdmin.setSpotFeeSplit(LibEveMarket.store().config, makerFeeBps, protocolFeeBps, vaultFeeBps);
-        emit SpotFeeSplitSet(makerFeeBps, protocolFeeBps, vaultFeeBps);
+        LibFeeConfigAdmin.setSpotFeeSplit(
+            LibEveMarket.store().config, makerFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps
+        );
+        emit SpotFeeSplitSet(makerFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
     }
 
-    function setComboFeeSplit(uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps)
-        external
-    {
+    function setComboFeeSplit(
+        uint16 makerFeeBps,
+        uint16 creatorFeeBps,
+        uint16 protocolFeeBps,
+        uint16 vaultFeeBps,
+        uint16 resolverFeeBps,
+        uint16 evRiskFeeBps
+    ) external {
         LibDiamond.enforceIsContractOwner();
         LibFeeConfigAdmin.setComboFeeSplit(
-            LibEveMarket.store().config, makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps
+            LibEveMarket.store().config,
+            makerFeeBps,
+            creatorFeeBps,
+            protocolFeeBps,
+            vaultFeeBps,
+            resolverFeeBps,
+            evRiskFeeBps
         );
-        emit ComboFeeSplitSet(makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps);
+        emit ComboFeeSplitSet(makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
     }
 
-    function setParimutuelFeeSplit(uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps) external {
+    function setParimutuelFeeSplit(
+        uint16 creatorFeeBps,
+        uint16 protocolFeeBps,
+        uint16 vaultFeeBps,
+        uint16 resolverFeeBps,
+        uint16 evRiskFeeBps
+    ) external {
         LibDiamond.enforceIsContractOwner();
-        LibFeeConfigAdmin.setParimutuelFeeSplit(LibEveMarket.store().config, creatorFeeBps, protocolFeeBps, vaultFeeBps);
-        emit ParimutuelFeeSplitSet(creatorFeeBps, protocolFeeBps, vaultFeeBps);
+        LibFeeConfigAdmin.setParimutuelFeeSplit(
+            LibEveMarket.store().config, creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps
+        );
+        emit ParimutuelFeeSplitSet(creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
     }
 
     function setParimutuelConfig(address shareToken, uint16 entryFeeBps, uint128 minEntry) external {
@@ -378,6 +483,11 @@ contract OwnershipFacet {
     function setDelayedOrderProcessing(uint8 processingMode, uint16 processorFeeShareBps) external {
         LibDiamond.enforceIsContractOwner();
         LibDelayedOrderConfigAdmin.setProcessing(LibEveMarket.store().config, processingMode, processorFeeShareBps);
+    }
+
+    function setDelayedOrderGuards(uint256 maxRouteLength, uint256 minQuoteWad, uint256 minBaseWad) external {
+        LibDiamond.enforceIsContractOwner();
+        LibDelayedOrderConfigAdmin.setGuards(LibEveMarket.store().config, maxRouteLength, minQuoteWad, minBaseWad);
     }
 
     function setDelayedOrderProtocolProcessor(address processor, bool allowed) external {

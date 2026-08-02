@@ -9,6 +9,12 @@ import {OwnershipConfigTypes} from "../types/OwnershipConfigTypes.sol";
 library LibResolverJuryConfigAdmin {
     uint64 internal constant MAX_RESOLVER_ACTIVATION_DELAY = 30 days;
     uint64 internal constant MAX_RESOLVER_EXIT_COOLDOWN = 90 days;
+    uint64 internal constant MIN_RESOLVER_EPOCH_DURATION = 30 days;
+    uint64 internal constant MAX_RESOLVER_EPOCH_DURATION = 730 days;
+    uint64 internal constant MIN_RESOLVER_ROTATION_WINDOW = 1 days;
+    uint64 internal constant MAX_RESOLVER_ROTATION_WINDOW = 90 days;
+    uint64 internal constant MIN_RESOLVER_EPOCH_PHASE_DURATION = 1 hours;
+    uint64 internal constant MAX_RESOLVER_EPOCH_PHASE_DURATION = 30 days;
     uint64 internal constant MIN_RESOLVER_PHASE_DURATION = 1 hours;
     uint64 internal constant MAX_RESOLVER_PHASE_DURATION = 7 days;
     uint64 internal constant MIN_RANDOMNESS_TIMEOUT = 60;
@@ -21,23 +27,30 @@ library LibResolverJuryConfigAdmin {
         if (settings.identityMintFee != 0) {
             LibAdminConfig.enforceERC20(settings.identityMintFeeToken);
         }
-        if (settings.resolverStakeCap < settings.resolverStakeRequirement) {
-            revert Errors.InvalidConfigValue("resolverStakeCap");
+        if (settings.epochCandidateFeeAmount != 0) {
+            LibAdminConfig.enforceERC20(settings.epochCandidateFeeToken);
+        }
+        if (settings.resolverSeatStake == 0) {
+            revert Errors.InvalidConfigValue("resolverSeatStake");
         }
 
         LibAdminConfig.emitConfigUpdate("identityMintFee", config.identityMintFee, settings.identityMintFee);
         LibAdminConfig.emitConfigUpdateAddress(
             "identityMintFeeToken", config.identityMintFeeToken, settings.identityMintFeeToken
         );
-        LibAdminConfig.emitConfigUpdate(
-            "resolverStakeRequirement", config.resolverStakeRequirement, settings.resolverStakeRequirement
+        LibAdminConfig.emitConfigUpdate("resolverSeatStake", config.resolverSeatStake, settings.resolverSeatStake);
+        LibAdminConfig.emitConfigUpdateAddress(
+            "epochCandidateFeeToken", config.epochCandidateFeeToken, settings.epochCandidateFeeToken
         );
-        LibAdminConfig.emitConfigUpdate("resolverStakeCap", config.resolverStakeCap, settings.resolverStakeCap);
+        LibAdminConfig.emitConfigUpdate(
+            "epochCandidateFeeAmount", config.epochCandidateFeeAmount, settings.epochCandidateFeeAmount
+        );
 
         config.identityMintFeeToken = settings.identityMintFeeToken;
         config.identityMintFee = settings.identityMintFee;
-        config.resolverStakeRequirement = settings.resolverStakeRequirement;
-        config.resolverStakeCap = settings.resolverStakeCap;
+        config.resolverSeatStake = settings.resolverSeatStake;
+        config.epochCandidateFeeToken = settings.epochCandidateFeeToken;
+        config.epochCandidateFeeAmount = settings.epochCandidateFeeAmount;
     }
 
     function applyPoolSettings(
@@ -45,9 +58,31 @@ library LibResolverJuryConfigAdmin {
         OwnershipConfigTypes.ResolverJuryPoolSettings calldata settings
     ) internal {
         enforcePoolSettings(settings);
-        enforceExistingCommitteeSizes(config, settings.resolverPoolCap);
+        enforceExistingCommitteeSizes(config, settings.activeEpochSize);
 
-        LibAdminConfig.emitConfigUpdate("resolverPoolCap", config.resolverPoolCap, settings.resolverPoolCap);
+        LibAdminConfig.emitConfigUpdate("activeEpochSize", config.activeEpochSize, settings.activeEpochSize);
+        LibAdminConfig.emitConfigUpdate(
+            "resolverEpochDuration", config.resolverEpochDuration, settings.resolverEpochDuration
+        );
+        LibAdminConfig.emitConfigUpdate(
+            "resolverRotationWindow", config.resolverRotationWindow, settings.resolverRotationWindow
+        );
+        LibAdminConfig.emitConfigUpdate(
+            "epochRandomnessCommitDuration",
+            config.epochRandomnessCommitDuration,
+            settings.epochRandomnessCommitDuration
+        );
+        LibAdminConfig.emitConfigUpdate(
+            "epochRandomnessRevealDuration",
+            config.epochRandomnessRevealDuration,
+            settings.epochRandomnessRevealDuration
+        );
+        LibAdminConfig.emitConfigUpdate(
+            "epochSelectionDuration", config.epochSelectionDuration, settings.epochSelectionDuration
+        );
+        LibAdminConfig.emitConfigUpdate(
+            "minEpochRandomnessReveals", config.minEpochRandomnessReveals, settings.minEpochRandomnessReveals
+        );
         LibAdminConfig.emitConfigUpdate("activationDelay", config.activationDelay, settings.activationDelay);
         LibAdminConfig.emitConfigUpdate("exitCooldown", config.exitCooldown, settings.exitCooldown);
         LibAdminConfig.emitConfigUpdate(
@@ -61,7 +96,13 @@ library LibResolverJuryConfigAdmin {
             "conflictPositionThreshold", config.conflictPositionThreshold, settings.conflictPositionThreshold
         );
 
-        config.resolverPoolCap = settings.resolverPoolCap;
+        config.activeEpochSize = settings.activeEpochSize;
+        config.resolverEpochDuration = settings.resolverEpochDuration;
+        config.resolverRotationWindow = settings.resolverRotationWindow;
+        config.epochRandomnessCommitDuration = settings.epochRandomnessCommitDuration;
+        config.epochRandomnessRevealDuration = settings.epochRandomnessRevealDuration;
+        config.epochSelectionDuration = settings.epochSelectionDuration;
+        config.minEpochRandomnessReveals = settings.minEpochRandomnessReveals;
         config.activationDelay = settings.activationDelay;
         config.exitCooldown = settings.exitCooldown;
         config.participationThresholdBps = settings.participationThresholdBps;
@@ -74,7 +115,7 @@ library LibResolverJuryConfigAdmin {
         LibEveMarket.ResolverJuryConfig storage config,
         OwnershipConfigTypes.ResolverJuryRoundSettings calldata settings
     ) internal {
-        enforceRoundSettings(settings, config.resolverPoolCap);
+        enforceRoundSettings(settings, config.activeEpochSize);
 
         LibAdminConfig.emitConfigUpdate(
             "committeeSizesHash",
@@ -188,8 +229,44 @@ library LibResolverJuryConfigAdmin {
     }
 
     function enforcePoolSettings(OwnershipConfigTypes.ResolverJuryPoolSettings calldata settings) internal pure {
-        if (settings.resolverPoolCap == 0) {
-            revert Errors.InvalidConfigValue("resolverPoolCap");
+        if (settings.activeEpochSize == 0) {
+            revert Errors.InvalidConfigValue("activeEpochSize");
+        }
+        enforceDurationRange(
+            "resolverEpochDuration",
+            settings.resolverEpochDuration,
+            MIN_RESOLVER_EPOCH_DURATION,
+            MAX_RESOLVER_EPOCH_DURATION
+        );
+        enforceDurationRange(
+            "resolverRotationWindow",
+            settings.resolverRotationWindow,
+            MIN_RESOLVER_ROTATION_WINDOW,
+            MAX_RESOLVER_ROTATION_WINDOW
+        );
+        if (settings.resolverRotationWindow >= settings.resolverEpochDuration) {
+            revert Errors.InvalidConfigValue("resolverRotationWindow");
+        }
+        enforceDurationRange(
+            "epochRandomnessCommitDuration",
+            settings.epochRandomnessCommitDuration,
+            MIN_RESOLVER_EPOCH_PHASE_DURATION,
+            MAX_RESOLVER_EPOCH_PHASE_DURATION
+        );
+        enforceDurationRange(
+            "epochRandomnessRevealDuration",
+            settings.epochRandomnessRevealDuration,
+            MIN_RESOLVER_EPOCH_PHASE_DURATION,
+            MAX_RESOLVER_EPOCH_PHASE_DURATION
+        );
+        enforceDurationRange(
+            "epochSelectionDuration",
+            settings.epochSelectionDuration,
+            MIN_RESOLVER_EPOCH_PHASE_DURATION,
+            MAX_RESOLVER_EPOCH_PHASE_DURATION
+        );
+        if (settings.minEpochRandomnessReveals < 1 || settings.minEpochRandomnessReveals > settings.activeEpochSize) {
+            revert Errors.InvalidConfigValue("minEpochRandomnessReveals");
         }
         if (settings.activationDelay > MAX_RESOLVER_ACTIVATION_DELAY) {
             revert Errors.InvalidConfigValue("activationDelay");
@@ -205,32 +282,32 @@ library LibResolverJuryConfigAdmin {
         }
     }
 
-    function enforceExistingCommitteeSizes(LibEveMarket.ResolverJuryConfig storage config, uint16 resolverPoolCap)
+    function enforceExistingCommitteeSizes(LibEveMarket.ResolverJuryConfig storage config, uint16 activeEpochSize)
         internal
         view
     {
         uint256 length = config.committeeSizesByRound.length;
         for (uint256 index; index < length; ++index) {
-            if (config.committeeSizesByRound[index] > resolverPoolCap) {
+            if (config.committeeSizesByRound[index] > activeEpochSize) {
                 revert Errors.InvalidCommitteeSize(config.committeeSizesByRound[index]);
             }
         }
-        if (config.minRandomnessReveals > resolverPoolCap) {
+        if (config.minRandomnessReveals > activeEpochSize) {
             revert Errors.InvalidConfigValue("minRandomnessReveals");
         }
-        if (config.allEligibleFallbackCap > resolverPoolCap) {
+        if (config.allEligibleFallbackCap > activeEpochSize) {
             revert Errors.InvalidConfigValue("allEligibleFallbackCap");
         }
     }
 
     function enforceRoundSettings(
         OwnershipConfigTypes.ResolverJuryRoundSettings calldata settings,
-        uint16 resolverPoolCap
+        uint16 activeEpochSize
     ) internal pure {
-        if (resolverPoolCap == 0) {
-            revert Errors.InvalidConfigValue("resolverPoolCap");
+        if (activeEpochSize == 0) {
+            revert Errors.InvalidConfigValue("activeEpochSize");
         }
-        enforceCommitteeSizes(settings.committeeSizesByRound, resolverPoolCap, settings.maxAppealRounds);
+        enforceCommitteeSizes(settings.committeeSizesByRound, activeEpochSize, settings.maxAppealRounds);
         if (settings.appealBondMultiplierBps <= 10_000) {
             revert Errors.InvalidConfigValue("appealBondMultiplierBps");
         }
@@ -246,15 +323,15 @@ library LibResolverJuryConfigAdmin {
         enforceDurationRange(
             "randomnessTimeout", settings.randomnessTimeout, MIN_RANDOMNESS_TIMEOUT, MAX_RANDOMNESS_TIMEOUT
         );
-        if (settings.minRandomnessReveals < 2 || settings.minRandomnessReveals > resolverPoolCap) {
+        if (settings.minRandomnessReveals < 2 || settings.minRandomnessReveals > activeEpochSize) {
             revert Errors.InvalidConfigValue("minRandomnessReveals");
         }
-        if (settings.allEligibleFallbackCap > resolverPoolCap) {
+        if (settings.allEligibleFallbackCap > activeEpochSize) {
             revert Errors.InvalidConfigValue("allEligibleFallbackCap");
         }
     }
 
-    function enforceCommitteeSizes(uint16[] calldata committeeSizes, uint16 resolverPoolCap, uint8 maxAppealRounds)
+    function enforceCommitteeSizes(uint16[] calldata committeeSizes, uint16 activeEpochSize, uint8 maxAppealRounds)
         internal
         pure
     {
@@ -265,7 +342,7 @@ library LibResolverJuryConfigAdmin {
         uint16 previous;
         for (uint256 index; index < committeeSizes.length; ++index) {
             uint16 size = committeeSizes[index];
-            if (size == 0 || size % 2 == 0 || size > resolverPoolCap || (index != 0 && size <= previous)) {
+            if (size == 0 || size % 2 == 0 || size > activeEpochSize || (index != 0 && size <= previous)) {
                 revert Errors.InvalidCommitteeSize(size);
             }
             previous = size;

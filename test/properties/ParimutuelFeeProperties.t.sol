@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {IParimutuelFacet} from "../../src/interfaces/IParimutuelFacet.sol";
-import {SEveUSDCVault} from "../../src/SEveUSDCVault.sol";
+import {SeniorCapitalPool} from "../../src/SeniorCapitalPool.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 
 import {ResolutionHarnessFacet} from "../helpers/DiamondFixtures.sol";
@@ -16,7 +16,7 @@ contract ParimutuelFeePropertiesTest is ParimutuelPropertiesBase {
         uint16 entryFeeSeed,
         uint16 creatorFeeSeed,
         uint16 protocolFeeSeed,
-        bool hasVault,
+        bool hasSeniorPool,
         bool permissionlessEnabled
     ) public {
         uint128 amount = uint128(bound(uint256(amountSeed), 1, 1_000_000_000e6));
@@ -28,24 +28,36 @@ contract ParimutuelFeePropertiesTest is ParimutuelPropertiesBase {
         _setParimutuelFees(entryFeeBps, 1);
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(creatorFeeBps, protocolFeeBps, vaultFeeBps);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(creatorFeeBps, protocolFeeBps, vaultFeeBps, 0, 0);
         vm.stopPrank();
 
         (bytes32 marketId,,,) = _createParimutuelMarket("fee exhaustiveness");
 
         vm.startPrank(owner);
-        address stakingVault = hasVault
-            ? address(new SEveUSDCVault(address(collateralToken), owner, treasury, 0, address(diamond)))
-            : address(0);
-        OwnershipFacet(address(diamond)).setStakingVault(stakingVault);
+        if (hasSeniorPool) {
+            SeniorCapitalPool seniorPool = new SeniorCapitalPool(address(collateralToken), owner, address(diamond));
+            collateralToken.mint(owner, 1);
+            collateralToken.approve(address(seniorPool), 1);
+            seniorPool.deposit(1, owner);
+            ResolutionHarnessFacet(address(diamond)).setSeniorCapitalPool(address(seniorPool));
+        } else {
+            ResolutionHarnessFacet(address(diamond)).setSeniorCapitalPool(address(0));
+        }
         OwnershipFacet(address(diamond)).setPermissionlessCreationEnabled(permissionlessEnabled);
         vm.stopPrank();
 
-        (uint128 totalFee, uint128 creatorFee, uint128 protocolFee, uint128 vaultFee, uint128 netShares) =
-            IParimutuelFacet(address(diamond)).previewEntryFee(marketId, amount);
+        (
+            uint128 totalFee,
+            uint128 creatorFee,
+            uint128 protocolFee,
+            uint128 vaultFee,
+            uint128 resolverFee,
+            uint128 evRiskFee,
+            uint128 netShares
+        ) = IParimutuelFacet(address(diamond)).previewEntryFee(marketId, amount);
 
-        assertEq(uint256(creatorFee) + protocolFee + vaultFee + netShares, amount);
-        assertEq(uint256(creatorFee) + protocolFee + vaultFee, totalFee);
+        assertEq(uint256(creatorFee) + protocolFee + vaultFee + resolverFee + evRiskFee + netShares, amount);
+        assertEq(uint256(creatorFee) + protocolFee + vaultFee + resolverFee + evRiskFee, totalFee);
     }
 
     // Feature: parimutuel-facet, Property 1: invalid creator/protocol split rejects

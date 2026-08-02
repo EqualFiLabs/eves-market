@@ -10,7 +10,7 @@ library LibResolverJury {
     enum ResolverLifecycle {
         None,
         Minted,
-        ResolverPendingActivation,
+        ResolverCandidate,
         ResolverActive,
         ExitRequested,
         ExitCooldown,
@@ -69,6 +69,55 @@ library LibResolverJury {
         uint32 attempt;
     }
 
+    struct ResolverEpochRandomness {
+        bytes32 commitment;
+        bool hasCommitted;
+        bool hasRevealed;
+        bytes32 revealedValue;
+    }
+
+    struct ResolverEpochCandidate {
+        bool optedIn;
+        bool selected;
+        bool scoreSubmitted;
+        uint256 score;
+        ResolverEpochRandomness randomness;
+    }
+
+    struct ResolverEpochSelection {
+        uint256 identityId;
+        uint256 score;
+    }
+
+    struct ResolverEpoch {
+        uint64 epochId;
+        uint64 startTime;
+        uint64 endTime;
+        uint64 rotationOpenedAt;
+        uint64 commitDeadline;
+        uint64 revealDeadline;
+        uint64 selectionDeadline;
+        uint64 randomnessReferenceBlock;
+        uint64 seedReferenceBlock;
+        uint32 validRevealCount;
+        uint32 scoreSubmittedCount;
+        bytes32 randomnessAccumulator;
+        bytes32 seed;
+        bool seedFinalized;
+        bool selectionFinalized;
+        uint16 compliantActiveCount;
+        uint256[] activeSet;
+        ResolverEpochSelection[] selected;
+        uint256[] candidates;
+        mapping(uint256 => uint256) activeIndex;
+        mapping(uint256 => bool) selectedIdentity;
+        mapping(uint256 => bool) rewardExcluded;
+        mapping(uint256 => ResolverEpochCandidate) candidateByIdentity;
+        mapping(uint256 => ResolverEpochRandomness) activeRandomness;
+        mapping(address => uint128) tradingRewardsAccrued;
+        mapping(address => bool) tradingRewardsFinalized;
+    }
+
     struct DisputeRound {
         uint8 round;
         uint16 committeeSize;
@@ -123,8 +172,10 @@ library LibResolverJury {
         mapping(uint256 => CreatorReputation) creatorRep;
         mapping(uint256 => ResolverReputation) resolverRep;
         mapping(address => uint256) identityByOwner;
-        uint256[] activeResolverSet;
-        mapping(uint256 => uint256) activeResolverIndex;
+        uint64 currentResolverEpoch;
+        mapping(uint64 => ResolverEpoch) resolverEpochs;
+        mapping(uint256 => mapping(address => uint128)) resolverRewardsAccrued;
+        mapping(uint256 => mapping(address => uint128)) resolverRewardsClaimed;
         address eveIdentity;
     }
 

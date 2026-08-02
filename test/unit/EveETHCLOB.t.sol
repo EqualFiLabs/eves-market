@@ -40,7 +40,7 @@ contract EveETHCLOBTest is SettlementFeeFixture {
         OwnershipFacet(address(diamond))
             .setCollateralProfile(EVE_ETH_PROFILE_ID, address(eveETH), address(weth), 0.0005 ether, 0, true);
         OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(100);
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(4_000, 0, 3_000, 3_000);
+        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(4_000, 0, 3_000, 3_000, 0, 0);
         vm.stopPrank();
     }
 
@@ -70,7 +70,8 @@ contract EveETHCLOBTest is SettlementFeeFixture {
         _fundEveETH(maker, makerInventory + takerCollateral);
         _fundEveETH(taker, takerCollateral);
 
-        uint128 sharesBought = _buyEveETHAskWithCollateralRouter(marketId, expected.yesPositionId, makerInventory, takerCollateral);
+        uint128 sharesBought =
+            _buyEveETHAskWithCollateralRouter(marketId, expected.yesPositionId, makerInventory, takerCollateral);
         uint128 sharesSold = _sellEveETHBidWithCollateralRouter(marketId, expected.yesPositionId, sharesBought);
 
         assertEq(sharesSold, sharesBought);
@@ -125,20 +126,21 @@ contract EveETHCLOBTest is SettlementFeeFixture {
 
         uint256 takerRefundBefore = eveETH.balanceOf(taker);
         vm.prank(taker);
-        CurveCLOBTypes.FillBestResult memory result = ITradeRouter(address(diamond)).buyWithCollateral(
-            CurveCLOBTypes.FillBestParams({
-                marketId: marketId,
-                isYesSide: true,
-                maxCollateralIn: takerCollateral,
-                minSharesOut: previewShares,
-                maxAveragePrice: type(uint128).max,
-                curveIds: _singleCurveId(curveId),
-                expectedGenerations: _singleGeneration(generation),
-                expectedCommitments: _singleCommitment(commitment),
-                payer: taker,
-                receiver: taker
-            })
-        );
+        CurveCLOBTypes.FillBestResult memory result = ITradeRouter(address(diamond))
+            .buyWithCollateral(
+                CurveCLOBTypes.FillBestParams({
+                    marketId: marketId,
+                    isYesSide: true,
+                    maxCollateralIn: takerCollateral,
+                    minSharesOut: previewShares,
+                    maxAveragePrice: type(uint128).max,
+                    curveIds: _singleCurveId(curveId),
+                    expectedGenerations: _singleGeneration(generation),
+                    expectedCommitments: _singleCommitment(commitment),
+                    payer: taker,
+                    receiver: taker
+                })
+            );
 
         sharesOut = result.sharesOut;
         assertEq(sharesOut, previewShares);
@@ -156,34 +158,36 @@ contract EveETHCLOBTest is SettlementFeeFixture {
                 marketId, true, sharesIn, 400_000_000, 400_000_000, 180, 0, LibEveMarket.PositionTokenType.CTF
             );
         (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
-        ITradeRouter.SellBestResult memory preview = ITradeRouter(address(diamond)).previewSellBest(
-            ITradeRouter.SellBestParams({
-                marketId: marketId,
-                isYesSide: true,
-                maxSharesIn: sharesIn,
-                minCollateralOut: 0,
-                curveIds: _singleCurveId(curveId),
-                expectedGenerations: _singleGeneration(generation),
-                expectedCommitments: _singleCommitment(commitment),
-                receiver: taker
-            })
-        );
+        ITradeRouter.SellBestResult memory preview = ITradeRouter(address(diamond))
+            .previewSellBest(
+                ITradeRouter.SellBestParams({
+                    marketId: marketId,
+                    isYesSide: true,
+                    maxSharesIn: sharesIn,
+                    minCollateralOut: 0,
+                    curveIds: _singleCurveId(curveId),
+                    expectedGenerations: _singleGeneration(generation),
+                    expectedCommitments: _singleCommitment(commitment),
+                    receiver: taker
+                })
+            );
 
         _approvePositions(taker);
         uint256 takerBalanceBefore = eveETH.balanceOf(taker);
         vm.prank(taker);
-        ITradeRouter.SellBestResult memory result = ITradeRouter(address(diamond)).sellWithCollateral(
-            ITradeRouter.SellBestParams({
-                marketId: marketId,
-                isYesSide: true,
-                maxSharesIn: sharesIn,
-                minCollateralOut: preview.collateralOut,
-                curveIds: _singleCurveId(curveId),
-                expectedGenerations: _singleGeneration(generation),
-                expectedCommitments: _singleCommitment(commitment),
-                receiver: taker
-            })
-        );
+        ITradeRouter.SellBestResult memory result = ITradeRouter(address(diamond))
+            .sellWithCollateral(
+                ITradeRouter.SellBestParams({
+                    marketId: marketId,
+                    isYesSide: true,
+                    maxSharesIn: sharesIn,
+                    minCollateralOut: preview.collateralOut,
+                    curveIds: _singleCurveId(curveId),
+                    expectedGenerations: _singleGeneration(generation),
+                    expectedCommitments: _singleCommitment(commitment),
+                    receiver: taker
+                })
+            );
 
         sharesSold = result.sharesSold;
         assertEq(sharesSold, preview.sharesSold);

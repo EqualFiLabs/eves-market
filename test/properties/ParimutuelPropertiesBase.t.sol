@@ -34,7 +34,7 @@ abstract contract ParimutuelPropertiesBase is ResolutionFixture {
         _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(shareToken), 250, 1);
         vm.stopPrank();
     }

@@ -217,6 +217,8 @@ interface MarketFactoryTypes {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         uint16 vaultFeeBps;
+        uint16 resolverFeeBps;
+        uint16 evRiskFeeBps;
     }
 
     struct ParimutuelFeeConfigView {
@@ -224,6 +226,8 @@ interface MarketFactoryTypes {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         uint16 vaultFeeBps;
+        uint16 resolverFeeBps;
+        uint16 evRiskFeeBps;
     }
 
     struct SpotFeeConfigView {
@@ -231,6 +235,8 @@ interface MarketFactoryTypes {
         uint16 makerFeeBps;
         uint16 protocolFeeBps;
         uint16 vaultFeeBps;
+        uint16 resolverFeeBps;
+        uint16 evRiskFeeBps;
     }
 
     struct ComboFeeConfigView {
@@ -239,6 +245,8 @@ interface MarketFactoryTypes {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         uint16 vaultFeeBps;
+        uint16 resolverFeeBps;
+        uint16 evRiskFeeBps;
     }
 
     struct MarketConfigView {
@@ -247,8 +255,8 @@ interface MarketFactoryTypes {
         address collateralToken;
         address eveToken;
         address eveTreasury;
-        address stakingVault;
-        address secondaryStakingVault;
+        address seniorCapitalPool;
+        address evRiskStakingRewards;
         address parimutuelShareToken;
         BookFeeConfigView orderbookFeeConfig;
         SpotFeeConfigView spotFeeConfig;
@@ -270,11 +278,15 @@ interface MarketFactoryTypes {
         uint64 openResolutionTimeout;
         uint16 marketCreationBatchCap;
         uint8 maxEscalation;
+        uint8 resolutionMode;
         bool permissionlessCreationEnabled;
         uint64 delayedOrderProtectionDelayBlocks;
         uint64 delayedOrderExecutionGraceBlocks;
         uint24 delayedOrderRestingDurationMinutes;
         uint16 delayedOrderProcessorFeeShareBps;
         uint8 delayedOrderProcessingMode;
+        uint32 maxDelayedOrderRouteLength;
+        uint128 minDelayedOrderQuoteWad;
+        uint128 minDelayedOrderBaseWad;
     }
 }

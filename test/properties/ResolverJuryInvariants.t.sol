@@ -29,9 +29,8 @@ contract ResolverJuryFundHarness is ResolverJuryFacet, ResolverRegistryFacet, Bo
         config.resolutionBondL2 = 0.5 ether;
         config.resolverJuryConfig.identityMintFeeToken = mintFeeToken;
         config.resolverJuryConfig.identityMintFee = 1e6;
-        config.resolverJuryConfig.resolverStakeRequirement = 100e18;
-        config.resolverJuryConfig.resolverStakeCap = 250e18;
-        config.resolverJuryConfig.resolverPoolCap = 50;
+        config.resolverJuryConfig.resolverSeatStake = 100e18;
+        config.resolverJuryConfig.activeEpochSize = 16;
         config.resolverJuryConfig.participationGraceCount = 5;
         config.resolverJuryConfig.concurrencyLimit = 5;
         config.resolverJuryConfig.commitDuration = 1 hours;
@@ -89,6 +88,24 @@ contract ResolverJuryFundHarness is ResolverJuryFacet, ResolverRegistryFacet, Bo
 
     function eveTreasury() external view returns (address) {
         return LibEveMarket.store().config.eveTreasury;
+    }
+
+    function seedActiveResolverEpochMember(uint256 identityId) external {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        jury.currentResolverEpoch = 1;
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[1];
+        if (epoch.epochId == 0) {
+            epoch.epochId = 1;
+            epoch.startTime = uint64(block.timestamp);
+            epoch.endTime = uint64(block.timestamp + 180 days);
+            epoch.selectionFinalized = true;
+        }
+        if (epoch.activeIndex[identityId] == 0) {
+            epoch.activeSet.push(identityId);
+            epoch.activeIndex[identityId] = epoch.activeSet.length;
+            epoch.compliantActiveCount += 1;
+        }
+        jury.identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle.ResolverActive;
     }
 
     function finalizeFromJury(bytes32, uint8) external {}
@@ -213,7 +230,7 @@ contract ResolverJuryFundConservationHandler is Test {
         vm.prank(owner);
         scenario.feeToken.approve(address(scenario.jury), 1e6);
         vm.prank(owner);
-        scenario.jury.mintIdentity();
+        uint256 identityId = scenario.jury.mintIdentity();
 
         vm.prank(owner);
         scenario.jury.setResolverRole(true);
@@ -224,8 +241,7 @@ contract ResolverJuryFundConservationHandler is Test {
         vm.prank(owner);
         scenario.jury.depositResolverStake(100e18);
 
-        vm.prank(owner);
-        scenario.jury.activateResolver();
+        scenario.jury.seedActiveResolverEpochMember(identityId);
     }
 
     function _resolveCurrentRound(Scenario memory scenario, bytes32 disputeId, uint8 outcome, bytes32 salt) internal {

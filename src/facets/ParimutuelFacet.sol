@@ -5,7 +5,8 @@ import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IER
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC1155} from "../../lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155.sol";
 
-import {ISEveUSDCVault} from "../interfaces/ISEveUSDCVault.sol";
+import {ISeniorCapitalPool} from "../interfaces/ISeniorCapitalPool.sol";
+import {IEvRiskStakingRewards} from "../interfaces/IEvRiskStakingRewards.sol";
 import {IParimutuelFacet} from "../interfaces/IParimutuelFacet.sol";
 import {IParimutuelShareToken} from "../interfaces/IParimutuelShareToken.sol";
 import {Errors} from "../libraries/Errors.sol";
@@ -18,6 +19,7 @@ import {LibMarketCreation} from "../libraries/LibMarketCreation.sol";
 import {LibMarketMetadata} from "../libraries/LibMarketMetadata.sol";
 import {LibParimutuel} from "../libraries/LibParimutuel.sol";
 import {LibReentrancy} from "../libraries/LibReentrancy.sol";
+import {LibResolverRewards} from "../libraries/LibResolverRewards.sol";
 import {LibSafeCast} from "../libraries/LibSafeCast.sol";
 import {MarketFactoryTypes} from "../types/MarketFactoryTypes.sol";
 
@@ -41,8 +43,9 @@ contract ParimutuelFacet {
         uint128 totalFee;
         uint128 creatorFee;
         uint128 protocolFee;
-        uint128 vaultFee;
-        uint128 secondaryVaultFee;
+        uint128 seniorPoolFee;
+        uint128 resolverFee;
+        uint128 evRiskFee;
         uint128 netShares;
     }
 
@@ -378,14 +381,15 @@ contract ParimutuelFacet {
         if (fees.protocolFee != 0) {
             collateralToken.safeTransfer(config.eveTreasury, fees.protocolFee);
         }
-        if (fees.vaultFee != 0) {
-            collateralToken.forceApprove(config.stakingVault, fees.vaultFee);
-            ISEveUSDCVault(config.stakingVault).notifyRevenue(market.collateralToken, fees.vaultFee);
+        if (fees.seniorPoolFee != 0) {
+            collateralToken.forceApprove(config.seniorCapitalPool, fees.seniorPoolFee);
+            ISeniorCapitalPool(config.seniorCapitalPool).notifyRevenue(market.collateralToken, fees.seniorPoolFee);
         }
-        if (fees.secondaryVaultFee != 0) {
-            collateralToken.forceApprove(config.secondaryStakingVault, fees.secondaryVaultFee);
-            ISEveUSDCVault(config.secondaryStakingVault).notifyRevenue(market.collateralToken, fees.secondaryVaultFee);
+        if (fees.evRiskFee != 0) {
+            collateralToken.forceApprove(config.evRiskStakingRewards, fees.evRiskFee);
+            IEvRiskStakingRewards(config.evRiskStakingRewards).notifyReward(market.collateralToken, fees.evRiskFee);
         }
+        LibResolverRewards.accrueTradingFee(market.collateralToken, fees.resolverFee);
 
         IParimutuelShareToken(market.positionToken)
             .mint(receiver, isYes ? market.yesPositionId : market.noPositionId, sharesMinted);
@@ -556,10 +560,15 @@ contract ParimutuelFacet {
         uint128 amount
     ) internal view returns (EntryFeeBreakdown memory fees) {
         LibEveMarket.ParimutuelFeeConfig storage feeConfig = market.parimutuelFeeConfig;
-        if (uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps > FEE_BPS_DENOMINATOR) {
+        if (
+            uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.resolverFeeBps
+                    + feeConfig.evRiskFeeBps
+                > FEE_BPS_DENOMINATOR
+        ) {
             revert Errors.FeeSplitExceedsDenominator(feeConfig.creatorFeeBps, feeConfig.protocolFeeBps);
         }
-        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.vaultFeeBps;
+        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.vaultFeeBps
+            + feeConfig.resolverFeeBps + feeConfig.evRiskFeeBps;
         if (splitTotal != FEE_BPS_DENOMINATOR) {
             revert Errors.InvalidFeeSplit(splitTotal);
         }
@@ -571,7 +580,10 @@ contract ParimutuelFacet {
 
         fees.creatorFee = uint128((uint256(fees.totalFee) * feeConfig.creatorFeeBps) / FEE_BPS_DENOMINATOR);
         fees.protocolFee = uint128((uint256(fees.totalFee) * feeConfig.protocolFeeBps) / FEE_BPS_DENOMINATOR);
-        uint128 rawVaultFee = fees.totalFee - fees.creatorFee - fees.protocolFee;
+        fees.resolverFee = uint128((uint256(fees.totalFee) * feeConfig.resolverFeeBps) / FEE_BPS_DENOMINATOR);
+        fees.evRiskFee = uint128((uint256(fees.totalFee) * feeConfig.evRiskFeeBps) / FEE_BPS_DENOMINATOR);
+        uint128 rawSeniorPoolFee = fees.totalFee - fees.creatorFee - fees.protocolFee - fees.resolverFee
+            - fees.evRiskFee;
         fees.netShares = amount - fees.totalFee;
 
         if (!config.permissionlessCreationEnabled) {
@@ -579,12 +591,15 @@ contract ParimutuelFacet {
             fees.creatorFee = 0;
         }
 
-        LibFeeRouting.VaultFeeRoute memory route = LibFeeRouting.previewVaultFeeRoute(
-            config.stakingVault, config.secondaryStakingVault, market.collateralToken, rawVaultFee
-        );
-        fees.vaultFee = uint128(route.primaryAmount);
-        fees.secondaryVaultFee = uint128(route.secondaryAmount);
+        LibFeeRouting.SeniorPoolFeeRoute memory route =
+            LibFeeRouting.previewSeniorPoolFeeRoute(config.seniorCapitalPool, market.collateralToken, rawSeniorPoolFee);
+        fees.seniorPoolFee = uint128(route.seniorPoolAmount);
         fees.protocolFee += uint128(route.treasuryAmount);
+
+        LibFeeRouting.EvRiskFeeRoute memory evRiskRoute =
+            LibFeeRouting.previewEvRiskFeeRoute(config.evRiskStakingRewards, fees.evRiskFee);
+        fees.evRiskFee = uint128(evRiskRoute.evRiskAmount);
+        fees.protocolFee += uint128(evRiskRoute.treasuryAmount);
     }
 
     function _remainingClaimableShares(LibParimutuel.Pool storage pool, bytes32 marketId)

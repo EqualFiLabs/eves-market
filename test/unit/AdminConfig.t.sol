@@ -21,8 +21,17 @@ contract EmptyContract {}
 contract AdminConfigTest is SettlementFeeFixture {
     event OrderbookEntryFeeBpsSet(uint16 previousEntryFeeBps, uint16 newEntryFeeBps);
     event SpotTradeFeeBpsSet(uint16 previousTradeFeeBps, uint16 newTradeFeeBps);
-    event OrderbookFeeSplitSet(uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps);
-    event SpotFeeSplitSet(uint16 makerFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps);
+    event OrderbookFeeSplitSet(
+        uint16 makerFeeBps,
+        uint16 creatorFeeBps,
+        uint16 protocolFeeBps,
+        uint16 vaultFeeBps,
+        uint16 resolverFeeBps,
+        uint16 evRiskFeeBps
+    );
+    event SpotFeeSplitSet(
+        uint16 makerFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps, uint16 resolverFeeBps, uint16 evRiskFeeBps
+    );
     event MarketCreationFeeSet(uint128 previousMarketCreationFee, uint128 newMarketCreationFee);
     event SpotBookCreationFeeSet(uint128 previousSpotBookCreationFee, uint128 newSpotBookCreationFee);
     event DefaultConditionalTokensSet(
@@ -231,22 +240,24 @@ contract AdminConfigTest is SettlementFeeFixture {
         assertEq(StateProbeFacet(address(diamond)).spotTradeFeeBps(), newSpotFeeRate);
 
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit OrderbookFeeSplitSet(8_500, 400, 1_000, 100);
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100);
+        emit OrderbookFeeSplitSet(8_500, 400, 1_000, 100, 0, 0);
+        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100, 0, 0);
 
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit SpotFeeSplitSet(8_000, 1_900, 100);
-        OwnershipFacet(address(diamond)).setSpotFeeSplit(8_000, 1_900, 100);
+        emit SpotFeeSplitSet(8_000, 1_900, 100, 0, 0);
+        OwnershipFacet(address(diamond)).setSpotFeeSplit(8_000, 1_900, 100, 0, 0);
 
         MarketFactoryTypes.MarketConfigView memory configView = IMarketFactoryFacet(address(diamond)).getMarketConfig();
         assertEq(configView.orderbookFeeConfig.makerFeeBps, 8_500);
         assertEq(configView.orderbookFeeConfig.creatorFeeBps, 400);
         assertEq(configView.orderbookFeeConfig.protocolFeeBps, 1_000);
         assertEq(configView.orderbookFeeConfig.vaultFeeBps, 100);
+        assertEq(configView.orderbookFeeConfig.resolverFeeBps, 0);
         assertEq(configView.spotFeeConfig.tradeFeeBps, newSpotFeeRate);
         assertEq(configView.spotFeeConfig.makerFeeBps, 8_000);
         assertEq(configView.spotFeeConfig.protocolFeeBps, 1_900);
         assertEq(configView.spotFeeConfig.vaultFeeBps, 100);
+        assertEq(configView.spotFeeConfig.resolverFeeBps, 0);
 
         vm.expectEmit(false, false, false, true, address(diamond));
         emit MarketCreationFeeSet(previousCreationFee, newCreationFee);

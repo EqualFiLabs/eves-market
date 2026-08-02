@@ -26,7 +26,7 @@ contract UpgradeOBRResolutionFacet is Script {
 
         vm.startBroadcast(config.privateKey);
         deployment.obrResolutionFacet = address(new OBRResolutionFacet());
-        DiamondCutFacet(config.diamond).diamondCut(_obrFacetCuts(deployment), address(0), "");
+        DiamondCutFacet(config.diamond).diamondCut(_obrFacetCuts(deployment, config.diamond), address(0), "");
         OwnershipFacet(config.diamond).setMarketCreationFee(config.marketCreationFee);
         vm.stopBroadcast();
 
@@ -40,28 +40,36 @@ contract UpgradeOBRResolutionFacet is Script {
         config.marketCreationFee = uint128(vm.envUint("MARKET_CREATION_FEE"));
     }
 
-    function _obrFacetCuts(UpgradeDeployment memory deployment)
+    function _obrFacetCuts(UpgradeDeployment memory deployment, address diamond)
         private
-        pure
+        view
         returns (DiamondCutFacet.FacetCut[] memory cuts)
     {
-        cuts = new DiamondCutFacet.FacetCut[](1);
-        cuts[0] = DiamondCutFacet.FacetCut({
-            facetAddress: deployment.obrResolutionFacet,
-            action: DiamondCutFacet.FacetCutAction.Replace,
-            functionSelectors: _obrResolutionSelectors()
-        });
+        bytes4[] memory selectors = _obrResolutionSelectors();
+        cuts = new DiamondCutFacet.FacetCut[](selectors.length);
+        for (uint256 index; index < selectors.length; ++index) {
+            bytes4[] memory selector = new bytes4[](1);
+            selector[0] = selectors[index];
+            cuts[index] = DiamondCutFacet.FacetCut({
+                facetAddress: deployment.obrResolutionFacet,
+                action: _selectorAction(diamond, selectors[index]),
+                functionSelectors: selector
+            });
+        }
     }
 
     function _obrResolutionSelectors() private pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](10);
         selectors[0] = IOBRResolutionFacet.settleMarket.selector;
         selectors[1] = IOBRResolutionFacet.openResolution.selector;
         selectors[2] = IOBRResolutionFacet.disputeResolution.selector;
-        selectors[3] = IOBRResolutionFacet.getResolutionHistory.selector;
-        selectors[4] = IOBRResolutionFacet.finalizeResolution.selector;
-        selectors[5] = IOBRResolutionFacet.getMarketStatus.selector;
-        selectors[6] = IOBRResolutionFacet.settleMarketEarly.selector;
+        selectors[3] = IOBRResolutionFacet.adminFinalizeResolution.selector;
+        selectors[4] = IOBRResolutionFacet.getResolutionHistory.selector;
+        selectors[5] = IOBRResolutionFacet.finalizeResolution.selector;
+        selectors[6] = IOBRResolutionFacet.getMarketStatus.selector;
+        selectors[7] = IOBRResolutionFacet.settleMarketEarly.selector;
+        selectors[8] = IOBRResolutionFacet.finalizeFromJury.selector;
+        selectors[9] = IOBRResolutionFacet.resolutionMode.selector;
     }
 
     function _verifyUpgrade(UpgradeDeployment memory deployment, UpgradeConfig memory config) private view {
@@ -83,6 +91,16 @@ contract UpgradeOBRResolutionFacet is Script {
     function _assertSelector(address diamond, bytes4 selector, address expectedFacet) private view {
         address actualFacet = _facetAddress(diamond, selector);
         require(actualFacet == expectedFacet, "selector not upgraded");
+    }
+
+    function _selectorAction(address diamond, bytes4 selector)
+        private
+        view
+        returns (DiamondCutFacet.FacetCutAction action)
+    {
+        return _facetAddress(diamond, selector) == address(0)
+            ? DiamondCutFacet.FacetCutAction.Add
+            : DiamondCutFacet.FacetCutAction.Replace;
     }
 
     function _facetAddress(address diamond, bytes4 selector) private view returns (address facet) {

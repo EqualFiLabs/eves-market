@@ -111,34 +111,42 @@ contract MarketViewFacet is MarketFactoryTypes {
             collateralToken: marketConfig.collateralToken,
             eveToken: marketConfig.eveToken,
             eveTreasury: marketConfig.eveTreasury,
-            stakingVault: marketConfig.stakingVault,
-            secondaryStakingVault: marketConfig.secondaryStakingVault,
+            seniorCapitalPool: marketConfig.seniorCapitalPool,
+            evRiskStakingRewards: marketConfig.evRiskStakingRewards,
             parimutuelShareToken: marketConfig.parimutuelShareToken,
             orderbookFeeConfig: BookFeeConfigView({
                 entryFeeBps: marketConfig.orderbookFeeConfig.entryFeeBps,
                 makerFeeBps: marketConfig.orderbookFeeConfig.makerFeeBps,
                 creatorFeeBps: marketConfig.orderbookFeeConfig.creatorFeeBps,
                 protocolFeeBps: marketConfig.orderbookFeeConfig.protocolFeeBps,
-                vaultFeeBps: marketConfig.orderbookFeeConfig.vaultFeeBps
+                vaultFeeBps: marketConfig.orderbookFeeConfig.vaultFeeBps,
+                resolverFeeBps: marketConfig.orderbookFeeConfig.resolverFeeBps,
+                evRiskFeeBps: marketConfig.orderbookFeeConfig.evRiskFeeBps
             }),
             spotFeeConfig: SpotFeeConfigView({
                 tradeFeeBps: marketConfig.spotFeeConfig.tradeFeeBps,
                 makerFeeBps: marketConfig.spotFeeConfig.makerFeeBps,
                 protocolFeeBps: marketConfig.spotFeeConfig.protocolFeeBps,
-                vaultFeeBps: marketConfig.spotFeeConfig.vaultFeeBps
+                vaultFeeBps: marketConfig.spotFeeConfig.vaultFeeBps,
+                resolverFeeBps: marketConfig.spotFeeConfig.resolverFeeBps,
+                evRiskFeeBps: marketConfig.spotFeeConfig.evRiskFeeBps
             }),
             comboFeeConfig: ComboFeeConfigView({
                 tradeFeeBps: marketConfig.comboFeeConfig.tradeFeeBps,
                 makerFeeBps: marketConfig.comboFeeConfig.makerFeeBps,
                 creatorFeeBps: marketConfig.comboFeeConfig.creatorFeeBps,
                 protocolFeeBps: marketConfig.comboFeeConfig.protocolFeeBps,
-                vaultFeeBps: marketConfig.comboFeeConfig.vaultFeeBps
+                vaultFeeBps: marketConfig.comboFeeConfig.vaultFeeBps,
+                resolverFeeBps: marketConfig.comboFeeConfig.resolverFeeBps,
+                evRiskFeeBps: marketConfig.comboFeeConfig.evRiskFeeBps
             }),
             parimutuelFeeConfig: ParimutuelFeeConfigView({
                 entryFeeBps: marketConfig.parimutuelFeeConfig.entryFeeBps,
                 creatorFeeBps: marketConfig.parimutuelFeeConfig.creatorFeeBps,
                 protocolFeeBps: marketConfig.parimutuelFeeConfig.protocolFeeBps,
-                vaultFeeBps: marketConfig.parimutuelFeeConfig.vaultFeeBps
+                vaultFeeBps: marketConfig.parimutuelFeeConfig.vaultFeeBps,
+                resolverFeeBps: marketConfig.parimutuelFeeConfig.resolverFeeBps,
+                evRiskFeeBps: marketConfig.parimutuelFeeConfig.evRiskFeeBps
             }),
             parimutuelMinEntry: marketConfig.parimutuelMinEntry,
             parimutuelCreationSeedAmount: marketConfig.parimutuelCreationSeedAmount,
@@ -156,12 +164,16 @@ contract MarketViewFacet is MarketFactoryTypes {
             openResolutionTimeout: marketConfig.openResolutionTimeout,
             marketCreationBatchCap: marketConfig.marketCreationBatchCap,
             maxEscalation: marketConfig.maxEscalation,
+            resolutionMode: uint8(marketConfig.resolutionMode),
             permissionlessCreationEnabled: marketConfig.permissionlessCreationEnabled,
             delayedOrderProtectionDelayBlocks: marketConfig.delayedOrderProtectionDelayBlocks,
             delayedOrderExecutionGraceBlocks: marketConfig.delayedOrderExecutionGraceBlocks,
             delayedOrderRestingDurationMinutes: marketConfig.delayedOrderRestingDurationMinutes,
             delayedOrderProcessorFeeShareBps: marketConfig.delayedOrderProcessorFeeShareBps,
-            delayedOrderProcessingMode: uint8(marketConfig.delayedOrderProcessingMode)
+            delayedOrderProcessingMode: uint8(marketConfig.delayedOrderProcessingMode),
+            maxDelayedOrderRouteLength: marketConfig.maxDelayedOrderRouteLength,
+            minDelayedOrderQuoteWad: marketConfig.minDelayedOrderQuoteWad,
+            minDelayedOrderBaseWad: marketConfig.minDelayedOrderBaseWad
         });
     }
 

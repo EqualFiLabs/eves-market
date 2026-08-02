@@ -151,6 +151,8 @@ abstract contract CurveCLOBTypes {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         uint16 vaultFeeBps;
+        uint16 resolverFeeBps;
+        uint16 evRiskFeeBps;
         uint8 pricingMode;
         uint8 lifecycle;
         uint8 tickPresetId;

@@ -86,6 +86,11 @@ library LibEveMarket {
         AllEligible
     }
 
+    enum ResolutionMode {
+        CreatorAdminBootstrap,
+        ObrJury
+    }
+
     enum MarketState {
         Inactive,
         Scheduled,
@@ -108,6 +113,8 @@ library LibEveMarket {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         uint16 vaultFeeBps;
+        uint16 resolverFeeBps;
+        uint16 evRiskFeeBps;
     }
 
     struct ParimutuelFeeConfig {
@@ -115,6 +122,8 @@ library LibEveMarket {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         uint16 vaultFeeBps;
+        uint16 resolverFeeBps;
+        uint16 evRiskFeeBps;
     }
 
     struct SpotFeeConfig {
@@ -122,6 +131,8 @@ library LibEveMarket {
         uint16 makerFeeBps;
         uint16 protocolFeeBps;
         uint16 vaultFeeBps;
+        uint16 resolverFeeBps;
+        uint16 evRiskFeeBps;
     }
 
     struct ComboFeeConfig {
@@ -130,14 +141,23 @@ library LibEveMarket {
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
         uint16 vaultFeeBps;
+        uint16 resolverFeeBps;
+        uint16 evRiskFeeBps;
     }
 
     struct ResolverJuryConfig {
         uint128 identityMintFee;
         address identityMintFeeToken;
-        uint128 resolverStakeRequirement;
-        uint128 resolverStakeCap;
-        uint16 resolverPoolCap;
+        uint128 resolverSeatStake;
+        uint128 epochCandidateFeeAmount;
+        address epochCandidateFeeToken;
+        uint16 activeEpochSize;
+        uint64 resolverEpochDuration;
+        uint64 resolverRotationWindow;
+        uint64 epochRandomnessCommitDuration;
+        uint64 epochRandomnessRevealDuration;
+        uint64 epochSelectionDuration;
+        uint8 minEpochRandomnessReveals;
         uint64 activationDelay;
         uint64 exitCooldown;
         uint16 participationThresholdBps;
@@ -190,9 +210,8 @@ library LibEveMarket {
         address collateralToken;
         address eveToken;
         address eveTreasury;
-        address stakingVault;
-        address secondaryStakingVault;
         address seniorCapitalPool;
+        address evRiskStakingRewards;
         BookFeeConfig orderbookFeeConfig;
         SpotFeeConfig spotFeeConfig;
         ParimutuelFeeConfig parimutuelFeeConfig;
@@ -213,6 +232,7 @@ library LibEveMarket {
         uint16[8] parimutuelEpochMultipliersBps;
         uint16 marketCreationBatchCap;
         uint8 maxEscalation;
+        ResolutionMode resolutionMode;
         bool permissionlessCreationEnabled;
         uint128 parimutuelCreationSeedAmount;
         ComboFeeConfig comboFeeConfig;
@@ -226,6 +246,9 @@ library LibEveMarket {
         uint24 delayedOrderRestingDurationMinutes;
         uint16 delayedOrderProcessorFeeShareBps;
         ProcessingMode delayedOrderProcessingMode;
+        uint32 maxDelayedOrderRouteLength;
+        uint128 minDelayedOrderQuoteWad;
+        uint128 minDelayedOrderBaseWad;
     }
 
     struct Market {

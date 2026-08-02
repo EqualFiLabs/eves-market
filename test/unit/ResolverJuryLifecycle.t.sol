@@ -24,7 +24,7 @@ import {EveIdentity} from "../../src/tokens/EveIdentity.sol";
 import {EvesPositionManager} from "../../src/tokens/EvesPositionManager.sol";
 import {ParimutuelShareToken} from "../../src/tokens/ParimutuelShareToken.sol";
 
-import {ResolutionFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
+import {ResolutionFixture, ResolutionHarnessFacet, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 
 contract ResolverJuryLifecycleTest is ResolutionFixture {
@@ -57,7 +57,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         _configureResolverJury();
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(parimutuelShareToken), 250, 1e6);
         OwnershipFacet(address(diamond)).setParimutuelCreationSeedAmount(0);
         OwnershipFacet(address(diamond)).setEvesPositionManager(address(outcomePositions));
@@ -130,6 +130,24 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
             IResolverRegistryFacet(address(diamond)).resolverReputation(carolResolver.identityId).finalAgreementCount, 0
         );
         assertEq(StateProbeFacet(address(diamond)).getBondedTotals(challengerThree), 0);
+    }
+
+    function test_OwnerCanEnableObrJuryModeAfterFullHealthyResolverSet() public {
+        ResolutionHarnessFacet(address(diamond)).setResolutionMode(
+            uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap)
+        );
+        _activateResolver(alice);
+        _activateResolver(bob);
+        _activateResolver(carol);
+
+        vm.expectEmit(false, false, false, true, address(diamond));
+        emit Events.ResolutionModeSet(
+            uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap), uint8(LibEveMarket.ResolutionMode.ObrJury)
+        );
+        vm.prank(owner);
+        OwnershipFacet(address(diamond)).setResolutionMode(uint8(LibEveMarket.ResolutionMode.ObrJury));
+
+        assertEq(IOBRResolutionFacet(address(diamond)).resolutionMode(), uint8(LibEveMarket.ResolutionMode.ObrJury));
     }
 
     function test_ParimutuelDisputeRunsThroughJuryAndSettlement() public {
@@ -441,14 +459,21 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
                 OwnershipConfigTypes.ResolverJuryIdentitySettings({
                     identityMintFeeToken: address(0),
                     identityMintFee: 0,
-                    resolverStakeRequirement: 100e18,
-                    resolverStakeCap: 250e18
+                    resolverSeatStake: 100e18,
+                    epochCandidateFeeToken: address(0),
+                    epochCandidateFeeAmount: 0
                 })
             );
         OwnershipFacet(address(diamond))
             .setResolverJuryPoolSettings(
                 OwnershipConfigTypes.ResolverJuryPoolSettings({
-                    resolverPoolCap: 3,
+                    activeEpochSize: 3,
+                    resolverEpochDuration: 180 days,
+                    resolverRotationWindow: 30 days,
+                    epochRandomnessCommitDuration: 1 days,
+                    epochRandomnessRevealDuration: 1 days,
+                    epochSelectionDuration: 1 days,
+                    minEpochRandomnessReveals: 1,
                     activationDelay: 0,
                     exitCooldown: 1 days,
                     participationThresholdBps: 0,
@@ -508,7 +533,13 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         OwnershipFacet(address(diamond))
             .setResolverJuryPoolSettings(
                 OwnershipConfigTypes.ResolverJuryPoolSettings({
-                    resolverPoolCap: 5,
+                    activeEpochSize: 5,
+                    resolverEpochDuration: 180 days,
+                    resolverRotationWindow: 30 days,
+                    epochRandomnessCommitDuration: 1 days,
+                    epochRandomnessRevealDuration: 1 days,
+                    epochSelectionDuration: 1 days,
+                    minEpochRandomnessReveals: 1,
                     activationDelay: 0,
                     exitCooldown: 1 days,
                     participationThresholdBps: 0,
@@ -585,8 +616,32 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         vm.prank(account);
         IResolverRegistryFacet(address(diamond)).depositResolverStake(100e18);
 
-        vm.prank(account);
-        IResolverRegistryFacet(address(diamond)).activateResolver();
+        _seedActiveResolverEpochMember(resolver.identityId);
+    }
+
+    function _seedActiveResolverEpochMember(uint256 identityId) internal {
+        // Synthetic setup: launch-flow tests need active jurors before exercising
+        // settlement lifecycles; ResolverRegistry.t.sol covers the real epoch flow.
+        bytes32 root = bytes32(uint256(keccak256("eve.resolver.identity.jury.storage")) - 1);
+        vm.store(address(diamond), bytes32(uint256(root) + 6), bytes32(uint256(1)));
+
+        bytes32 epochSlot = keccak256(abi.encode(uint64(1), bytes32(uint256(root) + 7)));
+        bytes32 activeSetSlot = bytes32(uint256(epochSlot) + 6);
+        bytes32 activeIndexSlot = keccak256(abi.encode(identityId, bytes32(uint256(epochSlot) + 9)));
+        if (uint256(vm.load(address(diamond), activeIndexSlot)) == 0) {
+            uint256 length = uint256(vm.load(address(diamond), activeSetSlot));
+            vm.store(address(diamond), activeSetSlot, bytes32(length + 1));
+            bytes32 activeElementSlot = bytes32(uint256(keccak256(abi.encode(activeSetSlot))) + length);
+            vm.store(address(diamond), activeElementSlot, bytes32(identityId));
+            vm.store(address(diamond), activeIndexSlot, bytes32(length + 1));
+        }
+
+        bytes32 identitySlot = keccak256(abi.encode(identityId, bytes32(uint256(root) + 2)));
+        vm.store(
+            address(diamond),
+            bytes32(uint256(identitySlot) + 1),
+            bytes32(uint256(uint8(LibResolverJury.ResolverLifecycle.ResolverActive)))
+        );
     }
 
     function _resolveMarketThroughJury(
@@ -869,7 +924,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         selectors[1] = IResolverRegistryFacet.setCreatorRole.selector;
         selectors[2] = IResolverRegistryFacet.setResolverRole.selector;
         selectors[3] = IResolverRegistryFacet.depositResolverStake.selector;
-        selectors[4] = IResolverRegistryFacet.activateResolver.selector;
+        selectors[4] = IResolverRegistryFacet.openResolverEpochRotation.selector;
         selectors[5] = IResolverRegistryFacet.requestResolverExit.selector;
         selectors[6] = IResolverRegistryFacet.withdrawResolverStake.selector;
         selectors[7] = IResolverRegistryFacet.eveIdentity.selector;
@@ -885,8 +940,8 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         selectors[17] = IResolverRegistryFacet.resolverReputation.selector;
         selectors[18] = IResolverRegistryFacet.eligibleResolverCount.selector;
         selectors[19] = IResolverRegistryFacet.activeResolverCount.selector;
-        selectors[20] = IResolverRegistryFacet.resolverPoolCapacity.selector;
-        selectors[21] = IResolverRegistryFacet.resolverPoolMemberAt.selector;
+        selectors[20] = IResolverRegistryFacet.activeResolverEpochSize.selector;
+        selectors[21] = IResolverRegistryFacet.activeResolverAt.selector;
         selectors[22] = IResolverRegistryFacet.applyFinalityReputation.selector;
     }
 

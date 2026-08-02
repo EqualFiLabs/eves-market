@@ -20,8 +20,9 @@ contract ParimutuelViewFacet {
         uint128 totalFee;
         uint128 creatorFee;
         uint128 protocolFee;
-        uint128 vaultFee;
-        uint128 secondaryVaultFee;
+        uint128 seniorPoolFee;
+        uint128 resolverFee;
+        uint128 evRiskFee;
         uint128 netShares;
     }
 
@@ -44,7 +45,15 @@ contract ParimutuelViewFacet {
     function previewEntryFee(bytes32 marketId, uint128 amount)
         external
         view
-        returns (uint128 totalFee, uint128 creatorFee, uint128 protocolFee, uint128 vaultFee, uint128 netShares)
+        returns (
+            uint128 totalFee,
+            uint128 creatorFee,
+            uint128 protocolFee,
+            uint128 vaultFee,
+            uint128 resolverFee,
+            uint128 evRiskFee,
+            uint128 netShares
+        )
     {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
         LibEveMarket.Market storage market = _requireParimutuelMarket(state, marketId);
@@ -52,7 +61,9 @@ contract ParimutuelViewFacet {
         totalFee = fees.totalFee;
         creatorFee = fees.creatorFee;
         protocolFee = fees.protocolFee;
-        vaultFee = fees.vaultFee + fees.secondaryVaultFee;
+        vaultFee = fees.seniorPoolFee;
+        resolverFee = fees.resolverFee;
+        evRiskFee = fees.evRiskFee;
         netShares = fees.netShares;
     }
 
@@ -83,7 +94,9 @@ contract ParimutuelViewFacet {
             totalFee: fees.totalFee,
             creatorFee: fees.creatorFee,
             protocolFee: fees.protocolFee,
-            vaultFee: fees.vaultFee + fees.secondaryVaultFee,
+            vaultFee: fees.seniorPoolFee,
+            resolverFee: fees.resolverFee,
+            evRiskFee: fees.evRiskFee,
             netCollateral: fees.netShares,
             sharesMinted: sharesMinted,
             multiplierBps: multiplierBps,
@@ -185,10 +198,15 @@ contract ParimutuelViewFacet {
         uint128 amount
     ) private view returns (EntryFeeBreakdown memory fees) {
         LibEveMarket.ParimutuelFeeConfig storage feeConfig = market.parimutuelFeeConfig;
-        if (uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps > FEE_BPS_DENOMINATOR) {
+        if (
+            uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.resolverFeeBps
+                    + feeConfig.evRiskFeeBps
+                > FEE_BPS_DENOMINATOR
+        ) {
             revert Errors.FeeSplitExceedsDenominator(feeConfig.creatorFeeBps, feeConfig.protocolFeeBps);
         }
-        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.vaultFeeBps;
+        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.vaultFeeBps
+            + feeConfig.resolverFeeBps + feeConfig.evRiskFeeBps;
         if (splitTotal != FEE_BPS_DENOMINATOR) {
             revert Errors.InvalidFeeSplit(splitTotal);
         }
@@ -200,7 +218,10 @@ contract ParimutuelViewFacet {
 
         fees.creatorFee = uint128((uint256(fees.totalFee) * feeConfig.creatorFeeBps) / FEE_BPS_DENOMINATOR);
         fees.protocolFee = uint128((uint256(fees.totalFee) * feeConfig.protocolFeeBps) / FEE_BPS_DENOMINATOR);
-        uint128 rawVaultFee = fees.totalFee - fees.creatorFee - fees.protocolFee;
+        fees.resolverFee = uint128((uint256(fees.totalFee) * feeConfig.resolverFeeBps) / FEE_BPS_DENOMINATOR);
+        fees.evRiskFee = uint128((uint256(fees.totalFee) * feeConfig.evRiskFeeBps) / FEE_BPS_DENOMINATOR);
+        uint128 rawSeniorPoolFee = fees.totalFee - fees.creatorFee - fees.protocolFee - fees.resolverFee
+            - fees.evRiskFee;
         fees.netShares = amount - fees.totalFee;
 
         if (!config.permissionlessCreationEnabled) {
@@ -208,12 +229,15 @@ contract ParimutuelViewFacet {
             fees.creatorFee = 0;
         }
 
-        LibFeeRouting.VaultFeeRoute memory route = LibFeeRouting.previewVaultFeeRoute(
-            config.stakingVault, config.secondaryStakingVault, market.collateralToken, rawVaultFee
-        );
-        fees.vaultFee = uint128(route.primaryAmount);
-        fees.secondaryVaultFee = uint128(route.secondaryAmount);
+        LibFeeRouting.SeniorPoolFeeRoute memory route =
+            LibFeeRouting.previewSeniorPoolFeeRoute(config.seniorCapitalPool, market.collateralToken, rawSeniorPoolFee);
+        fees.seniorPoolFee = uint128(route.seniorPoolAmount);
         fees.protocolFee += uint128(route.treasuryAmount);
+
+        LibFeeRouting.EvRiskFeeRoute memory evRiskRoute =
+            LibFeeRouting.previewEvRiskFeeRoute(config.evRiskStakingRewards, fees.evRiskFee);
+        fees.evRiskFee = uint128(evRiskRoute.evRiskAmount);
+        fees.protocolFee += uint128(evRiskRoute.treasuryAmount);
     }
 
     function _requireParimutuelMarket(LibEveMarket.EveMarketStorage storage state, bytes32 marketId)

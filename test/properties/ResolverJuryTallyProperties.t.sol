@@ -22,11 +22,11 @@ contract ResolverJuryTallyPropertyHarness is ResolverJuryFacet, ResolverRegistry
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
         config.eveToken = eveToken;
         config.bondToken = eveToken;
+        config.eveTreasury = address(uint160(uint256(keccak256("resolver-tally-treasury"))));
         config.resolverJuryConfig.identityMintFeeToken = mintFeeToken;
         config.resolverJuryConfig.identityMintFee = 1e6;
-        config.resolverJuryConfig.resolverStakeRequirement = 100e18;
-        config.resolverJuryConfig.resolverStakeCap = 250e18;
-        config.resolverJuryConfig.resolverPoolCap = 50;
+        config.resolverJuryConfig.resolverSeatStake = 100e18;
+        config.resolverJuryConfig.activeEpochSize = 16;
         config.resolverJuryConfig.participationGraceCount = 5;
         config.resolverJuryConfig.concurrencyLimit = 5;
         config.resolverJuryConfig.commitDuration = 1 hours;
@@ -104,6 +104,24 @@ contract ResolverJuryTallyPropertyHarness is ResolverJuryFacet, ResolverRegistry
     function seedSelectionReady(bytes32 disputeId, bytes32 seed) external {
         LibResolverJury.Dispute storage dispute = LibResolverJury.store().disputes[disputeId];
         dispute.rounds[dispute.currentRound].seed = seed == bytes32(0) ? keccak256("fallback-seed") : seed;
+    }
+
+    function seedActiveResolverEpochMember(uint256 identityId) external {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        jury.currentResolverEpoch = 1;
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[1];
+        if (epoch.epochId == 0) {
+            epoch.epochId = 1;
+            epoch.startTime = uint64(block.timestamp);
+            epoch.endTime = uint64(block.timestamp + 180 days);
+            epoch.selectionFinalized = true;
+        }
+        if (epoch.activeIndex[identityId] == 0) {
+            epoch.activeSet.push(identityId);
+            epoch.activeIndex[identityId] = epoch.activeSet.length;
+            epoch.compliantActiveCount += 1;
+        }
+        jury.identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle.ResolverActive;
     }
 }
 
@@ -467,7 +485,6 @@ contract ResolverJuryTallyPropertiesTest is Test {
         vm.prank(account);
         jury.depositResolverStake(100e18);
 
-        vm.prank(account);
-        jury.activateResolver();
+        jury.seedActiveResolverEpochMember(identityId);
     }
 }

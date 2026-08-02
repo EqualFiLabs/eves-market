@@ -7,12 +7,19 @@ library OwnershipConfigTypes {
     struct ResolverJuryIdentitySettings {
         address identityMintFeeToken;
         uint128 identityMintFee;
-        uint128 resolverStakeRequirement;
-        uint128 resolverStakeCap;
+        uint128 resolverSeatStake;
+        address epochCandidateFeeToken;
+        uint128 epochCandidateFeeAmount;
     }
 
     struct ResolverJuryPoolSettings {
-        uint16 resolverPoolCap;
+        uint16 activeEpochSize;
+        uint64 resolverEpochDuration;
+        uint64 resolverRotationWindow;
+        uint64 epochRandomnessCommitDuration;
+        uint64 epochRandomnessRevealDuration;
+        uint64 epochSelectionDuration;
+        uint8 minEpochRandomnessReveals;
         uint64 activationDelay;
         uint64 exitCooldown;
         uint16 participationThresholdBps;

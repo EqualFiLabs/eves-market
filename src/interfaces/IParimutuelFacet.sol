@@ -37,6 +37,8 @@ interface IParimutuelFacet {
         uint128 creatorFee;
         uint128 protocolFee;
         uint128 vaultFee;
+        uint128 resolverFee;
+        uint128 evRiskFee;
         uint128 netCollateral;
         uint128 sharesMinted;
         uint256 multiplierBps;
@@ -96,7 +98,15 @@ interface IParimutuelFacet {
     function previewEntryFee(bytes32 marketId, uint128 amount)
         external
         view
-        returns (uint128 totalFee, uint128 creatorFee, uint128 protocolFee, uint128 vaultFee, uint128 netShares);
+        returns (
+            uint128 totalFee,
+            uint128 creatorFee,
+            uint128 protocolFee,
+            uint128 vaultFee,
+            uint128 resolverFee,
+            uint128 evRiskFee,
+            uint128 netShares
+        );
 
     function previewParimutuelEntry(bytes32 marketId, bool isYes, uint128 amount)
         external

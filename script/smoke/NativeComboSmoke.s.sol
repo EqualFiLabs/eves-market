@@ -358,14 +358,6 @@ contract NativeComboSmoke is DeployScript {
         c.market.parlayVaultFeeBps = 0;
         c.market.parlayFeeRecipientBps = 10_000;
 
-        c.aumFeeBps = 0;
-        c.lendingMaxLtvBps = 9_500;
-        c.lendingOriginationFeeBps = 0;
-        c.lendingExtensionFeeBps = 0;
-        c.lendingFeeRecipientBps = 0;
-        c.lendingMinDurationSeconds = uint32(5 minutes);
-        c.lendingMaxDurationSeconds = uint32(365 days);
-        c.lendingGracePeriodSeconds = uint32(12 hours);
         c.initialUsdcMint = 0;
         c.initialEveMint = 1_000_000e18;
         c.faucetOwner = owner;

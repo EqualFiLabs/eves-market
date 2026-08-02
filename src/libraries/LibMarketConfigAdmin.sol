@@ -129,26 +129,15 @@ library LibMarketConfigAdmin {
         config.eveTreasury = eveTreasury;
     }
 
-    function setStakingVault(LibEveMarket.MarketConfig storage config, address stakingVault)
+    function setEvRiskStakingRewards(LibEveMarket.MarketConfig storage config, address evRiskStakingRewards)
         internal
-        returns (address previousStakingVault)
+        returns (address previousEvRiskStakingRewards)
     {
-        if (stakingVault != address(0)) {
-            LibAdminConfig.enforceVault(stakingVault);
+        if (evRiskStakingRewards != address(0) && evRiskStakingRewards.code.length == 0) {
+            revert Errors.ContractHasNoCode(evRiskStakingRewards);
         }
-        previousStakingVault = config.stakingVault;
-        config.stakingVault = stakingVault;
-    }
-
-    function setSecondaryStakingVault(LibEveMarket.MarketConfig storage config, address stakingVault)
-        internal
-        returns (address previousStakingVault)
-    {
-        if (stakingVault != address(0)) {
-            LibAdminConfig.enforceVault(stakingVault);
-        }
-        previousStakingVault = config.secondaryStakingVault;
-        config.secondaryStakingVault = stakingVault;
+        previousEvRiskStakingRewards = config.evRiskStakingRewards;
+        config.evRiskStakingRewards = evRiskStakingRewards;
     }
 
     function setParimutuelConfig(

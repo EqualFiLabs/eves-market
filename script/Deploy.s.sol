@@ -8,17 +8,14 @@ import {stdJson} from "../lib/forge-std/src/StdJson.sol";
 
 import {ChainlinkETHUSDOracle} from "../src/ChainlinkETHUSDOracle.sol";
 import {EveMarketDiamond} from "../src/EveMarketDiamond.sol";
+import {EvRiskStakingRewards} from "../src/EvRiskStakingRewards.sol";
 import {EveRiskShares} from "../src/EveRiskShares.sol";
 import {EveUSD} from "../src/EveUSD.sol";
 import {EveUSDPool} from "../src/EveUSDPool.sol";
 import {EveUSDRouter} from "../src/EveUSDRouter.sol";
 import {EveUSDC} from "../src/EveUSDC.sol";
 import {Faucet} from "../src/Faucet.sol";
-import {MakerLendingRouter} from "../src/MakerLendingRouter.sol";
-import {SEveUSDLending} from "../src/SEveUSDLending.sol";
-import {SEveUSDVault} from "../src/SEveUSDVault.sol";
-import {SEveUSDCLending} from "../src/SEveUSDCLending.sol";
-import {SEveUSDCVault} from "../src/SEveUSDCVault.sol";
+import {SeniorCapitalPool} from "../src/SeniorCapitalPool.sol";
 import {CanonicalWETH9} from "../src/mocks/CanonicalWETH9.sol";
 import {MockETHUSDOracle} from "../src/mocks/MockETHUSDOracle.sol";
 import {BondManagerFacet} from "../src/facets/BondManagerFacet.sol";
@@ -68,7 +65,6 @@ import {BookTradeFacet} from "../src/facets/BookTradeFacet.sol";
 import {BookViewFacet} from "../src/facets/BookViewFacet.sol";
 import {TradeRouterFacet} from "../src/facets/TradeRouterFacet.sol";
 import {TradeRouterSellFacet} from "../src/facets/TradeRouterSellFacet.sol";
-import {VaultRouterFacet} from "../src/facets/VaultRouterFacet.sol";
 import {IBondManagerFacet} from "../src/interfaces/IBondManagerFacet.sol";
 import {IBondTokenGateFacet} from "../src/interfaces/IBondTokenGateFacet.sol";
 import {IBookAdminFacet} from "../src/interfaces/IBookAdminFacet.sol";
@@ -98,7 +94,6 @@ import {IQuoteEnvelopeFacet} from "../src/interfaces/IQuoteEnvelopeFacet.sol";
 import {IResolverJuryFacet} from "../src/interfaces/IResolverJuryFacet.sol";
 import {IResolverRegistryFacet} from "../src/interfaces/IResolverRegistryFacet.sol";
 import {ITradeRouter} from "../src/interfaces/ITradeRouter.sol";
-import {IVaultRouter} from "../src/interfaces/IVaultRouter.sol";
 import {IEveUSDPool} from "../src/interfaces/IEveUSDPool.sol";
 import {ResolverJuryInit} from "../src/init/ResolverJuryInit.sol";
 import {LibEveUSDCUnits} from "../src/libraries/LibEveUSDCUnits.sol";
@@ -189,8 +184,8 @@ contract DeployScript is Script {
         address collateralToken;
         address eveToken;
         address eveTreasury;
-        address stakingVault;
-        address secondaryStakingVault;
+        address seniorCapitalPool;
+        address evRiskStakingRewards;
         address evesPositionManager;
         address parimutuelShareToken;
         address parlayTicketToken;
@@ -203,19 +198,27 @@ contract DeployScript is Script {
         uint16 orderbookCreatorFeeBps;
         uint16 orderbookProtocolFeeBps;
         uint16 orderbookVaultFeeBps;
+        uint16 orderbookResolverFeeBps;
+        uint16 orderbookEvRiskFeeBps;
         uint16 spotTradeFeeBps;
         uint16 spotMakerFeeBps;
         uint16 spotProtocolFeeBps;
         uint16 spotVaultFeeBps;
+        uint16 spotResolverFeeBps;
+        uint16 spotEvRiskFeeBps;
         uint16 comboTradeFeeBps;
         uint16 comboMakerFeeBps;
         uint16 comboCreatorFeeBps;
         uint16 comboProtocolFeeBps;
         uint16 comboVaultFeeBps;
+        uint16 comboResolverFeeBps;
+        uint16 comboEvRiskFeeBps;
         uint16 parimutuelEntryFeeBps;
         uint16 parimutuelCreatorFeeBps;
         uint16 parimutuelProtocolFeeBps;
         uint16 parimutuelVaultFeeBps;
+        uint16 parimutuelResolverFeeBps;
+        uint16 parimutuelEvRiskFeeBps;
         uint128 parimutuelMinEntry;
         uint64 parimutuelEpochWindowCap;
         uint16 marketCreationBatchCap;
@@ -239,6 +242,9 @@ contract DeployScript is Script {
         uint24 delayedOrderRestingDurationMinutes;
         uint16 delayedOrderProcessorFeeShareBps;
         uint8 delayedOrderProcessingMode;
+        uint32 maxDelayedOrderRouteLength;
+        uint128 minDelayedOrderQuoteWad;
+        uint128 minDelayedOrderBaseWad;
     }
 
     struct Deployment {
@@ -295,31 +301,19 @@ contract DeployScript is Script {
         address parlayTicketToken;
         address tradeRouterFacet;
         address tradeRouterSellFacet;
-        address vaultRouterFacet;
     }
 
     struct FullDeploymentConfig {
         DeploymentConfig market;
         address usdcToken;
         address eveUSDC;
-        address seveUsdcLending;
-        address seveUsdVault;
-        address seveUsdLending;
-        address makerLendingRouter;
+        address seniorCapitalPool;
         address eveUsdcOnramp;
         address eveUsdcOfframp;
         address feeRecipient;
-        uint16 aumFeeBps;
-        uint16 lendingMaxLtvBps;
-        uint16 lendingOriginationFeeBps;
-        uint16 lendingExtensionFeeBps;
-        uint16 lendingFeeRecipientBps;
-        uint32 lendingMinDurationSeconds;
-        uint32 lendingMaxDurationSeconds;
-        uint32 lendingGracePeriodSeconds;
         uint256 initialUsdcMint;
         uint256 initialEveMint;
-        uint256 initialVaultBootstrap;
+        uint256 initialSeniorPoolBootstrap;
         address faucetOwner;
         address wethToken;
         address eveETH;
@@ -345,16 +339,13 @@ contract DeployScript is Script {
         address usdcToken;
         address eveToken;
         address eveUSDC;
-        address seveUsdcVault;
-        address seveUsdcLending;
-        address seveUsdVault;
-        address seveUsdLending;
-        address makerLendingRouter;
+        address seniorCapitalPool;
         address faucet;
         address wethToken;
         address eveETH;
         address eveUSD;
         address evRisk;
+        address evRiskStakingRewards;
         address eveUsdPool;
         address eveUsdRouter;
         address eveUsdOracle;
@@ -395,58 +386,34 @@ contract DeployScript is Script {
         deployment.eveUsdRouter = eveUsdDeployment.router;
         deployment.eveUsdOracle = eveUsdDeployment.oracle;
         deployment.eveUsdStackDeployer = eveUsdDeployment.stackDeployer;
+        deployment.evRiskStakingRewards = _resolveEvRiskStakingRewards(
+            config.market.evRiskStakingRewards,
+            deployment.evRisk,
+            deployment.eveUsdPool,
+            config.feeRecipient,
+            temporaryOwner
+        );
 
         DeploymentConfig memory marketConfig = config.market;
         marketConfig.owner = temporaryOwner;
         marketConfig.collateralToken = deployment.eveUSDC;
         marketConfig.eveToken = deployment.eveToken;
+        marketConfig.evRiskStakingRewards = deployment.evRiskStakingRewards;
         if (marketConfig.bondToken == address(0)) {
             marketConfig.bondToken = deployment.eveETH;
         }
-        marketConfig.stakingVault = address(0);
-        marketConfig.secondaryStakingVault = address(0);
         marketConfig.parlayFeeRecipient = config.feeRecipient;
 
         deployment.market = deploy(marketConfig, temporaryOwner);
-        deployment.seveUsdcVault = _resolveSEveUSDCVault(
-            config.market.stakingVault,
-            deployment.eveUSDC,
-            temporaryOwner,
-            config.feeRecipient,
-            config.aumFeeBps,
-            deployment.market.diamond
-        );
-        deployment.seveUsdcLending = _resolveSEveUSDCLending(
-            config.seveUsdcLending, deployment.seveUsdcVault, deployment.eveUSDC, temporaryOwner
-        );
-        if (deployment.eveUSD != address(0)) {
-            deployment.seveUsdVault = _resolveSEveUSDVault(
-                config.seveUsdVault,
-                deployment.eveUSD,
-                temporaryOwner,
-                config.feeRecipient,
-                config.aumFeeBps,
-                deployment.market.diamond
-            );
-            deployment.seveUsdLending = _resolveSEveUSDLending(
-                config.seveUsdLending, deployment.seveUsdVault, deployment.eveUSD, temporaryOwner
-            );
-        }
-        deployment.makerLendingRouter = _resolveMakerLendingRouter(
-            config.makerLendingRouter,
-            deployment.usdcToken,
-            deployment.eveUSDC,
-            deployment.seveUsdcVault,
-            deployment.seveUsdcLending,
-            deployment.market.diamond,
-            deployment.market.conditionalTokens
+        deployment.seniorCapitalPool = _resolveSeniorCapitalPool(
+            config.seniorCapitalPool, deployment.eveUSDC, temporaryOwner, deployment.market.diamond
         );
         deployment.faucet = _deployAndConfigureFaucet(deployment, config);
 
         _configureFullStack(deployment, config);
         _mintFullStackMocks(deployment, config, autoDeployUsdc, autoDeployEveToken);
         _fundFaucet(deployment, config, autoDeployUsdc, autoDeployEveToken);
-        _bootstrapVault(deployment, config);
+        _bootstrapSeniorPool(deployment, config);
         _verifyFullDeployment(deployment, config);
     }
 
@@ -519,7 +486,6 @@ contract DeployScript is Script {
         config.parlayTicketToken = deployment.parlayTicketToken;
         deployment.tradeRouterFacet = address(new TradeRouterFacet());
         deployment.tradeRouterSellFacet = address(new TradeRouterSellFacet());
-        deployment.vaultRouterFacet = address(new VaultRouterFacet());
 
         _addCoreFacets(deployment);
         _configureDeployment(deployment.diamond, config);
@@ -548,7 +514,7 @@ contract DeployScript is Script {
     }
 
     function ownershipSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](49);
+        selectors = new bytes4[](50);
         selectors[0] = OwnershipFacet.transferOwnership.selector;
         selectors[1] = OwnershipFacet.owner.selector;
         selectors[2] = OwnershipFacet.setOrderbookEntryFeeBps.selector;
@@ -560,48 +526,49 @@ contract DeployScript is Script {
         selectors[8] = OwnershipFacet.setCollateralToken.selector;
         selectors[9] = OwnershipFacet.setEveToken.selector;
         selectors[10] = OwnershipFacet.setEveTreasury.selector;
-        selectors[11] = OwnershipFacet.setStakingVault.selector;
-        selectors[12] = OwnershipFacet.setOrderbookFeeSplit.selector;
-        selectors[13] = OwnershipFacet.setParimutuelFeeSplit.selector;
-        selectors[14] = OwnershipFacet.setParimutuelConfig.selector;
-        selectors[15] = OwnershipFacet.setDurationParams.selector;
-        selectors[16] = OwnershipFacet.setDisputeWindow.selector;
-        selectors[17] = OwnershipFacet.setCreatorSettleGrace.selector;
-        selectors[18] = OwnershipFacet.setOpenResolutionTimeout.selector;
-        selectors[19] = OwnershipFacet.setMaxEscalation.selector;
-        selectors[20] = OwnershipFacet.registerCurveProfile.selector;
-        selectors[21] = OwnershipFacet.setSpotBookCreationFee.selector;
-        selectors[22] = OwnershipFacet.setParimutuelEpochWindowCap.selector;
-        selectors[23] = OwnershipFacet.setParimutuelEpochMultipliers.selector;
-        selectors[24] = OwnershipFacet.setSpotTradeFeeBps.selector;
-        selectors[25] = OwnershipFacet.setSpotFeeSplit.selector;
-        selectors[26] = OwnershipFacet.setMarketCreationBatchCap.selector;
-        selectors[27] = OwnershipFacet.setEvesPositionManager.selector;
-        selectors[28] = OwnershipFacet.setParimutuelCreationSeedAmount.selector;
-        selectors[29] = OwnershipFacet.setComboTradeFeeBps.selector;
-        selectors[30] = OwnershipFacet.setComboFeeSplit.selector;
-        selectors[31] = OwnershipFacet.setComboMarketCreationFee.selector;
-        selectors[32] = OwnershipFacet.setCollateralProfile.selector;
-        selectors[33] = OwnershipFacet.setCollateralProfileEnabled.selector;
-        selectors[34] = OwnershipFacet.setCollateralProfilePayoutUnit.selector;
-        selectors[35] = OwnershipFacet.setCollateralProfileMarketCreationFee.selector;
-        selectors[36] = OwnershipFacet.setCollateralProfileParimutuelCreationSeedAmount.selector;
-        selectors[37] = OwnershipFacet.setCollateralProfileParimutuelMinEntry.selector;
-        selectors[38] = OwnershipFacet.setCollateralProfileParlayUnderwritingFee.selector;
-        selectors[39] = OwnershipFacet.setResolverJuryIdentitySettings.selector;
-        selectors[40] = OwnershipFacet.setResolverJuryPoolSettings.selector;
-        selectors[41] = OwnershipFacet.setResolverJuryRoundSettings.selector;
-        selectors[42] = OwnershipFacet.setResolverJuryEconomicsSettings.selector;
+        selectors[11] = OwnershipFacet.setOrderbookFeeSplit.selector;
+        selectors[12] = OwnershipFacet.setParimutuelFeeSplit.selector;
+        selectors[13] = OwnershipFacet.setParimutuelConfig.selector;
+        selectors[14] = OwnershipFacet.setDurationParams.selector;
+        selectors[15] = OwnershipFacet.setDisputeWindow.selector;
+        selectors[16] = OwnershipFacet.setCreatorSettleGrace.selector;
+        selectors[17] = OwnershipFacet.setOpenResolutionTimeout.selector;
+        selectors[18] = OwnershipFacet.setMaxEscalation.selector;
+        selectors[19] = OwnershipFacet.registerCurveProfile.selector;
+        selectors[20] = OwnershipFacet.setSpotBookCreationFee.selector;
+        selectors[21] = OwnershipFacet.setParimutuelEpochWindowCap.selector;
+        selectors[22] = OwnershipFacet.setParimutuelEpochMultipliers.selector;
+        selectors[23] = OwnershipFacet.setSpotTradeFeeBps.selector;
+        selectors[24] = OwnershipFacet.setSpotFeeSplit.selector;
+        selectors[25] = OwnershipFacet.setMarketCreationBatchCap.selector;
+        selectors[26] = OwnershipFacet.setEvesPositionManager.selector;
+        selectors[27] = OwnershipFacet.setParimutuelCreationSeedAmount.selector;
+        selectors[28] = OwnershipFacet.setComboTradeFeeBps.selector;
+        selectors[29] = OwnershipFacet.setComboFeeSplit.selector;
+        selectors[30] = OwnershipFacet.setComboMarketCreationFee.selector;
+        selectors[31] = OwnershipFacet.setCollateralProfile.selector;
+        selectors[32] = OwnershipFacet.setCollateralProfileEnabled.selector;
+        selectors[33] = OwnershipFacet.setCollateralProfilePayoutUnit.selector;
+        selectors[34] = OwnershipFacet.setCollateralProfileMarketCreationFee.selector;
+        selectors[35] = OwnershipFacet.setCollateralProfileParimutuelCreationSeedAmount.selector;
+        selectors[36] = OwnershipFacet.setCollateralProfileParimutuelMinEntry.selector;
+        selectors[37] = OwnershipFacet.setCollateralProfileParlayUnderwritingFee.selector;
+        selectors[38] = OwnershipFacet.setResolverJuryIdentitySettings.selector;
+        selectors[39] = OwnershipFacet.setResolverJuryPoolSettings.selector;
+        selectors[40] = OwnershipFacet.setResolverJuryRoundSettings.selector;
+        selectors[41] = OwnershipFacet.setResolverJuryEconomicsSettings.selector;
+        selectors[42] = OwnershipFacet.setResolutionMode.selector;
         selectors[43] = OwnershipFacet.setDelayedOrderConfig.selector;
         selectors[44] = OwnershipFacet.setDelayedOrderProcessing.selector;
-        selectors[45] = OwnershipFacet.setDelayedOrderProtocolProcessor.selector;
-        selectors[46] = OwnershipFacet.setMarketDelayedExecution.selector;
-        selectors[47] = OwnershipFacet.setBookDelayedExecution.selector;
-        selectors[48] = OwnershipFacet.setSecondaryStakingVault.selector;
+        selectors[45] = OwnershipFacet.setDelayedOrderGuards.selector;
+        selectors[46] = OwnershipFacet.setDelayedOrderProtocolProcessor.selector;
+        selectors[47] = OwnershipFacet.setMarketDelayedExecution.selector;
+        selectors[48] = OwnershipFacet.setBookDelayedExecution.selector;
+        selectors[49] = OwnershipFacet.setEvRiskStakingRewards.selector;
     }
 
     function delayedOrderSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](13);
         selectors[0] = DelayedOrderFacet.submitDelayedOrder.selector;
         selectors[1] = DelayedOrderFacet.processDelayedOrders.selector;
         selectors[2] = DelayedOrderFacet.withdrawQuoteCredit.selector;
@@ -612,6 +579,9 @@ contract DeployScript is Script {
         selectors[7] = DelayedOrderFacet.getBookQueue.selector;
         selectors[8] = DelayedOrderFacet.getDelayedOrderIdBySequence.selector;
         selectors[9] = DelayedOrderFacet.isDelayedOrderSubmissionEnabled.selector;
+        selectors[10] = DelayedOrderFacet.processDelayedOrdersFrom.selector;
+        selectors[11] = DelayedOrderFacet.expireDelayedOrders.selector;
+        selectors[12] = DelayedOrderFacet.getDelayedOrderHead.selector;
     }
 
     function marginAccountSelectors() public pure returns (bytes4[] memory selectors) {
@@ -936,42 +906,58 @@ contract DeployScript is Script {
     }
 
     function obrResolutionSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](10);
         selectors[0] = IOBRResolutionFacet.settleMarket.selector;
         selectors[1] = IOBRResolutionFacet.openResolution.selector;
         selectors[2] = IOBRResolutionFacet.disputeResolution.selector;
-        selectors[3] = IOBRResolutionFacet.getResolutionHistory.selector;
-        selectors[4] = IOBRResolutionFacet.finalizeResolution.selector;
-        selectors[5] = IOBRResolutionFacet.getMarketStatus.selector;
-        selectors[6] = IOBRResolutionFacet.settleMarketEarly.selector;
-        selectors[7] = IOBRResolutionFacet.finalizeFromJury.selector;
+        selectors[3] = IOBRResolutionFacet.adminFinalizeResolution.selector;
+        selectors[4] = IOBRResolutionFacet.getResolutionHistory.selector;
+        selectors[5] = IOBRResolutionFacet.finalizeResolution.selector;
+        selectors[6] = IOBRResolutionFacet.getMarketStatus.selector;
+        selectors[7] = IOBRResolutionFacet.settleMarketEarly.selector;
+        selectors[8] = IOBRResolutionFacet.finalizeFromJury.selector;
+        selectors[9] = IOBRResolutionFacet.resolutionMode.selector;
     }
 
     function resolverRegistrySelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](37);
         selectors[0] = IResolverRegistryFacet.mintIdentity.selector;
         selectors[1] = IResolverRegistryFacet.setCreatorRole.selector;
         selectors[2] = IResolverRegistryFacet.setResolverRole.selector;
         selectors[3] = IResolverRegistryFacet.depositResolverStake.selector;
-        selectors[4] = IResolverRegistryFacet.activateResolver.selector;
-        selectors[5] = IResolverRegistryFacet.requestResolverExit.selector;
-        selectors[6] = IResolverRegistryFacet.withdrawResolverStake.selector;
-        selectors[7] = IResolverRegistryFacet.eveIdentity.selector;
-        selectors[8] = IResolverRegistryFacet.resolverDashboard.selector;
-        selectors[9] = IResolverRegistryFacet.resolverIdentity.selector;
-        selectors[10] = IResolverRegistryFacet.resolverIdentityByOwner.selector;
-        selectors[11] = IResolverRegistryFacet.resolverJuryConfig.selector;
-        selectors[12] = IResolverRegistryFacet.identityByOwner.selector;
-        selectors[13] = IResolverRegistryFacet.isEligibleResolver.selector;
-        selectors[14] = IResolverRegistryFacet.hasConflict.selector;
-        selectors[15] = IResolverRegistryFacet.resolverLifecycleState.selector;
-        selectors[16] = IResolverRegistryFacet.creatorReputation.selector;
-        selectors[17] = IResolverRegistryFacet.resolverReputation.selector;
-        selectors[18] = IResolverRegistryFacet.eligibleResolverCount.selector;
-        selectors[19] = IResolverRegistryFacet.activeResolverCount.selector;
-        selectors[20] = IResolverRegistryFacet.resolverPoolCapacity.selector;
-        selectors[21] = IResolverRegistryFacet.resolverPoolMemberAt.selector;
-        selectors[22] = IResolverRegistryFacet.applyFinalityReputation.selector;
+        selectors[4] = IResolverRegistryFacet.openResolverEpochRotation.selector;
+        selectors[5] = IResolverRegistryFacet.optIntoResolverEpoch.selector;
+        selectors[6] = IResolverRegistryFacet.commitResolverEpochRandomness.selector;
+        selectors[7] = IResolverRegistryFacet.closeResolverEpochRandomnessCommit.selector;
+        selectors[8] = IResolverRegistryFacet.revealResolverEpochRandomness.selector;
+        selectors[9] = IResolverRegistryFacet.finalizeResolverEpochSeed.selector;
+        selectors[10] = IResolverRegistryFacet.submitResolverEpochCandidateScore.selector;
+        selectors[11] = IResolverRegistryFacet.finalizeResolverEpochSelection.selector;
+        selectors[12] = IResolverRegistryFacet.activateFinalizedResolverEpoch.selector;
+        selectors[13] = IResolverRegistryFacet.requestResolverExit.selector;
+        selectors[14] = IResolverRegistryFacet.withdrawResolverStake.selector;
+        selectors[15] = IResolverRegistryFacet.finalizeResolverTradingRewards.selector;
+        selectors[16] = IResolverRegistryFacet.claimResolverRewards.selector;
+        selectors[17] = IResolverRegistryFacet.eveIdentity.selector;
+        selectors[18] = IResolverRegistryFacet.resolverDashboard.selector;
+        selectors[19] = IResolverRegistryFacet.resolverIdentity.selector;
+        selectors[20] = IResolverRegistryFacet.resolverIdentityByOwner.selector;
+        selectors[21] = IResolverRegistryFacet.resolverJuryConfig.selector;
+        selectors[22] = IResolverRegistryFacet.identityByOwner.selector;
+        selectors[23] = IResolverRegistryFacet.isEligibleResolver.selector;
+        selectors[24] = IResolverRegistryFacet.hasConflict.selector;
+        selectors[25] = IResolverRegistryFacet.resolverLifecycleState.selector;
+        selectors[26] = IResolverRegistryFacet.creatorReputation.selector;
+        selectors[27] = IResolverRegistryFacet.resolverReputation.selector;
+        selectors[28] = IResolverRegistryFacet.eligibleResolverCount.selector;
+        selectors[29] = IResolverRegistryFacet.activeResolverCount.selector;
+        selectors[30] = IResolverRegistryFacet.activeResolverEpochSize.selector;
+        selectors[31] = IResolverRegistryFacet.activeResolverAt.selector;
+        selectors[32] = IResolverRegistryFacet.currentResolverEpoch.selector;
+        selectors[33] = IResolverRegistryFacet.resolverEpoch.selector;
+        selectors[34] = IResolverRegistryFacet.resolverEpochCandidate.selector;
+        selectors[35] = IResolverRegistryFacet.previewResolverRewards.selector;
+        selectors[36] = IResolverRegistryFacet.applyFinalityReputation.selector;
     }
 
     function resolverJurySelectors() public pure returns (bytes4[] memory selectors) {
@@ -1137,13 +1123,6 @@ contract DeployScript is Script {
         selectors[3] = ITradeRouter.sellWithCollateral.selector;
     }
 
-    function vaultRouterSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](3);
-        selectors[0] = IVaultRouter.wrapAndDeposit.selector;
-        selectors[1] = IVaultRouter.redeemAndUnwrap.selector;
-        selectors[2] = IVaultRouter.wrapETHToEveETH.selector;
-    }
-
     function verifyDeployment(Deployment memory deployment) external view {
         _verifyDeployment(deployment);
     }
@@ -1161,8 +1140,8 @@ contract DeployScript is Script {
         config.collateralToken = vm.envOr("COLLATERAL_TOKEN", address(0));
         config.eveToken = vm.envOr("EVE_TOKEN", address(0));
         config.eveTreasury = vm.envAddress("EVE_TREASURY");
-        config.stakingVault = vm.envOr("STAKING_VAULT", address(0));
-        config.secondaryStakingVault = vm.envOr("SECONDARY_STAKING_VAULT", address(0));
+        config.seniorCapitalPool = vm.envOr("SENIOR_CAPITAL_POOL", address(0));
+        config.evRiskStakingRewards = vm.envOr("EVRISK_STAKING_REWARDS", address(0));
         config.evesPositionManager = vm.envOr("EVES_POSITION_MANAGER", address(0));
         config.parimutuelShareToken = vm.envOr("PARIMUTUEL_SHARE_TOKEN", address(0));
         config.parlayTicketToken = vm.envOr("PARLAY_TICKET_TOKEN", address(0));
@@ -1171,23 +1150,31 @@ contract DeployScript is Script {
         config.parlayVaultFeeBps = uint16(vm.envOr("PARLAY_FEE_VAULT_BPS", uint256(0)));
         config.parlayFeeRecipientBps = uint16(vm.envOr("PARLAY_FEE_RECIPIENT_BPS", uint256(10_000)));
         config.orderbookEntryFeeBps = uint16(vm.envOr("ORDERBOOK_ENTRY_FEE_BPS", uint256(100)));
-        config.orderbookMakerFeeBps = uint16(vm.envOr("ORDERBOOK_MAKER_FEE_BPS", uint256(8_500)));
-        config.orderbookCreatorFeeBps = uint16(vm.envOr("ORDERBOOK_CREATOR_FEE_BPS", uint256(400)));
+        config.orderbookMakerFeeBps = uint16(vm.envOr("ORDERBOOK_MAKER_FEE_BPS", uint256(4_000)));
+        config.orderbookCreatorFeeBps = uint16(vm.envOr("ORDERBOOK_CREATOR_FEE_BPS", uint256(500)));
         config.orderbookProtocolFeeBps = uint16(vm.envOr("ORDERBOOK_PROTOCOL_FEE_BPS", uint256(1_000)));
-        config.orderbookVaultFeeBps = uint16(vm.envOr("ORDERBOOK_VAULT_FEE_BPS", uint256(100)));
+        config.orderbookVaultFeeBps = uint16(vm.envOr("ORDERBOOK_VAULT_FEE_BPS", uint256(2_500)));
+        config.orderbookResolverFeeBps = uint16(vm.envOr("ORDERBOOK_RESOLVER_FEE_BPS", uint256(500)));
+        config.orderbookEvRiskFeeBps = uint16(vm.envOr("ORDERBOOK_EVRISK_FEE_BPS", uint256(1_500)));
         config.spotTradeFeeBps = uint16(vm.envOr("SPOT_TRADE_FEE_BPS", uint256(100)));
-        config.spotMakerFeeBps = uint16(vm.envOr("SPOT_MAKER_FEE_BPS", uint256(8_500)));
-        config.spotProtocolFeeBps = uint16(vm.envOr("SPOT_PROTOCOL_FEE_BPS", uint256(1_400)));
-        config.spotVaultFeeBps = uint16(vm.envOr("SPOT_VAULT_FEE_BPS", uint256(100)));
+        config.spotMakerFeeBps = uint16(vm.envOr("SPOT_MAKER_FEE_BPS", uint256(4_000)));
+        config.spotProtocolFeeBps = uint16(vm.envOr("SPOT_PROTOCOL_FEE_BPS", uint256(1_500)));
+        config.spotVaultFeeBps = uint16(vm.envOr("SPOT_VAULT_FEE_BPS", uint256(2_500)));
+        config.spotResolverFeeBps = uint16(vm.envOr("SPOT_RESOLVER_FEE_BPS", uint256(500)));
+        config.spotEvRiskFeeBps = uint16(vm.envOr("SPOT_EVRISK_FEE_BPS", uint256(1_500)));
         config.comboTradeFeeBps = uint16(vm.envOr("COMBO_TRADE_FEE_BPS", uint256(100)));
-        config.comboMakerFeeBps = uint16(vm.envOr("COMBO_MAKER_FEE_BPS", uint256(8_500)));
-        config.comboCreatorFeeBps = uint16(vm.envOr("COMBO_CREATOR_FEE_BPS", uint256(400)));
+        config.comboMakerFeeBps = uint16(vm.envOr("COMBO_MAKER_FEE_BPS", uint256(4_000)));
+        config.comboCreatorFeeBps = uint16(vm.envOr("COMBO_CREATOR_FEE_BPS", uint256(500)));
         config.comboProtocolFeeBps = uint16(vm.envOr("COMBO_PROTOCOL_FEE_BPS", uint256(1_000)));
-        config.comboVaultFeeBps = uint16(vm.envOr("COMBO_VAULT_FEE_BPS", uint256(100)));
+        config.comboVaultFeeBps = uint16(vm.envOr("COMBO_VAULT_FEE_BPS", uint256(2_500)));
+        config.comboResolverFeeBps = uint16(vm.envOr("COMBO_RESOLVER_FEE_BPS", uint256(500)));
+        config.comboEvRiskFeeBps = uint16(vm.envOr("COMBO_EVRISK_FEE_BPS", uint256(1_500)));
         config.parimutuelEntryFeeBps = uint16(vm.envOr("PARIMUTUEL_ENTRY_FEE_BPS", uint256(250)));
         config.parimutuelCreatorFeeBps = uint16(vm.envOr("PARIMUTUEL_CREATOR_FEE_BPS", uint256(500)));
-        config.parimutuelProtocolFeeBps = uint16(vm.envOr("PARIMUTUEL_PROTOCOL_FEE_BPS", uint256(9_500)));
-        config.parimutuelVaultFeeBps = uint16(vm.envOr("PARIMUTUEL_VAULT_FEE_BPS", uint256(0)));
+        config.parimutuelProtocolFeeBps = uint16(vm.envOr("PARIMUTUEL_PROTOCOL_FEE_BPS", uint256(5_000)));
+        config.parimutuelVaultFeeBps = uint16(vm.envOr("PARIMUTUEL_VAULT_FEE_BPS", uint256(2_500)));
+        config.parimutuelResolverFeeBps = uint16(vm.envOr("PARIMUTUEL_RESOLVER_FEE_BPS", uint256(500)));
+        config.parimutuelEvRiskFeeBps = uint16(vm.envOr("PARIMUTUEL_EVRISK_FEE_BPS", uint256(1_500)));
         config.parimutuelMinEntry = uint128(vm.envOr("PARIMUTUEL_MIN_ENTRY", uint256(1e18)));
         config.parimutuelEpochWindowCap = uint64(vm.envOr("PARIMUTUEL_EPOCH_WINDOW_CAP", uint256(30 days)));
         config.marketCreationBatchCap = uint16(vm.envOr("MARKET_CREATION_BATCH_CAP", uint256(24)));
@@ -1212,30 +1199,22 @@ contract DeployScript is Script {
             uint24(vm.envOr("DELAYED_ORDER_RESTING_DURATION_MINUTES", uint256(180)));
         config.delayedOrderProcessorFeeShareBps = uint16(vm.envOr("DELAYED_ORDER_PROCESSOR_FEE_SHARE_BPS", uint256(0)));
         config.delayedOrderProcessingMode = uint8(vm.envOr("DELAYED_ORDER_PROCESSING_MODE", uint256(0)));
+        config.maxDelayedOrderRouteLength = uint32(vm.envOr("MAX_DELAYED_ORDER_ROUTE_LENGTH", uint256(64)));
+        config.minDelayedOrderQuoteWad = uint128(vm.envOr("MIN_DELAYED_ORDER_QUOTE_WAD", uint256(1e18)));
+        config.minDelayedOrderBaseWad = uint128(vm.envOr("MIN_DELAYED_ORDER_BASE_WAD", uint256(1e18)));
     }
 
     function _loadFullConfigFromEnv() internal view returns (FullDeploymentConfig memory config) {
         config.market = _loadConfigFromEnv();
         config.usdcToken = vm.envOr("USDC_TOKEN", address(0));
         config.eveUSDC = vm.envOr("EVEUSDC_ADDRESS", address(0));
-        config.seveUsdcLending = vm.envOr("SEVEUSDC_LENDING", address(0));
-        config.seveUsdVault = vm.envOr("SEVEUSD_VAULT", address(0));
-        config.seveUsdLending = vm.envOr("SEVEUSD_LENDING", address(0));
-        config.makerLendingRouter = vm.envOr("MAKER_LENDING_ROUTER", address(0));
+        config.seniorCapitalPool = vm.envOr("SENIOR_CAPITAL_POOL", config.market.seniorCapitalPool);
         config.eveUsdcOnramp = vm.envOr("EVEUSDC_ONRAMP", config.market.owner);
         config.eveUsdcOfframp = vm.envOr("EVEUSDC_OFFRAMP", config.market.owner);
         config.feeRecipient = vm.envOr("FEE_RECIPIENT", config.market.eveTreasury);
-        config.aumFeeBps = uint16(vm.envOr("AUM_FEE_BPS", uint256(200)));
-        config.lendingMaxLtvBps = uint16(vm.envOr("LENDING_MAX_LTV_BPS", uint256(9_500)));
-        config.lendingOriginationFeeBps = uint16(vm.envOr("LENDING_ORIGINATION_FEE_BPS", uint256(100)));
-        config.lendingExtensionFeeBps = uint16(vm.envOr("LENDING_EXTENSION_FEE_BPS", uint256(50)));
-        config.lendingFeeRecipientBps = uint16(vm.envOr("LENDING_FEE_RECIPIENT_BPS", uint256(0)));
-        config.lendingMinDurationSeconds = uint32(vm.envOr("LENDING_MIN_DURATION_SECONDS", uint256(1 days)));
-        config.lendingMaxDurationSeconds = uint32(vm.envOr("LENDING_MAX_DURATION_SECONDS", uint256(400 days)));
-        config.lendingGracePeriodSeconds = uint32(vm.envOr("LENDING_GRACE_PERIOD_SECONDS", uint256(1 days)));
         config.initialUsdcMint = vm.envOr("INITIAL_USDC_MINT", uint256(5_000_000e6));
         config.initialEveMint = vm.envOr("INITIAL_EVE_MINT", uint256(1_000_000e18));
-        config.initialVaultBootstrap = vm.envOr("INITIAL_VAULT_BOOTSTRAP", uint256(0));
+        config.initialSeniorPoolBootstrap = vm.envOr("INITIAL_SENIOR_POOL_BOOTSTRAP", uint256(0));
         config.faucetOwner = vm.envOr("FAUCET_OWNER", config.market.owner);
         config.faucetUsdcEnabled = vm.envOr("FAUCET_USDC_ENABLED", true);
         config.faucetEveEnabled = vm.envOr("FAUCET_EVE_ENABLED", true);
@@ -1313,20 +1292,25 @@ contract DeployScript is Script {
         );
         require(
             uint256(config.orderbookMakerFeeBps) + config.orderbookCreatorFeeBps + config.orderbookProtocolFeeBps
-                    + config.orderbookVaultFeeBps == 10_000,
+                    + config.orderbookVaultFeeBps + config.orderbookResolverFeeBps + config.orderbookEvRiskFeeBps
+                == 10_000,
             "invalid orderbook fee split"
         );
         require(
-            uint256(config.spotMakerFeeBps) + config.spotProtocolFeeBps + config.spotVaultFeeBps == 10_000,
+            uint256(config.spotMakerFeeBps) + config.spotProtocolFeeBps + config.spotVaultFeeBps
+                    + config.spotResolverFeeBps + config.spotEvRiskFeeBps
+                == 10_000,
             "invalid spot fee split"
         );
         require(
             uint256(config.comboMakerFeeBps) + config.comboCreatorFeeBps + config.comboProtocolFeeBps
-                    + config.comboVaultFeeBps == 10_000,
+                    + config.comboVaultFeeBps + config.comboResolverFeeBps + config.comboEvRiskFeeBps
+                == 10_000,
             "invalid combo fee split"
         );
         require(
             uint256(config.parimutuelCreatorFeeBps) + config.parimutuelProtocolFeeBps + config.parimutuelVaultFeeBps
+                    + config.parimutuelResolverFeeBps + config.parimutuelEvRiskFeeBps
                 == 10_000,
             "invalid parimutuel fee split"
         );
@@ -1353,8 +1337,8 @@ contract DeployScript is Script {
         if (config.faucetOwner == address(0)) {
             config.faucetOwner = config.market.owner;
         }
-        if (config.initialVaultBootstrap == 0 && _requiresVaultBootstrap(config)) {
-            config.initialVaultBootstrap = 1e6;
+        if (config.initialSeniorPoolBootstrap == 0 && _requiresSeniorPoolBootstrap(config)) {
+            config.initialSeniorPoolBootstrap = 1e6;
         }
         if (config.eveUsd.enableMarkets) {
             config.eveUsd.deploy = config.eveUsd.deploy || config.eveUsd.pool == address(0);
@@ -1396,7 +1380,7 @@ contract DeployScript is Script {
         return config;
     }
 
-    function _requiresVaultBootstrap(FullDeploymentConfig memory config) internal pure returns (bool) {
+    function _requiresSeniorPoolBootstrap(FullDeploymentConfig memory config) internal pure returns (bool) {
         return config.market.marketCreationFee != 0 || config.market.spotBookCreationFee != 0
             || (config.market.orderbookEntryFeeBps != 0 && config.market.orderbookVaultFeeBps != 0)
             || (config.market.parimutuelEntryFeeBps != 0 && config.market.parimutuelVaultFeeBps != 0)
@@ -1464,11 +1448,10 @@ contract DeployScript is Script {
         if (config.faucetEveEnabled) {
             require(config.faucetEveClaimAmount != 0, "zero faucet eve amount");
         }
-        require(config.lendingMinDurationSeconds <= config.lendingMaxDurationSeconds, "invalid lending duration bounds");
     }
 
     function _addCoreFacets(Deployment memory deployment) internal {
-        DiamondCutFacet.FacetCut[] memory cuts = new DiamondCutFacet.FacetCut[](47);
+        DiamondCutFacet.FacetCut[] memory cuts = new DiamondCutFacet.FacetCut[](46);
         cuts[0] = _cut(deployment.diamondLoupeFacet, loupeSelectors());
         cuts[1] = _cut(deployment.ownershipFacet, ownershipSelectors());
         cuts[2] = _cut(deployment.marketFactoryFacet, marketFactorySelectors());
@@ -1505,17 +1488,16 @@ contract DeployScript is Script {
         cuts[33] = _cut(deployment.parlayMulticallFacet, parlayMulticallSelectors());
         cuts[34] = _cut(deployment.tradeRouterFacet, tradeRouterSelectors());
         cuts[35] = _cut(deployment.tradeRouterSellFacet, tradeRouterSellSelectors());
-        cuts[36] = _cut(deployment.vaultRouterFacet, vaultRouterSelectors());
-        cuts[37] = _cut(deployment.resolverRegistryFacet, resolverRegistrySelectors());
-        cuts[38] = _cut(deployment.resolverJuryFacet, resolverJurySelectors());
-        cuts[39] = _cut(deployment.delayedOrderFacet, delayedOrderSelectors());
-        cuts[40] = _cut(deployment.marginAccountFacet, marginAccountSelectors());
-        cuts[41] = _cut(deployment.markOracleFacet, markOracleSelectors());
-        cuts[42] = _cut(deployment.quoteEnvelopeFacet, quoteEnvelopeSelectors());
-        cuts[43] = _cut(deployment.mloPredictionAdapterFacet, mloPredictionAdapterSelectors());
-        cuts[44] = _cut(deployment.mloPredictionCurveFacet, mloPredictionCurveSelectors());
-        cuts[45] = _cut(deployment.mloPredictionTradeFacet, mloPredictionTradeSelectors());
-        cuts[46] = _cut(deployment.mloPredictionSettlementFacet, mloPredictionSettlementSelectors());
+        cuts[36] = _cut(deployment.resolverRegistryFacet, resolverRegistrySelectors());
+        cuts[37] = _cut(deployment.resolverJuryFacet, resolverJurySelectors());
+        cuts[38] = _cut(deployment.delayedOrderFacet, delayedOrderSelectors());
+        cuts[39] = _cut(deployment.marginAccountFacet, marginAccountSelectors());
+        cuts[40] = _cut(deployment.markOracleFacet, markOracleSelectors());
+        cuts[41] = _cut(deployment.quoteEnvelopeFacet, quoteEnvelopeSelectors());
+        cuts[42] = _cut(deployment.mloPredictionAdapterFacet, mloPredictionAdapterSelectors());
+        cuts[43] = _cut(deployment.mloPredictionCurveFacet, mloPredictionCurveSelectors());
+        cuts[44] = _cut(deployment.mloPredictionTradeFacet, mloPredictionTradeSelectors());
+        cuts[45] = _cut(deployment.mloPredictionSettlementFacet, mloPredictionSettlementSelectors());
 
         ResolverJuryInit init = new ResolverJuryInit();
         DiamondCutFacet(deployment.diamond)
@@ -1529,25 +1511,44 @@ contract DeployScript is Script {
         OwnershipFacet(diamond).setCollateralToken(config.collateralToken);
         OwnershipFacet(diamond).setEveToken(config.eveToken);
         OwnershipFacet(diamond).setEveTreasury(config.eveTreasury);
-        OwnershipFacet(diamond).setStakingVault(config.stakingVault);
-        OwnershipFacet(diamond).setSecondaryStakingVault(config.secondaryStakingVault);
+        if (config.seniorCapitalPool != address(0)) {
+            IMLOPredictionAdapterFacet(diamond).setSeniorCapitalPool(config.seniorCapitalPool);
+        }
+        OwnershipFacet(diamond).setEvRiskStakingRewards(config.evRiskStakingRewards);
         OwnershipFacet(diamond).setEvesPositionManager(config.evesPositionManager);
         OwnershipFacet(diamond)
             .setOrderbookFeeSplit(
                 config.orderbookMakerFeeBps,
                 config.orderbookCreatorFeeBps,
                 config.orderbookProtocolFeeBps,
-                config.orderbookVaultFeeBps
+                config.orderbookVaultFeeBps,
+                config.orderbookResolverFeeBps,
+                config.orderbookEvRiskFeeBps
             );
         OwnershipFacet(diamond)
-            .setSpotFeeSplit(config.spotMakerFeeBps, config.spotProtocolFeeBps, config.spotVaultFeeBps);
+            .setSpotFeeSplit(
+                config.spotMakerFeeBps,
+                config.spotProtocolFeeBps,
+                config.spotVaultFeeBps,
+                config.spotResolverFeeBps,
+                config.spotEvRiskFeeBps
+            );
         OwnershipFacet(diamond)
             .setComboFeeSplit(
-                config.comboMakerFeeBps, config.comboCreatorFeeBps, config.comboProtocolFeeBps, config.comboVaultFeeBps
+                config.comboMakerFeeBps,
+                config.comboCreatorFeeBps,
+                config.comboProtocolFeeBps,
+                config.comboVaultFeeBps,
+                config.comboResolverFeeBps,
+                config.comboEvRiskFeeBps
             );
         OwnershipFacet(diamond)
             .setParimutuelFeeSplit(
-                config.parimutuelCreatorFeeBps, config.parimutuelProtocolFeeBps, config.parimutuelVaultFeeBps
+                config.parimutuelCreatorFeeBps,
+                config.parimutuelProtocolFeeBps,
+                config.parimutuelVaultFeeBps,
+                config.parimutuelResolverFeeBps,
+                config.parimutuelEvRiskFeeBps
             );
         OwnershipFacet(diamond)
             .setParimutuelConfig(config.parimutuelShareToken, config.parimutuelEntryFeeBps, config.parimutuelMinEntry);
@@ -1580,6 +1581,10 @@ contract DeployScript is Script {
         OwnershipFacet(diamond)
             .setDelayedOrderProcessing(config.delayedOrderProcessingMode, config.delayedOrderProcessorFeeShareBps);
         OwnershipFacet(diamond)
+            .setDelayedOrderGuards(
+                config.maxDelayedOrderRouteLength, config.minDelayedOrderQuoteWad, config.minDelayedOrderBaseWad
+            );
+        OwnershipFacet(diamond)
             .setResolutionBondConfig(config.bondToken, config.resolutionBondL1, config.resolutionBondL2);
         OwnershipFacet(diamond).setDurationParams(config.minMarketDuration, config.maxMarketDuration);
         OwnershipFacet(diamond).setDisputeWindow(config.disputeWindow);
@@ -1595,14 +1600,21 @@ contract DeployScript is Script {
                 OwnershipConfigTypes.ResolverJuryIdentitySettings({
                     identityMintFeeToken: address(0),
                     identityMintFee: 0,
-                    resolverStakeRequirement: 100e18,
-                    resolverStakeCap: 250e18
+                    resolverSeatStake: 100e18,
+                    epochCandidateFeeToken: address(0),
+                    epochCandidateFeeAmount: 0
                 })
             );
         OwnershipFacet(diamond)
             .setResolverJuryPoolSettings(
                 OwnershipConfigTypes.ResolverJuryPoolSettings({
-                    resolverPoolCap: 50,
+                    activeEpochSize: 16,
+                    resolverEpochDuration: 180 days,
+                    resolverRotationWindow: 30 days,
+                    epochRandomnessCommitDuration: 7 days,
+                    epochRandomnessRevealDuration: 7 days,
+                    epochSelectionDuration: 3 days,
+                    minEpochRandomnessReveals: 2,
                     activationDelay: 0,
                     exitCooldown: 7 days,
                     participationThresholdBps: 0,
@@ -1657,33 +1669,7 @@ contract DeployScript is Script {
     }
 
     function _configureFullStack(FullDeployment memory deployment, FullDeploymentConfig memory config) internal {
-        SEveUSDCVault(deployment.seveUsdcVault).setLendingContract(deployment.seveUsdcLending);
-        SEveUSDCLending(deployment.seveUsdcLending)
-            .setLendingConfig(
-                config.lendingMaxLtvBps,
-                config.lendingOriginationFeeBps,
-                config.lendingExtensionFeeBps,
-                config.lendingMinDurationSeconds,
-                config.lendingMaxDurationSeconds,
-                config.lendingGracePeriodSeconds
-            );
-        SEveUSDCLending(deployment.seveUsdcLending).setLendingFeeRecipientBps(config.lendingFeeRecipientBps);
-        SEveUSDCLending(deployment.seveUsdcLending).setApprovedRouter(deployment.makerLendingRouter, true);
-        OwnershipFacet(deployment.market.diamond).setStakingVault(deployment.seveUsdcVault);
-        if (deployment.seveUsdVault != address(0)) {
-            SEveUSDVault(deployment.seveUsdVault).setLendingContract(deployment.seveUsdLending);
-            SEveUSDLending(deployment.seveUsdLending)
-                .setLendingConfig(
-                    config.lendingMaxLtvBps,
-                    config.lendingOriginationFeeBps,
-                    config.lendingExtensionFeeBps,
-                    config.lendingMinDurationSeconds,
-                    config.lendingMaxDurationSeconds,
-                    config.lendingGracePeriodSeconds
-                );
-            SEveUSDLending(deployment.seveUsdLending).setLendingFeeRecipientBps(config.lendingFeeRecipientBps);
-            OwnershipFacet(deployment.market.diamond).setSecondaryStakingVault(deployment.seveUsdVault);
-        }
+        IMLOPredictionAdapterFacet(deployment.market.diamond).setSeniorCapitalPool(deployment.seniorCapitalPool);
         if (config.enableEveEthMarkets) {
             OwnershipFacet(deployment.market.diamond)
                 .setCollateralProfile(
@@ -1794,9 +1780,9 @@ contract DeployScript is Script {
         }
     }
 
-    function _bootstrapVault(FullDeployment memory deployment, FullDeploymentConfig memory config) internal {
-        uint256 bootstrapUsdc = config.initialVaultBootstrap;
-        if (bootstrapUsdc == 0 || SEveUSDCVault(deployment.seveUsdcVault).totalSupply() != 0) {
+    function _bootstrapSeniorPool(FullDeployment memory deployment, FullDeploymentConfig memory config) internal {
+        uint256 bootstrapUsdc = config.initialSeniorPoolBootstrap;
+        if (bootstrapUsdc == 0 || SeniorCapitalPool(deployment.seniorCapitalPool).totalSupply() != 0) {
             return;
         }
 
@@ -1809,12 +1795,12 @@ contract DeployScript is Script {
             EveUSDC(deployment.eveUSDC).wrap(deficit, config.market.owner);
         }
 
-        IERC20(deployment.eveUSDC).forceApprove(deployment.seveUsdcVault, bootstrapAssets);
-        SEveUSDCVault(deployment.seveUsdcVault).deposit(bootstrapAssets, config.market.owner);
+        IERC20(deployment.eveUSDC).forceApprove(deployment.seniorCapitalPool, bootstrapAssets);
+        SeniorCapitalPool(deployment.seniorCapitalPool).deposit(bootstrapAssets, config.market.owner);
     }
 
     function _verifyDeployment(Deployment memory deployment) internal view {
-        require(DiamondLoupeFacet(deployment.diamond).facetAddresses().length == 48, "unexpected facet count");
+        require(DiamondLoupeFacet(deployment.diamond).facetAddresses().length == 47, "unexpected facet count");
         require(deployment.eveIdentity != address(0), "zero eve identity");
         require(EveIdentity(deployment.eveIdentity).diamond() == deployment.diamond, "eve identity diamond mismatch");
 
@@ -1863,7 +1849,6 @@ contract DeployScript is Script {
         _assertSelectorRouting(deployment.diamond, deployment.parlayMulticallFacet, parlayMulticallSelectors());
         _assertSelectorRouting(deployment.diamond, deployment.tradeRouterFacet, tradeRouterSelectors());
         _assertSelectorRouting(deployment.diamond, deployment.tradeRouterSellFacet, tradeRouterSellSelectors());
-        _assertSelectorRouting(deployment.diamond, deployment.vaultRouterFacet, vaultRouterSelectors());
         _assertSelectorRouting(deployment.diamond, deployment.delayedOrderFacet, delayedOrderSelectors());
         _assertSelectorRouting(deployment.diamond, deployment.marginAccountFacet, marginAccountSelectors());
         _assertSelectorRouting(deployment.diamond, deployment.markOracleFacet, markOracleSelectors());
@@ -1888,10 +1873,11 @@ contract DeployScript is Script {
         require(marketConfig.defaultConditionalTokens == deployment.market.conditionalTokens, "ctf mismatch");
         require(marketConfig.collateralToken == deployment.eveUSDC, "collateral mismatch");
         require(marketConfig.eveToken == deployment.eveToken, "eve token mismatch");
-        require(marketConfig.stakingVault == deployment.seveUsdcVault, "staking vault mismatch");
-        if (deployment.seveUsdVault != address(0)) {
-            require(marketConfig.secondaryStakingVault == deployment.seveUsdVault, "secondary vault mismatch");
-        }
+        require(marketConfig.seniorCapitalPool == deployment.seniorCapitalPool, "senior pool mismatch");
+        require(
+            marketConfig.evRiskStakingRewards == deployment.evRiskStakingRewards,
+            "evRisk staking rewards mismatch"
+        );
         require(
             marketConfig.evesPositionManager == deployment.market.evesPositionManager, "eves position manager mismatch"
         );
@@ -1919,12 +1905,27 @@ contract DeployScript is Script {
             marketConfig.orderbookFeeConfig.vaultFeeBps == config.market.orderbookVaultFeeBps,
             "orderbook vault fee mismatch"
         );
+        require(
+            marketConfig.orderbookFeeConfig.resolverFeeBps == config.market.orderbookResolverFeeBps,
+            "orderbook resolver fee mismatch"
+        );
+        require(
+            marketConfig.orderbookFeeConfig.evRiskFeeBps == config.market.orderbookEvRiskFeeBps,
+            "orderbook evRisk fee mismatch"
+        );
         require(marketConfig.spotFeeConfig.tradeFeeBps == config.market.spotTradeFeeBps, "spot trade fee mismatch");
         require(marketConfig.spotFeeConfig.makerFeeBps == config.market.spotMakerFeeBps, "spot maker fee mismatch");
         require(
             marketConfig.spotFeeConfig.protocolFeeBps == config.market.spotProtocolFeeBps, "spot protocol fee mismatch"
         );
         require(marketConfig.spotFeeConfig.vaultFeeBps == config.market.spotVaultFeeBps, "spot vault fee mismatch");
+        require(
+            marketConfig.spotFeeConfig.resolverFeeBps == config.market.spotResolverFeeBps, "spot resolver fee mismatch"
+        );
+        require(
+            marketConfig.spotFeeConfig.evRiskFeeBps == config.market.spotEvRiskFeeBps,
+            "spot evRisk fee mismatch"
+        );
         require(marketConfig.comboFeeConfig.tradeFeeBps == config.market.comboTradeFeeBps, "combo trade fee mismatch");
         require(marketConfig.comboFeeConfig.makerFeeBps == config.market.comboMakerFeeBps, "combo maker fee mismatch");
         require(
@@ -1935,6 +1936,14 @@ contract DeployScript is Script {
             "combo protocol fee mismatch"
         );
         require(marketConfig.comboFeeConfig.vaultFeeBps == config.market.comboVaultFeeBps, "combo vault fee mismatch");
+        require(
+            marketConfig.comboFeeConfig.resolverFeeBps == config.market.comboResolverFeeBps,
+            "combo resolver fee mismatch"
+        );
+        require(
+            marketConfig.comboFeeConfig.evRiskFeeBps == config.market.comboEvRiskFeeBps,
+            "combo evRisk fee mismatch"
+        );
         require(
             marketConfig.parimutuelFeeConfig.entryFeeBps == config.market.parimutuelEntryFeeBps,
             "parimutuel entry fee mismatch"
@@ -1950,6 +1959,14 @@ contract DeployScript is Script {
         require(
             marketConfig.parimutuelFeeConfig.vaultFeeBps == config.market.parimutuelVaultFeeBps,
             "parimutuel vault fee mismatch"
+        );
+        require(
+            marketConfig.parimutuelFeeConfig.resolverFeeBps == config.market.parimutuelResolverFeeBps,
+            "parimutuel resolver fee mismatch"
+        );
+        require(
+            marketConfig.parimutuelFeeConfig.evRiskFeeBps == config.market.parimutuelEvRiskFeeBps,
+            "parimutuel evRisk fee mismatch"
         );
         require(marketConfig.parimutuelMinEntry == config.market.parimutuelMinEntry, "parimutuel min mismatch");
         require(
@@ -1985,106 +2002,30 @@ contract DeployScript is Script {
         require(
             marketConfig.delayedOrderProcessingMode == config.market.delayedOrderProcessingMode, "delayed mode mismatch"
         );
+        require(
+            marketConfig.maxDelayedOrderRouteLength == config.market.maxDelayedOrderRouteLength,
+            "delayed route cap mismatch"
+        );
+        require(
+            marketConfig.minDelayedOrderQuoteWad == config.market.minDelayedOrderQuoteWad, "delayed min quote mismatch"
+        );
+        require(
+            marketConfig.minDelayedOrderBaseWad == config.market.minDelayedOrderBaseWad, "delayed min base mismatch"
+        );
 
         require(EveUSDC(deployment.eveUSDC).usdc() == deployment.usdcToken, "eveUSDC usdc mismatch");
         require(EveUSDC(deployment.eveUSDC).onramp() == config.eveUsdcOnramp, "eveUSDC onramp mismatch");
         require(EveUSDC(deployment.eveUSDC).offramp() == config.eveUsdcOfframp, "eveUSDC offramp mismatch");
 
-        require(SEveUSDCVault(deployment.seveUsdcVault).owner() == config.market.owner, "vault owner mismatch");
-        require(SEveUSDCVault(deployment.seveUsdcVault).asset() == deployment.eveUSDC, "vault asset mismatch");
-        require(SEveUSDCVault(deployment.seveUsdcVault).feeRecipient() == config.feeRecipient, "fee recipient mismatch");
-        require(SEveUSDCVault(deployment.seveUsdcVault).aumFeeBps() == config.aumFeeBps, "aum fee mismatch");
-        if (config.initialVaultBootstrap != 0) {
-            require(SEveUSDCVault(deployment.seveUsdcVault).totalSupply() != 0, "vault bootstrap missing");
+        require(SeniorCapitalPool(deployment.seniorCapitalPool).owner() == config.market.owner, "senior owner mismatch");
+        require(SeniorCapitalPool(deployment.seniorCapitalPool).asset() == deployment.eveUSDC, "senior asset mismatch");
+        require(
+            SeniorCapitalPool(deployment.seniorCapitalPool).riskManager() == deployment.market.diamond,
+            "senior risk manager mismatch"
+        );
+        if (config.initialSeniorPoolBootstrap != 0) {
+            require(SeniorCapitalPool(deployment.seniorCapitalPool).totalSupply() != 0, "senior bootstrap missing");
         }
-        require(
-            SEveUSDCVault(deployment.seveUsdcVault).lendingContract() == deployment.seveUsdcLending, "lending mismatch"
-        );
-
-        require(SEveUSDCLending(deployment.seveUsdcLending).owner() == config.market.owner, "lending owner mismatch");
-        require(
-            address(SEveUSDCLending(deployment.seveUsdcLending).vault()) == deployment.seveUsdcVault,
-            "vault link mismatch"
-        );
-        require(
-            address(SEveUSDCLending(deployment.seveUsdcLending).eveUSDC()) == deployment.eveUSDC,
-            "eveUSDC link mismatch"
-        );
-        require(
-            SEveUSDCLending(deployment.seveUsdcLending).approvedRouters(deployment.makerLendingRouter),
-            "router approval mismatch"
-        );
-
-        (
-            uint16 maxLtvBps,
-            uint16 originationFeeBps,
-            uint16 extensionFeeBps,
-            uint32 minDurationSeconds,
-            uint32 maxDurationSeconds,
-            uint32 gracePeriodSeconds
-        ) = SEveUSDCLending(deployment.seveUsdcLending).config();
-        require(maxLtvBps == config.lendingMaxLtvBps, "ltv mismatch");
-        require(originationFeeBps == config.lendingOriginationFeeBps, "origination mismatch");
-        require(extensionFeeBps == config.lendingExtensionFeeBps, "extension mismatch");
-        require(minDurationSeconds == config.lendingMinDurationSeconds, "min duration mismatch");
-        require(maxDurationSeconds == config.lendingMaxDurationSeconds, "max duration mismatch");
-        require(gracePeriodSeconds == config.lendingGracePeriodSeconds, "grace mismatch");
-        require(
-            SEveUSDCLending(deployment.seveUsdcLending).lendingFeeRecipientBps() == config.lendingFeeRecipientBps,
-            "lending fee recipient mismatch"
-        );
-
-        if (deployment.seveUsdVault != address(0)) {
-            require(SEveUSDVault(deployment.seveUsdVault).owner() == config.market.owner, "sEVEUSD owner mismatch");
-            require(SEveUSDVault(deployment.seveUsdVault).asset() == deployment.eveUSD, "sEVEUSD asset mismatch");
-            require(
-                SEveUSDVault(deployment.seveUsdVault).feeRecipient() == config.feeRecipient,
-                "sEVEUSD fee recipient mismatch"
-            );
-            require(SEveUSDVault(deployment.seveUsdVault).aumFeeBps() == config.aumFeeBps, "sEVEUSD aum mismatch");
-            require(
-                SEveUSDVault(deployment.seveUsdVault).lendingContract() == deployment.seveUsdLending,
-                "sEVEUSD lending mismatch"
-            );
-            require(SEveUSDLending(deployment.seveUsdLending).owner() == config.market.owner, "eveUSD lending owner");
-            require(
-                address(SEveUSDLending(deployment.seveUsdLending).vault()) == deployment.seveUsdVault,
-                "eveUSD lending vault"
-            );
-            require(
-                address(SEveUSDLending(deployment.seveUsdLending).eveUSD()) == deployment.eveUSD, "eveUSD lending asset"
-            );
-            require(
-                SEveUSDLending(deployment.seveUsdLending).lendingFeeRecipientBps() == config.lendingFeeRecipientBps,
-                "eveUSD lending fee recipient"
-            );
-        }
-
-        require(
-            MakerLendingRouter(deployment.makerLendingRouter).usdc() == deployment.usdcToken,
-            "maker router usdc mismatch"
-        );
-        require(
-            MakerLendingRouter(deployment.makerLendingRouter).eveUSDC() == deployment.eveUSDC,
-            "maker router eveUSDC mismatch"
-        );
-        require(
-            MakerLendingRouter(deployment.makerLendingRouter).vault() == deployment.seveUsdcVault,
-            "maker router vault mismatch"
-        );
-        require(
-            MakerLendingRouter(deployment.makerLendingRouter).lending() == deployment.seveUsdcLending,
-            "maker router lending mismatch"
-        );
-        require(
-            MakerLendingRouter(deployment.makerLendingRouter).diamond() == deployment.market.diamond,
-            "maker router diamond mismatch"
-        );
-        require(
-            MakerLendingRouter(deployment.makerLendingRouter).defaultConditionalTokens()
-                == deployment.market.conditionalTokens,
-            "maker router ctf mismatch"
-        );
         if (config.enableEveEthMarkets) {
             require(deployment.wethToken != address(0), "WETH missing");
             require(deployment.eveETH != address(0), "eveETH missing");
@@ -2108,10 +2049,23 @@ contract DeployScript is Script {
             require(deployment.eveUSD != address(0), "eveUSD missing");
             require(deployment.evRisk != address(0), "evRisk missing");
             require(deployment.eveUsdPool != address(0), "eveUSD pool missing");
+            require(deployment.evRiskStakingRewards != address(0), "evRisk staking rewards missing");
             require(deployment.eveUsdOracle != address(0), "eveUSD oracle missing");
             require(EveUSD(deployment.eveUSD).pool() == deployment.eveUsdPool, "eveUSD pool mismatch");
             require(EveRiskShares(deployment.evRisk).pool() == deployment.eveUsdPool, "evRisk pool mismatch");
             uint256 wethProfileId = EveUSDPool(deployment.eveUsdPool).firstCollateralProfileId();
+            require(
+                EvRiskStakingRewards(deployment.evRiskStakingRewards).evRisk() == deployment.evRisk,
+                "staking evRisk mismatch"
+            );
+            require(
+                EvRiskStakingRewards(deployment.evRiskStakingRewards).eveUSDPool() == deployment.eveUsdPool,
+                "staking pool mismatch"
+            );
+            require(
+                EvRiskStakingRewards(deployment.evRiskStakingRewards).primaryProfileId() == wethProfileId,
+                "staking profile mismatch"
+            );
             IEveUSDPool.StableCollateralProfile memory stableProfile =
                 EveUSDPool(deployment.eveUsdPool).collateralProfile(wethProfileId);
             require(stableProfile.collateralToken == deployment.wethToken, "eveUSD WETH mismatch");
@@ -2376,22 +2330,7 @@ contract DeployScript is Script {
         return address(new EvesPositionManager(diamond, "uri://eves-position/{id}"));
     }
 
-    function _resolveSEveUSDCVault(
-        address configuredAddress,
-        address eveUSDC,
-        address owner,
-        address feeRecipient,
-        uint16 aumFeeBps,
-        address revenueNotifier
-    ) internal returns (address) {
-        if (configuredAddress != address(0)) {
-            return configuredAddress;
-        }
-
-        return address(new SEveUSDCVault(eveUSDC, owner, feeRecipient, aumFeeBps, revenueNotifier));
-    }
-
-    function _resolveSEveUSDCLending(address configuredAddress, address vault, address eveUSDC, address owner)
+    function _resolveSeniorCapitalPool(address configuredAddress, address eveUSDC, address owner, address riskManager)
         internal
         returns (address)
     {
@@ -2399,49 +2338,25 @@ contract DeployScript is Script {
             return configuredAddress;
         }
 
-        return address(new SEveUSDCLending(vault, eveUSDC, owner));
+        return address(new SeniorCapitalPool(eveUSDC, owner, riskManager));
     }
 
-    function _resolveSEveUSDVault(
+    function _resolveEvRiskStakingRewards(
         address configuredAddress,
-        address eveUSD,
-        address owner,
-        address feeRecipient,
-        uint16 aumFeeBps,
-        address revenueNotifier
+        address evRisk,
+        address eveUsdPool,
+        address treasury,
+        address owner
     ) internal returns (address) {
         if (configuredAddress != address(0)) {
             return configuredAddress;
         }
-
-        return address(new SEveUSDVault(eveUSD, owner, feeRecipient, aumFeeBps, revenueNotifier));
-    }
-
-    function _resolveSEveUSDLending(address configuredAddress, address vault, address eveUSD, address owner)
-        internal
-        returns (address)
-    {
-        if (configuredAddress != address(0)) {
-            return configuredAddress;
+        if (evRisk == address(0) || eveUsdPool == address(0)) {
+            return address(0);
         }
 
-        return address(new SEveUSDLending(vault, eveUSD, owner));
-    }
-
-    function _resolveMakerLendingRouter(
-        address configuredAddress,
-        address usdcToken,
-        address eveUSDC,
-        address vault,
-        address lending,
-        address diamond,
-        address conditionalTokens
-    ) internal returns (address) {
-        if (configuredAddress != address(0)) {
-            return configuredAddress;
-        }
-
-        return address(new MakerLendingRouter(usdcToken, eveUSDC, vault, lending, diamond, conditionalTokens));
+        uint256 primaryProfileId = EveUSDPool(eveUsdPool).firstCollateralProfileId();
+        return address(new EvRiskStakingRewards(evRisk, eveUsdPool, primaryProfileId, treasury, owner));
     }
 
     function _loadConditionalTokensCreationCode(string memory artifactPath)

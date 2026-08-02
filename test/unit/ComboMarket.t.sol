@@ -49,7 +49,13 @@ contract ComboMarketHarness is ComboMarketFacet {
         config.evesPositionManager = positionManager;
         config.eveTreasury = treasury;
         config.comboFeeConfig = LibEveMarket.ComboFeeConfig({
-            tradeFeeBps: 100, makerFeeBps: 4_000, creatorFeeBps: 500, protocolFeeBps: 3_000, vaultFeeBps: 2_500
+            tradeFeeBps: 100,
+            makerFeeBps: 4_000,
+            creatorFeeBps: 500,
+            protocolFeeBps: 3_000,
+            vaultFeeBps: 2_500,
+            resolverFeeBps: 0,
+            evRiskFeeBps: 0
         });
     }
 
@@ -208,7 +214,8 @@ contract ComboMarketLiveFlowTest is Test {
 
         ComboMarketHarness(address(diamond)).configure(address(collateral), address(positions), treasury);
         ComboMarketHarness(address(diamond)).seedMarket(MARKET_A, address(collateral), uint64(block.timestamp + 7 days));
-        ComboMarketHarness(address(diamond)).seedMarket(MARKET_B, address(collateral), uint64(block.timestamp + 14 days));
+        ComboMarketHarness(address(diamond))
+            .seedMarket(MARKET_B, address(collateral), uint64(block.timestamp + 14 days));
     }
 
     function test_ComboMarketYesBookTradesThroughBookPath() public {
@@ -221,7 +228,9 @@ contract ComboMarketLiveFlowTest is Test {
         vm.startPrank(maker);
         positions.setApprovalForAll(address(diamond), true);
         uint256 curveId = IBookOrderFacet(address(diamond))
-            .postBookCurve(preparation.yesBookId, LibEveMarket.CurveSide.ASK, INVENTORY, HALF_PRICE, HALF_PRICE, 30, 0, 0);
+            .postBookCurve(
+                preparation.yesBookId, LibEveMarket.CurveSide.ASK, INVENTORY, HALF_PRICE, HALF_PRICE, 30, 0, 0
+            );
         vm.stopPrank();
 
         (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);

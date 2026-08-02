@@ -10,13 +10,18 @@ import {Base64} from "../../lib/openzeppelin-contracts/contracts/utils/Base64.so
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
 import {IParimutuelFacet} from "../../src/interfaces/IParimutuelFacet.sol";
+import {EveRiskShares} from "../../src/EveRiskShares.sol";
+import {EveUSD} from "../../src/EveUSD.sol";
+import {EveUSDPool} from "../../src/EveUSDPool.sol";
+import {EvRiskStakingRewards} from "../../src/EvRiskStakingRewards.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {Events} from "../../src/libraries/Events.sol";
 import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibMarketCreation} from "../../src/libraries/LibMarketCreation.sol";
 import {CanonicalWETH9} from "../../src/mocks/CanonicalWETH9.sol";
-import {SEveUSDCVault} from "../../src/SEveUSDCVault.sol";
+import {MockETHUSDOracle} from "../../src/mocks/MockETHUSDOracle.sol";
+import {SeniorCapitalPool} from "../../src/SeniorCapitalPool.sol";
 import {EveETH} from "../../src/tokens/EveETH.sol";
 import {ParimutuelShareToken} from "../../src/tokens/ParimutuelShareToken.sol";
 
@@ -55,7 +60,7 @@ contract ParimutuelFacetTest is ResolutionFixture {
         _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelEpochWindowCap(30 days);
         vm.stopPrank();
 
@@ -519,17 +524,26 @@ contract ParimutuelFacetTest is ResolutionFixture {
         (bytes32 marketId,,,) = _createDefaultParimutuelMarket("fee snapshot");
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(10_000, 0, 0);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(10_000, 0, 0, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(shareToken), 5_000, DEFAULT_MIN_ENTRY);
         vm.stopPrank();
 
-        (uint128 totalFee, uint128 creatorFee, uint128 protocolFee, uint128 vaultFee, uint128 netShares) =
-            IParimutuelFacet(address(diamond)).previewEntryFee(marketId, 1_000e6);
+        (
+            uint128 totalFee,
+            uint128 creatorFee,
+            uint128 protocolFee,
+            uint128 vaultFee,
+            uint128 resolverFee,
+            uint128 evRiskFee,
+            uint128 netShares
+        ) = IParimutuelFacet(address(diamond)).previewEntryFee(marketId, 1_000e6);
 
         assertEq(totalFee, 25e6);
         assertEq(creatorFee, 1_250_000);
         assertEq(protocolFee, 23_750_000);
         assertEq(vaultFee, 0);
+        assertEq(resolverFee, 0);
+        assertEq(evRiskFee, 0);
         assertEq(netShares, 975e6);
     }
 
@@ -841,7 +855,7 @@ contract ParimutuelFacetTest is ResolutionFixture {
     function test_ClaimPayoutPaysWinningSideProRataAndDustSweepsToEligibleCreator() public {
         _setParimutuelFees(1_000, 1);
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(10_000, 0, 0);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(10_000, 0, 0, 0, 0);
 
         (bytes32 marketId, uint64 expiryTime, uint256 yesPositionId,) = _createDefaultParimutuelMarket("winning payout");
 
@@ -882,13 +896,13 @@ contract ParimutuelFacetTest is ResolutionFixture {
         assertTrue(pool.dustSwept);
     }
 
-    function test_EveETHParimutuelEntryRoutesUnsupportedVaultShareToTreasury() public {
-        SEveUSDCVault vault = new SEveUSDCVault(address(collateralToken), owner, treasury, 0, address(diamond));
+    function test_EveETHParimutuelEntryRoutesUnsupportedSeniorPoolShareToTreasury() public {
+        SeniorCapitalPool seniorPool = new SeniorCapitalPool(address(collateralToken), owner, address(diamond));
         uint128 amount = 1 ether;
 
         _configureEveETHParimutuelProfile(0, 1, true);
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setStakingVault(address(vault));
+        ResolutionHarnessFacet(address(diamond)).setSeniorCapitalPool(address(seniorPool));
 
         vm.prank(creator);
         bytes32 marketId = IParimutuelFacet(address(diamond))
@@ -904,13 +918,12 @@ contract ParimutuelFacetTest is ResolutionFixture {
 
         _fundEveETH(alice, amount);
         uint256 treasuryBefore = eveETH.balanceOf(treasury);
-        uint256 vaultBefore = eveETH.balanceOf(address(vault));
+        uint256 seniorPoolBefore = eveETH.balanceOf(address(seniorPool));
         uint128 minted = _buyEveETHShares(alice, marketId, true, amount);
 
         assertEq(minted, 1.95 ether);
         assertEq(eveETH.balanceOf(treasury) - treasuryBefore, 0.02375 ether);
-        assertEq(eveETH.balanceOf(address(vault)), vaultBefore);
-        assertEq(vault.rewardLiability(address(eveETH)), 0);
+        assertEq(eveETH.balanceOf(address(seniorPool)), seniorPoolBefore);
 
         (uint128 creatorFeesEscrowed, uint128 protocolFeesAccrued,,) =
             StateProbeFacet(address(diamond)).getStoredMarketFees(marketId);
@@ -918,10 +931,57 @@ contract ParimutuelFacetTest is ResolutionFixture {
         assertEq(protocolFeesAccrued, 0.02375 ether);
     }
 
+    function test_ParimutuelEntryRoutesEvRiskFeeToActiveSeriesStakers() public {
+        EvRiskStakingRewards staking = _deployEvRiskStakingRewardsWithStake(carol, 0.0006 ether);
+
+        vm.startPrank(owner);
+        OwnershipFacet(address(diamond)).setEvRiskStakingRewards(address(staking));
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(0, 0, 0, 0, 10_000);
+        vm.stopPrank();
+
+        (bytes32 marketId,,,) = _createDefaultParimutuelMarket("evRisk parimutuel fees");
+
+        (
+            uint128 totalFee,
+            uint128 creatorFee,
+            uint128 protocolFee,
+            uint128 vaultFee,
+            uint128 resolverFee,
+            uint128 evRiskFee,
+            uint128 netShares
+        ) = IParimutuelFacet(address(diamond)).previewEntryFee(marketId, 1_000e6);
+
+        assertEq(totalFee, 25e6);
+        assertEq(creatorFee, 0);
+        assertEq(protocolFee, 0);
+        assertEq(vaultFee, 0);
+        assertEq(resolverFee, 0);
+        assertEq(evRiskFee, 25e6);
+        assertEq(netShares, 975e6);
+
+        uint256 treasuryBefore = collateralToken.balanceOf(treasury);
+        uint256 diamondBefore = collateralToken.balanceOf(address(diamond));
+
+        _buyShares(bob, marketId, true, 1_000e6);
+
+        assertEq(collateralToken.balanceOf(treasury), treasuryBefore);
+        assertEq(collateralToken.balanceOf(address(diamond)), diamondBefore + 975e6);
+        assertEq(staking.previewClaim(carol, 1, address(collateralToken)), 25e6);
+
+        vm.prank(carol);
+        assertEq(staking.claim(1, address(collateralToken)), 25e6);
+        assertEq(collateralToken.balanceOf(carol), 10_000_000e6 + 25e6);
+
+        (uint128 creatorFeesEscrowed, uint128 protocolFeesAccrued,,) =
+            StateProbeFacet(address(diamond)).getStoredMarketFees(marketId);
+        assertEq(creatorFeesEscrowed, 0);
+        assertEq(protocolFeesAccrued, 0);
+    }
+
     function test_EveETHParimutuelWinningPayoutAndDustUseMarketCollateral() public {
         _setParimutuelFees(1_000, 1);
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(10_000, 0, 0);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(10_000, 0, 0, 0, 0);
 
         uint64 expiryTime = uint64(block.timestamp + 7 days);
         bytes32 marketId = _createEveETHParimutuelMarket("eveETH winning payout", 0, 1, expiryTime);
@@ -1753,14 +1813,49 @@ contract ParimutuelFacetTest is ResolutionFixture {
         ResolutionHarnessFacet(address(diamond)).setParimutuelConfig(address(shareToken), entryFeeBps, minEntry);
     }
 
+    function _deployEvRiskStakingRewardsWithStake(address staker, uint256 collateralAmount)
+        internal
+        returns (EvRiskStakingRewards staking)
+    {
+        MockETHUSDOracle oracle = new MockETHUSDOracle(2_500e18, 1 hours);
+        address predictedPool = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 2);
+        EveUSD eveUSD = new EveUSD(predictedPool);
+        EveRiskShares evRisk = new EveRiskShares(predictedPool, "");
+        EveUSDPool eveUsdPool =
+            new EveUSDPool(address(weth), address(eveUSD), address(evRisk), address(oracle), owner, 15_000, 8_000);
+        assertEq(address(eveUsdPool), predictedPool);
+
+        staking = new EvRiskStakingRewards(
+            address(evRisk), address(eveUsdPool), eveUsdPool.firstCollateralProfileId(), treasury, owner
+        );
+
+        vm.deal(staker, collateralAmount);
+        vm.startPrank(staker);
+        weth.deposit{value: collateralAmount}();
+        weth.approve(address(eveUsdPool), collateralAmount);
+        (,, uint256 sharesMinted) = eveUsdPool.depositCollateral(1, collateralAmount, staker, staker);
+        evRisk.setApprovalForAll(address(staking), true);
+        staking.stake(sharesMinted);
+        vm.stopPrank();
+    }
+
     function _assertDefaultEntryFee(bytes32 marketId) internal view {
-        (uint128 totalFee, uint128 creatorFee, uint128 protocolFee, uint128 vaultFee, uint128 netShares) =
-            IParimutuelFacet(address(diamond)).previewEntryFee(marketId, 1_000e6);
+        (
+            uint128 totalFee,
+            uint128 creatorFee,
+            uint128 protocolFee,
+            uint128 vaultFee,
+            uint128 resolverFee,
+            uint128 evRiskFee,
+            uint128 netShares
+        ) = IParimutuelFacet(address(diamond)).previewEntryFee(marketId, 1_000e6);
 
         assertEq(totalFee, 25e6);
         assertEq(creatorFee, 1_250_000);
         assertEq(protocolFee, 23_750_000);
         assertEq(vaultFee, 0);
+        assertEq(resolverFee, 0);
+        assertEq(evRiskFee, 0);
         assertEq(netShares, 975e6);
     }
 

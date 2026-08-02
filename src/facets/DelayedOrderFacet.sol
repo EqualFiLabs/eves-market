@@ -50,6 +50,7 @@ contract DelayedOrderFacet is DelayedOrderTypes {
             revert Errors.UnsupportedDelayedOrderBook(params.bookId);
         }
         LibDelayedOrderRoute.requireSupportedExecutableBook(book, params.bookId);
+        _validateDelayedOrderGuards(state, book, params.kind, params.amountIn, params.curveIds.length);
 
         bytes32 hash =
             LibDelayedOrder.routeHash(params.curveIds, params.expectedGenerations, params.expectedCommitments);
@@ -70,6 +71,49 @@ contract DelayedOrderFacet is DelayedOrderTypes {
     function processDelayedOrders(bytes32 bookId, uint256 maxOrders, DelayedOrderRoute[] calldata routes)
         external
         nonReentrant
+        returns (ProcessDelayedOrderResult memory result)
+    {
+        result = _processDelayedOrders(bookId, maxOrders, routes);
+    }
+
+    function processDelayedOrdersFrom(
+        bytes32 bookId,
+        uint64 expectedHeadSequence,
+        uint256 maxOrders,
+        DelayedOrderRoute[] calldata routes
+    ) external nonReentrant returns (ProcessDelayedOrderResult memory result) {
+        (uint64 head,) = LibDelayedOrder.queueBounds(bookId);
+        if (head != expectedHeadSequence) {
+            revert Errors.DelayedOrderHeadMismatch(bookId, expectedHeadSequence, head);
+        }
+        result = _processDelayedOrders(bookId, maxOrders, routes);
+    }
+
+    function expireDelayedOrders(bytes32 bookId, uint256 maxOrders)
+        external
+        nonReentrant
+        returns (ProcessDelayedOrderResult memory result)
+    {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        while (result.processedCount < maxOrders) {
+            (uint64 sequence, uint256 orderId, bool hasHead) = LibDelayedOrderFacet.tryHeadOrder(bookId);
+            if (!hasHead) {
+                break;
+            }
+
+            LibEveMarket.DelayedOrder storage order = state.delayedOrders.orders[orderId];
+            if (!LibDelayedOrder.isExpired(order, block.number)) {
+                result.stoppedOrderId = orderId;
+                break;
+            }
+
+            LibDelayedOrderExecution.expireHeadOrder(orderId, order, sequence);
+            result.processedCount += 1;
+        }
+    }
+
+    function _processDelayedOrders(bytes32 bookId, uint256 maxOrders, DelayedOrderRoute[] calldata routes)
+        private
         returns (ProcessDelayedOrderResult memory result)
     {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
@@ -167,6 +211,28 @@ contract DelayedOrderFacet is DelayedOrderTypes {
         });
     }
 
+    function getDelayedOrderHead(bytes32 bookId) external view returns (DelayedOrderHeadView memory headView) {
+        uint64 head;
+        uint64 tail;
+        (head, tail) = LibDelayedOrder.queueBounds(bookId);
+        headView.bookId = bookId;
+        headView.head = head;
+        headView.tail = tail;
+        if (head >= tail) {
+            headView.processState = DelayedOrderHeadState.Empty;
+            return headView;
+        }
+
+        uint256 orderId = LibDelayedOrder.orderIdBySequence(bookId, head);
+        LibEveMarket.DelayedOrder storage order = LibDelayedOrder.store().orders[orderId];
+        headView.orderId = orderId;
+        headView.status = order.status;
+        headView.executableBlock = order.executableBlock;
+        headView.expiryBlock = order.expiryBlock;
+        headView.routeHash = order.routeHash;
+        headView.processState = _headState(order);
+    }
+
     function getDelayedOrderIdBySequence(bytes32 bookId, uint64 sequence) external view returns (uint256 orderId) {
         orderId = LibDelayedOrder.orderIdBySequence(bookId, sequence);
     }
@@ -175,6 +241,58 @@ contract DelayedOrderFacet is DelayedOrderTypes {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
         LibEveMarket.Book storage book = LibCLOBBook.requireBook(state, bookId);
         enabled = book.delayedExecutionEnabled || state.markets[book.marketId].delayedExecutionEnabled;
+    }
+
+    function _validateDelayedOrderGuards(
+        LibEveMarket.EveMarketStorage storage state,
+        LibEveMarket.Book storage book,
+        LibEveMarket.DelayedOrderKind kind,
+        uint128 amountIn,
+        uint256 routeLength
+    ) private view {
+        LibEveMarket.MarketConfig storage config = state.config;
+        if (config.maxDelayedOrderRouteLength != 0 && routeLength > config.maxDelayedOrderRouteLength) {
+            revert Errors.DelayedOrderRouteTooLong(routeLength, config.maxDelayedOrderRouteLength);
+        }
+
+        if (LibDelayedOrderFacet.isBuyOrder(kind)) {
+            if (config.minDelayedOrderQuoteWad != 0) {
+                uint256 normalized = _normalizedDelayedAmount(state, book, amountIn);
+                if (normalized < config.minDelayedOrderQuoteWad) {
+                    revert Errors.DelayedOrderQuoteBelowMinimum(normalized, config.minDelayedOrderQuoteWad);
+                }
+            }
+        } else if (config.minDelayedOrderBaseWad != 0) {
+            uint256 normalized = _normalizedDelayedAmount(state, book, amountIn);
+            if (normalized < config.minDelayedOrderBaseWad) {
+                revert Errors.DelayedOrderBaseBelowMinimum(normalized, config.minDelayedOrderBaseWad);
+            }
+        }
+    }
+
+    function _normalizedDelayedAmount(
+        LibEveMarket.EveMarketStorage storage state,
+        LibEveMarket.Book storage book,
+        uint128 amountIn
+    ) private view returns (uint256 normalized) {
+        uint128 payoutUnit = state.markets[book.marketId].payoutUnit;
+        if (payoutUnit == 0) {
+            revert Errors.InvalidAmount(0);
+        }
+        normalized = (uint256(amountIn) * 1e18) / uint256(payoutUnit);
+    }
+
+    function _headState(LibEveMarket.DelayedOrder storage order) private view returns (DelayedOrderHeadState state_) {
+        if (LibDelayedOrder.isExpired(order, block.number)) {
+            return DelayedOrderHeadState.Expired;
+        }
+        if (block.number < order.executableBlock) {
+            return DelayedOrderHeadState.Waiting;
+        }
+        if (LibEveMarket.store().config.delayedOrderProcessingMode == LibEveMarket.ProcessingMode.Paused) {
+            return DelayedOrderHeadState.Paused;
+        }
+        return DelayedOrderHeadState.NeedsRoute;
     }
 
     function _escrowQuoteCollateral(address quoteToken, address owner, uint128 amount) private {

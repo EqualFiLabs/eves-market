@@ -7,8 +7,10 @@ import {IResolverRegistryFacet} from "src/interfaces/IResolverRegistryFacet.sol"
 import {Errors} from "src/libraries/Errors.sol";
 import {Events} from "src/libraries/Events.sol";
 import {LibCLOBBook} from "src/libraries/LibCLOBBook.sol";
+import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibEveMarket} from "src/libraries/LibEveMarket.sol";
 import {LibResolverJury} from "src/libraries/LibResolverJury.sol";
+import {LibResolverRewards} from "src/libraries/LibResolverRewards.sol";
 import {ResolverRegistryFacet} from "src/facets/ResolverRegistryFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {EvesPositionManager} from "src/tokens/EvesPositionManager.sol";
@@ -27,26 +29,43 @@ contract ResolverRegistryHarness is ResolverRegistryFacet {
         uint256 stakeCap
     ) external {
         if (
-            mintFee > type(uint128).max || poolCap > type(uint16).max
-                || stakeRequirement > type(uint128).max || stakeCap > type(uint128).max
+            mintFee > type(uint128).max || poolCap > type(uint16).max || stakeRequirement > type(uint128).max
+                || stakeCap > type(uint128).max
         ) {
             revert Errors.InvalidConfigValue("registryConfig");
         }
 
         LibResolverJury.store().eveIdentity = eveIdentity;
+        LibDiamond.setContractOwner(msg.sender);
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
         config.eveToken = eveToken;
         config.bondToken = eveToken;
+        config.eveTreasury = address(uint160(uint256(keccak256("resolver-registry-treasury"))));
         config.resolverJuryConfig.identityMintFeeToken = mintFeeToken;
         config.resolverJuryConfig.identityMintFee = uint128(mintFee);
-        config.resolverJuryConfig.resolverPoolCap = uint16(poolCap);
-        config.resolverJuryConfig.resolverStakeRequirement = uint128(stakeRequirement);
-        config.resolverJuryConfig.resolverStakeCap = uint128(stakeCap);
+        config.resolverJuryConfig.activeEpochSize = uint16(poolCap);
+        config.resolverJuryConfig.resolverEpochDuration = 180 days;
+        config.resolverJuryConfig.resolverRotationWindow = 30 days;
+        config.resolverJuryConfig.epochRandomnessCommitDuration = 1 days;
+        config.resolverJuryConfig.epochRandomnessRevealDuration = 1 days;
+        config.resolverJuryConfig.epochSelectionDuration = 1 days;
+        config.resolverJuryConfig.minEpochRandomnessReveals = 1;
+        config.resolverJuryConfig.resolverSeatStake = uint128(stakeRequirement);
+        config.resolverJuryConfig.missedCommitSlashBps = 1_000;
+        config.resolverJuryConfig.missedRevealSlashBps = 1_000;
         config.resolverJuryConfig.conflictPositionThreshold = 1e6;
     }
 
     function setLifecycle(uint256 identityId, uint8 lifecycle) external {
         LibResolverJury.store().identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle(lifecycle);
+    }
+
+    function setRecordedStake(uint256 identityId, uint256 stakeAmount) external {
+        if (stakeAmount > type(uint128).max) {
+            revert Errors.InvalidAmount(stakeAmount);
+        }
+
+        LibResolverJury.store().identities[identityId].resolverStake = uint128(stakeAmount);
     }
 
     function recordedStake(uint256 identityId) external view returns (uint128) {
@@ -65,14 +84,36 @@ contract ResolverRegistryHarness is ResolverRegistryFacet {
 
     function setResolverPoolCap(uint256 poolCap) external {
         if (poolCap > type(uint16).max) {
-            revert Errors.InvalidConfigValue("resolverPoolCap");
+            revert Errors.InvalidConfigValue("activeEpochSize");
         }
 
-        LibEveMarket.store().config.resolverJuryConfig.resolverPoolCap = uint16(poolCap);
+        LibEveMarket.store().config.resolverJuryConfig.activeEpochSize = uint16(poolCap);
     }
 
     function setBondToken(address bondToken) external {
         LibEveMarket.store().config.bondToken = bondToken;
+    }
+
+    function setTreasury(address treasury) external {
+        LibEveMarket.store().config.eveTreasury = treasury;
+    }
+
+    function setEpochCandidateFee(address token, uint128 amount) external {
+        LibEveMarket.store().config.resolverJuryConfig.epochCandidateFeeToken = token;
+        LibEveMarket.store().config.resolverJuryConfig.epochCandidateFeeAmount = amount;
+    }
+
+    function setIdentityMintFee(address token, uint256 amount) external {
+        if (amount > type(uint128).max) {
+            revert Errors.InvalidAmount(amount);
+        }
+
+        LibEveMarket.store().config.resolverJuryConfig.identityMintFeeToken = token;
+        LibEveMarket.store().config.resolverJuryConfig.identityMintFee = uint128(amount);
+    }
+
+    function accrueTradingReward(address token, uint128 amount) external {
+        LibResolverRewards.accrueTradingFee(token, amount);
     }
 
     function setMarketCreator(bytes32 marketId, address creator) external {
@@ -239,7 +280,9 @@ contract ResolverRegistryHarness is ResolverRegistryFacet {
         uint256 remainingVolume
     ) internal {
         if (curveSide > uint256(type(LibEveMarket.CurveSide).max) || remainingVolume > type(uint128).max) {
-            revert Errors.InvalidAmount(curveSide > uint256(type(LibEveMarket.CurveSide).max) ? curveSide : remainingVolume);
+            revert Errors.InvalidAmount(curveSide > uint256(type(LibEveMarket.CurveSide).max)
+                    ? curveSide
+                    : remainingVolume);
         }
 
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
@@ -288,6 +331,7 @@ contract ResolverRegistryTest is Test {
 
     function test_MintIdentityCollectsFeeAndInitializesRecords() public {
         vm.warp(1_700_000_000);
+        address expectedTreasury = address(uint160(uint256(keccak256("resolver-registry-treasury"))));
         feeToken.mint(alice, 25e6);
 
         vm.prank(alice);
@@ -301,7 +345,8 @@ contract ResolverRegistryTest is Test {
         assertEq(identity.identityOf(alice), identityId);
         assertEq(registry.identityByOwner(alice), identityId);
         assertEq(registry.identityByOwner(bob), 0);
-        assertEq(feeToken.balanceOf(address(registry)), 25e6);
+        assertEq(feeToken.balanceOf(address(registry)), 0);
+        assertEq(feeToken.balanceOf(expectedTreasury), 25e6);
 
         IResolverRegistryFacet.CreatorReputationView memory creatorRep = registry.creatorReputation(identityId);
         assertEq(creatorRep.marketsCreated, 0);
@@ -328,6 +373,34 @@ contract ResolverRegistryTest is Test {
         assertEq(identity.totalMinted(), 0);
         assertEq(identity.identityOf(alice), 0);
         assertEq(feeToken.balanceOf(alice), 25e6);
+        assertEq(feeToken.balanceOf(address(registry)), 0);
+    }
+
+    function test_MintIdentityRejectsMissingTreasuryForNonzeroFee() public {
+        feeToken.mint(alice, 25e6);
+        registry.setTreasury(address(0));
+
+        vm.prank(alice);
+        feeToken.approve(address(registry), 25e6);
+
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.prank(alice);
+        registry.mintIdentity();
+
+        assertEq(identity.totalMinted(), 0);
+        assertEq(feeToken.balanceOf(alice), 25e6);
+    }
+
+    function test_MintIdentitySkipsTreasuryTransferWhenFeeIsZero() public {
+        address expectedTreasury = address(uint160(uint256(keccak256("resolver-registry-treasury"))));
+        registry.setIdentityMintFee(address(feeToken), 0);
+
+        vm.prank(alice);
+        uint256 identityId = registry.mintIdentity();
+
+        assertEq(identityId, 1);
+        assertEq(identity.ownerOf(identityId), alice);
+        assertEq(feeToken.balanceOf(expectedTreasury), 0);
         assertEq(feeToken.balanceOf(address(registry)), 0);
     }
 
@@ -373,11 +446,11 @@ contract ResolverRegistryTest is Test {
         registry.setResolverRole(false);
     }
 
-    function test_ResolverPoolCapacityReadsConfig() public view {
-        assertEq(registry.resolverPoolCapacity(), 50);
+    function test_ActiveResolverEpochSizeReadsConfig() public view {
+        assertEq(registry.activeResolverEpochSize(), 50);
     }
 
-    function test_ResolverDashboardSurfacesIdentityConfigAndPoolState() public {
+    function test_ResolverDashboardSurfacesIdentityConfigAndEpochState() public {
         registry.setResolverTiming(1 days, 7 days);
         uint256 identityId = _mintIdentity(alice);
 
@@ -392,48 +465,41 @@ contract ResolverRegistryTest is Test {
         vm.prank(alice);
         registry.depositResolverStake(100e18);
 
-        vm.warp(1_700_000_000);
-        vm.prank(alice);
-        registry.activateResolver();
+        _finalizeSingleCandidateEpoch(alice, identityId);
 
         (
             IResolverRegistryFacet.ResolverIdentityView memory resolver,
             IResolverRegistryFacet.ResolverJuryConfigView memory config,
-            IResolverRegistryFacet.ResolverPoolView memory pool
+            IResolverRegistryFacet.ResolverEpochPoolView memory pool
         ) = registry.resolverDashboard(alice);
 
         assertEq(resolver.identityId, identityId);
         assertEq(resolver.owner, alice);
         assertTrue(resolver.creatorRole);
         assertTrue(resolver.resolverRole);
-        assertEq(resolver.lifecycle, uint8(LibResolverJury.ResolverLifecycle.ResolverPendingActivation));
-        assertEq(resolver.effectiveLifecycle, uint8(LibResolverJury.ResolverLifecycle.ResolverPendingActivation));
+        assertEq(resolver.lifecycle, uint8(LibResolverJury.ResolverLifecycle.ResolverActive));
+        assertEq(resolver.effectiveLifecycle, uint8(LibResolverJury.ResolverLifecycle.ResolverActive));
         assertEq(resolver.resolverStake, 100e18);
-        assertEq(resolver.activationTimestamp, uint64(block.timestamp));
-        assertEq(resolver.activeAt, uint64(block.timestamp + 1 days));
+        assertGt(resolver.activationTimestamp, 0);
+        assertEq(resolver.activeAt, uint64(resolver.activationTimestamp + 1 days));
         assertEq(resolver.withdrawableAt, 0);
-        assertTrue(resolver.activePoolMember);
-        assertFalse(resolver.globallyEligible);
+        assertTrue(resolver.currentEpochMember);
+        assertTrue(resolver.globallyEligible);
 
         assertEq(config.eveIdentity, address(identity));
         assertEq(config.identityMintFeeToken, address(feeToken));
         assertEq(config.identityMintFee, 25e6);
-        assertEq(config.resolverStakeRequirement, 100e18);
-        assertEq(config.resolverStakeCap, 250e18);
+        assertEq(config.resolverSeatStake, 100e18);
+        assertEq(config.epochCandidateFeeToken, address(0));
+        assertEq(config.epochCandidateFeeAmount, 0);
+        assertEq(config.activeEpochSize, 1);
         assertEq(config.activationDelay, 1 days);
         assertEq(config.exitCooldown, 7 days);
 
+        assertEq(pool.currentEpochId, 1);
         assertEq(pool.activeResolverCount, 1);
-        assertEq(pool.eligibleResolverCount, 0);
-        assertEq(pool.resolverPoolCapacity, 50);
-
-        vm.warp(block.timestamp + 1 days);
-        resolver = registry.resolverIdentityByOwner(alice);
-        (,, pool) = registry.resolverDashboard(alice);
-
-        assertEq(resolver.effectiveLifecycle, uint8(LibResolverJury.ResolverLifecycle.ResolverActive));
-        assertTrue(resolver.globallyEligible);
         assertEq(pool.eligibleResolverCount, 1);
+        assertEq(pool.activeEpochSize, 1);
     }
 
     function test_DepositResolverStakePullsEveIntoCustodyAndRecordsStake() public {
@@ -457,13 +523,14 @@ contract ResolverRegistryTest is Test {
         assertEq(bondToken.balanceOf(address(registry)), 0);
         assertEq(eveToken.balanceOf(alice), 50e18);
 
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidAmount.selector, 150e18));
         vm.prank(alice);
         registry.depositResolverStake(50e18);
 
-        assertEq(registry.recordedStake(identityId), 150e18);
-        assertEq(eveToken.balanceOf(address(registry)), 150e18);
+        assertEq(registry.recordedStake(identityId), 100e18);
+        assertEq(eveToken.balanceOf(address(registry)), 100e18);
         assertEq(bondToken.balanceOf(address(registry)), 0);
-        assertEq(eveToken.balanceOf(alice), 0);
+        assertEq(eveToken.balanceOf(alice), 50e18);
     }
 
     function test_DepositResolverStakeRejectsStakeCapOverflowWithoutTokenMovement() public {
@@ -551,68 +618,313 @@ contract ResolverRegistryTest is Test {
         registry.depositResolverStake(0);
     }
 
-    function test_ActivateResolverReservesPoolCapacityAndEligibilityWaitsForDelay() public {
-        registry.setResolverTiming(1 days, 7 days);
+    function test_EpochSelectionActivatesSelectedResolvers() public {
         uint256 identityId = _fundedResolverIdentity(alice, 100e18);
 
-        vm.prank(alice);
-        registry.activateResolver();
+        _finalizeSingleCandidateEpoch(alice, identityId);
 
         assertEq(registry.activeResolverCount(), 1);
-        assertEq(registry.resolverPoolMemberAt(0), identityId);
-        assertEq(
-            registry.resolverLifecycleState(identityId),
-            uint8(LibResolverJury.ResolverLifecycle.ResolverPendingActivation)
-        );
-        assertFalse(registry.isEligibleResolver(identityId, bytes32(0)));
-
-        vm.warp(block.timestamp + 1 days);
-
+        assertEq(registry.activeResolverAt(0), identityId);
         assertEq(registry.resolverLifecycleState(identityId), uint8(LibResolverJury.ResolverLifecycle.ResolverActive));
         assertTrue(registry.isEligibleResolver(identityId, bytes32(0)));
         assertEq(registry.eligibleResolverCount(), 1);
     }
 
-    function test_ActivateResolverRejectsPoolFull() public {
+    function test_EpochCandidateSetIsUncappedButActiveSetIsBounded() public {
         registry.setResolverPoolCap(1);
-        _activateFundedResolver(alice, 100e18);
+        uint256 firstIdentityId = _fundedResolverIdentity(alice, 100e18);
         uint256 secondIdentityId = _fundedResolverIdentity(bob, 100e18);
 
-        vm.expectRevert(abi.encodeWithSelector(Errors.ResolverPoolFull.selector, uint16(1)));
-        vm.prank(bob);
-        registry.activateResolver();
+        address[] memory owners = new address[](2);
+        owners[0] = alice;
+        owners[1] = bob;
+        uint256[] memory identityIds = new uint256[](2);
+        identityIds[0] = firstIdentityId;
+        identityIds[1] = secondIdentityId;
+        _finalizeCandidateEpoch(owners, identityIds);
 
         assertEq(registry.activeResolverCount(), 1);
+        assertEq(registry.resolverEpoch(1).candidateCount, 2);
         assertEq(registry.recordedStake(secondIdentityId), 100e18);
     }
 
-    function test_RequestResolverExitRejectsInvalidState() public {
-        uint256 identityId = _mintResolverIdentity(alice);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(Errors.CannotExitFromState.selector, uint8(LibResolverJury.ResolverLifecycle.Minted))
-        );
+    function test_OpenGenesisResolverEpochRequiresOwner() public {
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, alice));
         vm.prank(alice);
-        registry.requestResolverExit();
+        registry.openResolverEpochRotation();
 
-        assertEq(registry.resolverLifecycleState(identityId), uint8(LibResolverJury.ResolverLifecycle.Minted));
+        uint64 epochId = registry.openResolverEpochRotation();
+        assertEq(epochId, 1);
+        assertEq(registry.resolverEpoch(epochId).epochId, 1);
     }
 
-    function test_RequestResolverExitFromPendingFreesPoolCapacity() public {
-        registry.setResolverTiming(1 days, 7 days);
+    function test_GenesisOptInSkipsCandidateFee() public {
+        address treasury = makeAddr("candidateFeeTreasury");
+        registry.setTreasury(treasury);
+        registry.setEpochCandidateFee(address(feeToken), 5e6);
+        registry.setIdentityMintFee(address(feeToken), 0);
+
+        uint256 identityId = _mintResolverIdentity(alice);
+        eveToken.mint(alice, 100e18);
+        feeToken.mint(alice, 5e6);
+
+        vm.startPrank(alice);
+        eveToken.approve(address(registry), 100e18);
+        registry.depositResolverStake(100e18);
+        feeToken.approve(address(registry), 5e6);
+        vm.stopPrank();
+
+        uint64 epochId = registry.openResolverEpochRotation();
+        uint256 aliceFeeTokenBefore = feeToken.balanceOf(alice);
+
+        vm.prank(alice);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
+
+        assertEq(feeToken.balanceOf(treasury), 0);
+        assertEq(feeToken.balanceOf(alice), aliceFeeTokenBefore);
+        assertEq(registry.resolverEpoch(epochId).candidateCount, 1);
+    }
+
+    function test_OptIntoPostGenesisResolverEpochCollectsCandidateFeeToTreasury() public {
         uint256 identityId = _activateFundedResolver(alice, 100e18);
+        address treasury = makeAddr("candidateFeeTreasury");
+        registry.setTreasury(treasury);
+        registry.setEpochCandidateFee(address(feeToken), 5e6);
+        feeToken.mint(alice, 5e6);
+
+        vm.prank(alice);
+        feeToken.approve(address(registry), 5e6);
+
+        vm.warp(block.timestamp + 151 days);
+        uint64 epochId = registry.openResolverEpochRotation();
+
+        vm.expectEmit(true, true, true, true);
+        emit Events.ResolverEpochCandidateFeePaid(epochId, identityId, address(feeToken), 5e6);
+        vm.prank(alice);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
+
+        assertEq(epochId, 2);
+        assertEq(feeToken.balanceOf(treasury), 5e6);
+        assertEq(registry.resolverEpoch(epochId).candidateCount, 1);
+    }
+
+    function test_FinalizedTradingRewardsCanBeClaimedByCompliantActiveJurors() public {
+        uint256 identityId = _activateFundedResolver(alice, 100e18);
+        feeToken.mint(address(registry), 99e6);
+        registry.accrueTradingReward(address(feeToken), 99e6);
+
+        vm.warp(block.timestamp + 181 days);
+        registry.finalizeResolverTradingRewards(1, address(feeToken));
+
+        (uint128 accrued, uint128 claimed, uint128 claimable) =
+            registry.previewResolverRewards(identityId, address(feeToken));
+        assertEq(accrued, 99e6);
+        assertEq(claimed, 0);
+        assertEq(claimable, 99e6);
+
+        vm.prank(alice);
+        registry.claimResolverRewards(address(feeToken));
+
+        assertEq(feeToken.balanceOf(alice), 99e6);
+        (,, claimable) = registry.previewResolverRewards(identityId, address(feeToken));
+        assertEq(claimable, 0);
+    }
+
+    function test_EpochSeedUsesStoredReferenceBlockAcrossLaterFinalizerBlock() public {
+        registry.setResolverPoolCap(1);
+        uint256 identityId = _fundedResolverIdentity(alice, 100e18);
+        uint64 epochId = registry.openResolverEpochRotation();
+
+        vm.prank(alice);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
+
+        vm.warp(block.timestamp + 1 days + 1);
+        registry.closeResolverEpochRandomnessCommit(epochId);
+        uint256 referenceBlock = block.number + 1;
+
+        vm.prank(alice);
+        registry.revealResolverEpochRandomness(epochId, _epochValue(identityId), _epochSalt(identityId));
+
+        vm.roll(referenceBlock + 10);
+        vm.warp(block.timestamp + 1 days + 1);
+        uint64 seedReferenceBlock = uint64(block.number + 1);
+        vm.expectEmit(true, false, false, true);
+        emit Events.ResolverEpochSeedReferenceBlockSet(epochId, seedReferenceBlock);
+        assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
+        vm.roll(seedReferenceBlock + 10);
+
+        bytes32 accumulator = keccak256(abi.encode(bytes32(0), identityId, _epochValue(identityId)));
+        bytes32 expectedSeed = keccak256(
+            abi.encode(accumulator, epochId, block.chainid, address(registry), blockhash(seedReferenceBlock), 1)
+        );
+        bytes32 seed = registry.finalizeResolverEpochSeed(epochId);
+
+        assertEq(seed, expectedSeed);
+        assertEq(registry.resolverEpoch(epochId).seedReferenceBlock, seedReferenceBlock);
+    }
+
+    function test_EpochSeedFinalizesWithLowRevealCountUsingReferenceEntropy() public {
+        registry.setResolverPoolCap(2);
+        uint256 firstIdentityId = _fundedResolverIdentity(alice, 100e18);
+        uint256 secondIdentityId = _fundedResolverIdentity(bob, 100e18);
+        uint64 epochId = registry.openResolverEpochRotation();
+
+        vm.prank(alice);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, firstIdentityId));
+        vm.prank(bob);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, secondIdentityId));
+
+        vm.warp(block.timestamp + 1 days + 1);
+        registry.closeResolverEpochRandomnessCommit(epochId);
+
+        vm.prank(alice);
+        registry.revealResolverEpochRandomness(epochId, _epochValue(firstIdentityId), _epochSalt(firstIdentityId));
+
+        vm.roll(block.number + 2);
+        vm.warp(block.timestamp + 1 days + 1);
+        assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
+        vm.roll(block.number + 2);
+        bytes32 seed = registry.finalizeResolverEpochSeed(epochId);
+
+        assertGt(uint256(seed), 0);
+        assertEq(registry.resolverEpoch(epochId).validRevealCount, 1);
+    }
+
+    function test_FinalizeEpochSelectionRejectsPartiallyScoredCandidateSet() public {
+        registry.setResolverPoolCap(2);
+        uint256 firstIdentityId = _fundedResolverIdentity(alice, 100e18);
+        uint256 secondIdentityId = _fundedResolverIdentity(bob, 100e18);
+        uint64 epochId = registry.openResolverEpochRotation();
+
+        vm.prank(alice);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, firstIdentityId));
+        vm.prank(bob);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, secondIdentityId));
+        vm.warp(block.timestamp + 1 days + 1);
+        registry.closeResolverEpochRandomnessCommit(epochId);
+        vm.prank(alice);
+        registry.revealResolverEpochRandomness(epochId, _epochValue(firstIdentityId), _epochSalt(firstIdentityId));
+        vm.prank(bob);
+        registry.revealResolverEpochRandomness(epochId, _epochValue(secondIdentityId), _epochSalt(secondIdentityId));
+        vm.roll(block.number + 2);
+        vm.warp(block.timestamp + 1 days + 1);
+        assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
+        vm.roll(block.number + 2);
+        registry.finalizeResolverEpochSeed(epochId);
+
+        registry.submitResolverEpochCandidateScore(epochId, firstIdentityId);
+        vm.warp(block.timestamp + 1 days + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.ResolverEpochUnderfilled.selector, epochId, 1, 2));
+        registry.finalizeResolverEpochSelection(epochId);
+    }
+
+    function test_FinalizeEpochSelectionDoesNotScanAllCandidatesToRefillPrunedSelection() public {
+        registry.setResolverPoolCap(1);
+        uint256 firstIdentityId = _fundedResolverIdentity(alice, 100e18);
+        uint256 secondIdentityId = _fundedResolverIdentity(bob, 100e18);
+        uint64 epochId = registry.openResolverEpochRotation();
+
+        vm.prank(alice);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, firstIdentityId));
+        vm.prank(bob);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, secondIdentityId));
+
+        vm.warp(block.timestamp + 1 days + 1);
+        registry.closeResolverEpochRandomnessCommit(epochId);
+        vm.prank(alice);
+        registry.revealResolverEpochRandomness(epochId, _epochValue(firstIdentityId), _epochSalt(firstIdentityId));
+        vm.prank(bob);
+        registry.revealResolverEpochRandomness(epochId, _epochValue(secondIdentityId), _epochSalt(secondIdentityId));
+
+        vm.roll(block.number + 2);
+        vm.warp(block.timestamp + 1 days + 1);
+        assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
+        vm.roll(block.number + 2);
+        registry.finalizeResolverEpochSeed(epochId);
+
+        uint256 firstScore = registry.submitResolverEpochCandidateScore(epochId, firstIdentityId);
+        uint256 secondScore = registry.submitResolverEpochCandidateScore(epochId, secondIdentityId);
+        uint256 selectedIdentityId = firstScore <= secondScore ? firstIdentityId : secondIdentityId;
+
+        // Synthetic stake drift isolates the bounded-finalization branch: old finalization would scan all
+        // scored candidates and refill with the non-selected resolver.
+        registry.setRecordedStake(selectedIdentityId, 0);
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ResolverEpochUnderfilled.selector, epochId, 0, 1));
+        registry.finalizeResolverEpochSelection(epochId);
+    }
+
+    function test_SlashedEpochCandidateCannotSubmitScoreOrActivate() public {
+        uint256 identityId = _activateFundedResolver(alice, 100e18);
+
+        vm.warp(block.timestamp + 151 days);
+        uint64 epochId = registry.openResolverEpochRotation();
+        vm.prank(alice);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
+        vm.warp(block.timestamp + 1 days + 1);
+        registry.closeResolverEpochRandomnessCommit(epochId);
+        vm.prank(alice);
+        registry.revealResolverEpochRandomness(epochId, _epochValue(identityId), _epochSalt(identityId));
+
+        vm.roll(block.number + 2);
+        vm.warp(block.timestamp + 1 days + 1);
+        assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
+        vm.roll(block.number + 2);
+        registry.finalizeResolverEpochSeed(epochId);
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.ResolverEpochCandidateIneligible.selector, epochId, identityId));
+        registry.submitResolverEpochCandidateScore(epochId, identityId);
+        assertLt(registry.recordedStake(identityId), 100e18);
+    }
+
+    function test_FullConfiguredEpochActivatesAllSelectedResolvers() public {
+        registry.setResolverPoolCap(16);
+        address[] memory owners = new address[](16);
+        uint256[] memory identityIds = new uint256[](16);
+        for (uint256 index; index < 16; ++index) {
+            owners[index] = vm.addr(10_000 + index);
+            identityIds[index] = _fundedResolverIdentity(owners[index], 100e18);
+        }
+
+        _finalizeCandidateEpoch(owners, identityIds);
+
+        assertEq(registry.activeResolverCount(), 16);
+        assertEq(registry.eligibleResolverCount(), 16);
+        assertEq(registry.resolverEpoch(1).activeCount, 16);
+    }
+
+    function test_RequestResolverExitAllowsUnlockedStakedResolver() public {
+        uint256 identityId = _mintResolverIdentity(alice);
 
         vm.prank(alice);
         registry.requestResolverExit();
 
         assertEq(registry.resolverLifecycleState(identityId), uint8(LibResolverJury.ResolverLifecycle.ExitCooldown));
-        assertEq(registry.activeResolverCount(), 0);
+    }
+
+    function test_RequestResolverExitFromCandidateRevertsWhileSelectionPending() public {
+        registry.setResolverTiming(1 days, 7 days);
+        uint256 identityId = _fundedResolverIdentity(alice, 100e18);
+        uint64 epochId = registry.openResolverEpochRotation();
+        vm.prank(alice);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.StakeLocked.selector, identityId));
+        vm.prank(alice);
+        registry.requestResolverExit();
+
+        assertEq(
+            registry.resolverLifecycleState(identityId), uint8(LibResolverJury.ResolverLifecycle.ResolverCandidate)
+        );
+        assertEq(registry.currentResolverEpoch(), 0);
         assertFalse(registry.isEligibleResolver(identityId, bytes32(0)));
     }
 
     function test_WithdrawResolverStakeReleasesAfterCooldown() public {
         registry.setResolverTiming(0, 7 days);
-        uint256 identityId = _activateFundedResolver(alice, 100e18);
+        uint256 identityId = _fundedResolverIdentity(alice, 100e18);
 
         vm.prank(alice);
         registry.requestResolverExit();
@@ -644,9 +956,7 @@ contract ResolverRegistryTest is Test {
     function test_HasConflictExcludesDirectBinaryOutcomeHoldingsAboveThreshold() public {
         uint256 identityId = _fundedResolverIdentity(alice, 100e18);
         bytes32 marketId = keccak256("binary-holding-conflict");
-        registry.setBinaryMarket(
-            marketId, uint8(LibEveMarket.MarketType.CLOB), address(positions), 111, 222
-        );
+        registry.setBinaryMarket(marketId, uint8(LibEveMarket.MarketType.CLOB), address(positions), 111, 222);
 
         registry.mintPosition(address(positions), alice, 111, 1e6);
         assertFalse(registry.hasConflict(identityId, marketId));
@@ -673,9 +983,7 @@ contract ResolverRegistryTest is Test {
     function test_HasConflictExcludesDirectParimutuelOutcomeHoldingsAboveThreshold() public {
         uint256 identityId = _fundedResolverIdentity(alice, 100e18);
         bytes32 marketId = keccak256("parimutuel-holding-conflict");
-        registry.setBinaryMarket(
-            marketId, uint8(LibEveMarket.MarketType.PARIMUTUEL), address(positions), 333, 444
-        );
+        registry.setBinaryMarket(marketId, uint8(LibEveMarket.MarketType.PARIMUTUEL), address(positions), 333, 444);
 
         registry.mintPosition(address(positions), alice, 444, 1e6 + 1);
 
@@ -714,9 +1022,7 @@ contract ResolverRegistryTest is Test {
         uint256 identityId = _fundedResolverIdentity(alice, 100e18);
         bytes32 marketId = keccak256("disabled-threshold-conflict");
         registry.setConflictPositionThreshold(0);
-        registry.setBinaryMarket(
-            marketId, uint8(LibEveMarket.MarketType.CLOB), address(positions), 111, 222
-        );
+        registry.setBinaryMarket(marketId, uint8(LibEveMarket.MarketType.CLOB), address(positions), 111, 222);
         registry.mintPosition(address(positions), alice, 111, 10e6);
 
         assertFalse(registry.hasConflict(identityId, marketId));
@@ -792,8 +1098,58 @@ contract ResolverRegistryTest is Test {
 
     function _activateFundedResolver(address owner, uint256 stakeAmount) internal returns (uint256 identityId) {
         identityId = _fundedResolverIdentity(owner, stakeAmount);
+        _finalizeSingleCandidateEpoch(owner, identityId);
+    }
 
-        vm.prank(owner);
-        registry.activateResolver();
+    function _finalizeSingleCandidateEpoch(address owner, uint256 identityId) internal {
+        registry.setResolverPoolCap(1);
+        address[] memory owners = new address[](1);
+        owners[0] = owner;
+        uint256[] memory identityIds = new uint256[](1);
+        identityIds[0] = identityId;
+        _finalizeCandidateEpoch(owners, identityIds);
+    }
+
+    function _finalizeCandidateEpoch(address[] memory owners, uint256[] memory identityIds) internal {
+        uint64 epochId = registry.openResolverEpochRotation();
+        for (uint256 index; index < owners.length; ++index) {
+            uint256 identityId = identityIds[index];
+            vm.prank(owners[index]);
+            registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
+        }
+
+        vm.warp(block.timestamp + 1 days + 1);
+        registry.closeResolverEpochRandomnessCommit(epochId);
+
+        for (uint256 index; index < owners.length; ++index) {
+            uint256 identityId = identityIds[index];
+            vm.prank(owners[index]);
+            registry.revealResolverEpochRandomness(epochId, _epochValue(identityId), _epochSalt(identityId));
+        }
+
+        vm.roll(block.number + 2);
+        vm.warp(block.timestamp + 1 days + 1);
+        assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
+        vm.roll(block.number + 2);
+        registry.finalizeResolverEpochSeed(epochId);
+
+        for (uint256 index; index < identityIds.length; ++index) {
+            registry.submitResolverEpochCandidateScore(epochId, identityIds[index]);
+        }
+
+        vm.warp(block.timestamp + 1 days + 1);
+        registry.finalizeResolverEpochSelection(epochId);
+    }
+
+    function _epochCommitment(uint64 epochId, uint256 identityId) internal pure returns (bytes32) {
+        return keccak256(abi.encode(epochId, identityId, _epochValue(identityId), _epochSalt(identityId)));
+    }
+
+    function _epochValue(uint256 identityId) internal pure returns (bytes32) {
+        return keccak256(abi.encode("epoch-value", identityId));
+    }
+
+    function _epochSalt(uint256 identityId) internal pure returns (bytes32) {
+        return keccak256(abi.encode("epoch-salt", identityId));
     }
 }

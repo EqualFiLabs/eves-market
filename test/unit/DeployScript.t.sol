@@ -4,16 +4,13 @@ pragma solidity ^0.8.28;
 import {Test} from "../../lib/forge-std/src/Test.sol";
 
 import {EveUSDC} from "../../src/EveUSDC.sol";
+import {EvRiskStakingRewards} from "../../src/EvRiskStakingRewards.sol";
 import {EveRiskShares} from "../../src/EveRiskShares.sol";
 import {EveUSD} from "../../src/EveUSD.sol";
 import {EveUSDPool} from "../../src/EveUSDPool.sol";
 import {EveUSDRouter} from "../../src/EveUSDRouter.sol";
 import {Faucet} from "../../src/Faucet.sol";
-import {MakerLendingRouter} from "../../src/MakerLendingRouter.sol";
-import {SEveUSDLending} from "../../src/SEveUSDLending.sol";
-import {SEveUSDVault} from "../../src/SEveUSDVault.sol";
-import {SEveUSDCLending} from "../../src/SEveUSDCLending.sol";
-import {SEveUSDCVault} from "../../src/SEveUSDCVault.sol";
+import {SeniorCapitalPool} from "../../src/SeniorCapitalPool.sol";
 import {CanonicalWETH9} from "../../src/mocks/CanonicalWETH9.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {DiamondLoupeFacet} from "../../src/facets/DiamondLoupeFacet.sol";
@@ -37,7 +34,6 @@ import {IParimutuelFacet} from "../../src/interfaces/IParimutuelFacet.sol";
 import {IResolverRegistryFacet} from "../../src/interfaces/IResolverRegistryFacet.sol";
 import {IComboMarketFacet} from "../../src/interfaces/IComboMarketFacet.sol";
 import {ITradeRouter} from "../../src/interfaces/ITradeRouter.sol";
-import {IVaultRouter} from "../../src/interfaces/IVaultRouter.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {IConditionalTokens} from "../../src/interfaces/IConditionalTokens.sol";
 import {EvesPositionManager} from "../../src/tokens/EvesPositionManager.sol";
@@ -59,27 +55,35 @@ contract ConfigProbeFacet {
         address collateralToken;
         address eveToken;
         address eveTreasury;
-        address stakingVault;
-        address secondaryStakingVault;
+        address seniorCapitalPool;
+        address evRiskStakingRewards;
         address parimutuelShareToken;
         uint16 orderbookEntryFeeBps;
         uint16 orderbookMakerFeeBps;
         uint16 orderbookCreatorFeeBps;
         uint16 orderbookProtocolFeeBps;
         uint16 orderbookVaultFeeBps;
+        uint16 orderbookResolverFeeBps;
+        uint16 orderbookEvRiskFeeBps;
         uint16 spotTradeFeeBps;
         uint16 spotMakerFeeBps;
         uint16 spotProtocolFeeBps;
         uint16 spotVaultFeeBps;
+        uint16 spotResolverFeeBps;
+        uint16 spotEvRiskFeeBps;
         uint16 comboTradeFeeBps;
         uint16 comboMakerFeeBps;
         uint16 comboCreatorFeeBps;
         uint16 comboProtocolFeeBps;
         uint16 comboVaultFeeBps;
+        uint16 comboResolverFeeBps;
+        uint16 comboEvRiskFeeBps;
         uint16 parimutuelEntryFeeBps;
         uint16 parimutuelCreatorFeeBps;
         uint16 parimutuelProtocolFeeBps;
         uint16 parimutuelVaultFeeBps;
+        uint16 parimutuelResolverFeeBps;
+        uint16 parimutuelEvRiskFeeBps;
         uint128 parimutuelMinEntry;
         uint128 parimutuelCreationSeedAmount;
         uint128 marketCreationFee;
@@ -106,27 +110,35 @@ contract ConfigProbeFacet {
         snapshot.collateralToken = config.collateralToken;
         snapshot.eveToken = config.eveToken;
         snapshot.eveTreasury = config.eveTreasury;
-        snapshot.stakingVault = config.stakingVault;
-        snapshot.secondaryStakingVault = config.secondaryStakingVault;
+        snapshot.seniorCapitalPool = config.seniorCapitalPool;
+        snapshot.evRiskStakingRewards = config.evRiskStakingRewards;
         snapshot.parimutuelShareToken = config.parimutuelShareToken;
         snapshot.orderbookEntryFeeBps = config.orderbookFeeConfig.entryFeeBps;
         snapshot.orderbookMakerFeeBps = config.orderbookFeeConfig.makerFeeBps;
         snapshot.orderbookCreatorFeeBps = config.orderbookFeeConfig.creatorFeeBps;
         snapshot.orderbookProtocolFeeBps = config.orderbookFeeConfig.protocolFeeBps;
         snapshot.orderbookVaultFeeBps = config.orderbookFeeConfig.vaultFeeBps;
+        snapshot.orderbookResolverFeeBps = config.orderbookFeeConfig.resolverFeeBps;
+        snapshot.orderbookEvRiskFeeBps = config.orderbookFeeConfig.evRiskFeeBps;
         snapshot.spotTradeFeeBps = config.spotFeeConfig.tradeFeeBps;
         snapshot.spotMakerFeeBps = config.spotFeeConfig.makerFeeBps;
         snapshot.spotProtocolFeeBps = config.spotFeeConfig.protocolFeeBps;
         snapshot.spotVaultFeeBps = config.spotFeeConfig.vaultFeeBps;
+        snapshot.spotResolverFeeBps = config.spotFeeConfig.resolverFeeBps;
+        snapshot.spotEvRiskFeeBps = config.spotFeeConfig.evRiskFeeBps;
         snapshot.comboTradeFeeBps = config.comboFeeConfig.tradeFeeBps;
         snapshot.comboMakerFeeBps = config.comboFeeConfig.makerFeeBps;
         snapshot.comboCreatorFeeBps = config.comboFeeConfig.creatorFeeBps;
         snapshot.comboProtocolFeeBps = config.comboFeeConfig.protocolFeeBps;
         snapshot.comboVaultFeeBps = config.comboFeeConfig.vaultFeeBps;
+        snapshot.comboResolverFeeBps = config.comboFeeConfig.resolverFeeBps;
+        snapshot.comboEvRiskFeeBps = config.comboFeeConfig.evRiskFeeBps;
         snapshot.parimutuelEntryFeeBps = config.parimutuelFeeConfig.entryFeeBps;
         snapshot.parimutuelCreatorFeeBps = config.parimutuelFeeConfig.creatorFeeBps;
         snapshot.parimutuelProtocolFeeBps = config.parimutuelFeeConfig.protocolFeeBps;
         snapshot.parimutuelVaultFeeBps = config.parimutuelFeeConfig.vaultFeeBps;
+        snapshot.parimutuelResolverFeeBps = config.parimutuelFeeConfig.resolverFeeBps;
+        snapshot.parimutuelEvRiskFeeBps = config.parimutuelFeeConfig.evRiskFeeBps;
         snapshot.parimutuelMinEntry = config.parimutuelMinEntry;
         snapshot.parimutuelCreationSeedAmount = config.parimutuelCreationSeedAmount;
         snapshot.marketCreationFee = config.marketCreationFee;
@@ -170,8 +182,8 @@ contract DeployScriptTest is Test {
             collateralToken: address(collateralToken),
             eveToken: address(eveToken),
             eveTreasury: treasury,
-            stakingVault: address(0),
-            secondaryStakingVault: address(0),
+            seniorCapitalPool: address(0),
+            evRiskStakingRewards: address(0),
             evesPositionManager: address(0),
             parimutuelShareToken: address(0),
             parlayTicketToken: address(0),
@@ -184,19 +196,27 @@ contract DeployScriptTest is Test {
             orderbookCreatorFeeBps: 400,
             orderbookProtocolFeeBps: 1_000,
             orderbookVaultFeeBps: 100,
+            orderbookResolverFeeBps: 0,
+            orderbookEvRiskFeeBps: 0,
             spotTradeFeeBps: 75,
             spotMakerFeeBps: 8_500,
             spotProtocolFeeBps: 1_400,
             spotVaultFeeBps: 100,
+            spotResolverFeeBps: 0,
+            spotEvRiskFeeBps: 0,
             comboTradeFeeBps: 80,
             comboMakerFeeBps: 8_500,
             comboCreatorFeeBps: 400,
             comboProtocolFeeBps: 1_000,
             comboVaultFeeBps: 100,
+            comboResolverFeeBps: 0,
+            comboEvRiskFeeBps: 0,
             parimutuelEntryFeeBps: 250,
             parimutuelCreatorFeeBps: 500,
             parimutuelProtocolFeeBps: 9_500,
             parimutuelVaultFeeBps: 0,
+            parimutuelResolverFeeBps: 0,
+            parimutuelEvRiskFeeBps: 0,
             parimutuelMinEntry: 1e18,
             parimutuelCreationSeedAmount: 25e18,
             parimutuelEpochWindowCap: 30 days,
@@ -219,7 +239,10 @@ contract DeployScriptTest is Test {
             delayedOrderExecutionGraceBlocks: 20,
             delayedOrderRestingDurationMinutes: 180,
             delayedOrderProcessorFeeShareBps: 0,
-            delayedOrderProcessingMode: uint8(LibEveMarket.ProcessingMode.ProtocolOnly)
+            delayedOrderProcessingMode: uint8(LibEveMarket.ProcessingMode.ProtocolOnly),
+            maxDelayedOrderRouteLength: 64,
+            minDelayedOrderQuoteWad: 1e18,
+            minDelayedOrderBaseWad: 1e18
         });
 
         DeployScript.Deployment memory deployment = deployScript.deploy(config, address(deployScript));
@@ -227,13 +250,13 @@ contract DeployScriptTest is Test {
         deployScript.verifyDeployment(deployment);
 
         assertEq(OwnershipFacet(deployment.diamond).owner(), protocolOwner);
-        assertEq(DiamondLoupeFacet(deployment.diamond).facetAddresses().length, 48);
+        assertEq(DiamondLoupeFacet(deployment.diamond).facetAddresses().length, 47);
         assertTrue(deployment.parimutuelShareToken != address(0));
         assertTrue(deployment.parlayTicketToken != address(0));
         assertTrue(deployment.eveIdentity != address(0));
         assertEq(ParimutuelShareToken(deployment.parimutuelShareToken).diamond(), deployment.diamond);
         assertEq(EveIdentity(deployment.eveIdentity).diamond(), deployment.diamond);
-        assertEq(IResolverRegistryFacet(deployment.diamond).resolverPoolCapacity(), 50);
+        assertEq(IResolverRegistryFacet(deployment.diamond).activeResolverEpochSize(), 16);
         uint256 identityId = IResolverRegistryFacet(deployment.diamond).mintIdentity();
         assertEq(EveIdentity(deployment.eveIdentity).ownerOf(identityId), address(this));
         assertEq(
@@ -262,24 +285,32 @@ contract DeployScriptTest is Test {
         assertEq(snapshot.collateralToken, address(collateralToken));
         assertEq(snapshot.eveToken, address(eveToken));
         assertEq(snapshot.eveTreasury, treasury);
-        assertEq(snapshot.stakingVault, address(0));
-        assertEq(snapshot.secondaryStakingVault, address(0));
+        assertEq(snapshot.seniorCapitalPool, address(0));
+        assertEq(snapshot.evRiskStakingRewards, address(0));
         assertEq(snapshot.parimutuelShareToken, deployment.parimutuelShareToken);
         assertEq(snapshot.orderbookEntryFeeBps, 100);
         assertEq(snapshot.orderbookVaultFeeBps, 100);
+        assertEq(snapshot.orderbookResolverFeeBps, 0);
+        assertEq(snapshot.orderbookEvRiskFeeBps, 0);
         assertEq(snapshot.spotTradeFeeBps, 75);
         assertEq(snapshot.spotMakerFeeBps, 8_500);
         assertEq(snapshot.spotProtocolFeeBps, 1_400);
         assertEq(snapshot.spotVaultFeeBps, 100);
+        assertEq(snapshot.spotResolverFeeBps, 0);
+        assertEq(snapshot.spotEvRiskFeeBps, 0);
         assertEq(snapshot.comboTradeFeeBps, 80);
         assertEq(snapshot.comboMakerFeeBps, 8_500);
         assertEq(snapshot.comboCreatorFeeBps, 400);
         assertEq(snapshot.comboProtocolFeeBps, 1_000);
         assertEq(snapshot.comboVaultFeeBps, 100);
+        assertEq(snapshot.comboResolverFeeBps, 0);
+        assertEq(snapshot.comboEvRiskFeeBps, 0);
         assertEq(snapshot.parimutuelEntryFeeBps, 250);
         assertEq(snapshot.parimutuelCreatorFeeBps, 500);
         assertEq(snapshot.parimutuelProtocolFeeBps, 9_500);
         assertEq(snapshot.parimutuelVaultFeeBps, 0);
+        assertEq(snapshot.parimutuelResolverFeeBps, 0);
+        assertEq(snapshot.parimutuelEvRiskFeeBps, 0);
         assertEq(snapshot.parimutuelMinEntry, 1e18);
         assertEq(snapshot.parimutuelCreationSeedAmount, 25e18);
         assertEq(snapshot.marketCreationFee, 50e18);
@@ -320,8 +351,8 @@ contract DeployScriptTest is Test {
             collateralToken: address(collateralToken),
             eveToken: address(eveToken),
             eveTreasury: treasury,
-            stakingVault: address(0),
-            secondaryStakingVault: address(0),
+            seniorCapitalPool: address(0),
+            evRiskStakingRewards: address(0),
             evesPositionManager: address(0),
             parimutuelShareToken: address(0),
             parlayTicketToken: address(0),
@@ -334,19 +365,27 @@ contract DeployScriptTest is Test {
             orderbookCreatorFeeBps: 400,
             orderbookProtocolFeeBps: 1_000,
             orderbookVaultFeeBps: 100,
+            orderbookResolverFeeBps: 0,
+            orderbookEvRiskFeeBps: 0,
             spotTradeFeeBps: 75,
             spotMakerFeeBps: 8_500,
             spotProtocolFeeBps: 1_400,
             spotVaultFeeBps: 100,
+            spotResolverFeeBps: 0,
+            spotEvRiskFeeBps: 0,
             comboTradeFeeBps: 80,
             comboMakerFeeBps: 8_500,
             comboCreatorFeeBps: 400,
             comboProtocolFeeBps: 1_000,
             comboVaultFeeBps: 100,
+            comboResolverFeeBps: 0,
+            comboEvRiskFeeBps: 0,
             parimutuelEntryFeeBps: 250,
             parimutuelCreatorFeeBps: 500,
             parimutuelProtocolFeeBps: 9_500,
             parimutuelVaultFeeBps: 0,
+            parimutuelResolverFeeBps: 0,
+            parimutuelEvRiskFeeBps: 0,
             parimutuelMinEntry: 1e18,
             parimutuelCreationSeedAmount: 0,
             parimutuelEpochWindowCap: 30 days,
@@ -369,7 +408,10 @@ contract DeployScriptTest is Test {
             delayedOrderExecutionGraceBlocks: 20,
             delayedOrderRestingDurationMinutes: 180,
             delayedOrderProcessorFeeShareBps: 0,
-            delayedOrderProcessingMode: uint8(LibEveMarket.ProcessingMode.ProtocolOnly)
+            delayedOrderProcessingMode: uint8(LibEveMarket.ProcessingMode.ProtocolOnly),
+            maxDelayedOrderRouteLength: 64,
+            minDelayedOrderQuoteWad: 1e18,
+            minDelayedOrderBaseWad: 1e18
         });
 
         DeployScript.Deployment memory deployment = deployScript.deploy(config, address(deployScript));
@@ -398,8 +440,8 @@ contract DeployScriptTest is Test {
             collateralToken: address(collateralToken),
             eveToken: address(eveToken),
             eveTreasury: treasury,
-            stakingVault: address(0),
-            secondaryStakingVault: address(0),
+            seniorCapitalPool: address(0),
+            evRiskStakingRewards: address(0),
             evesPositionManager: address(0),
             parimutuelShareToken: address(0),
             parlayTicketToken: address(0),
@@ -412,19 +454,27 @@ contract DeployScriptTest is Test {
             orderbookCreatorFeeBps: 400,
             orderbookProtocolFeeBps: 1_000,
             orderbookVaultFeeBps: 100,
+            orderbookResolverFeeBps: 0,
+            orderbookEvRiskFeeBps: 0,
             spotTradeFeeBps: 75,
             spotMakerFeeBps: 8_500,
             spotProtocolFeeBps: 1_400,
             spotVaultFeeBps: 100,
+            spotResolverFeeBps: 0,
+            spotEvRiskFeeBps: 0,
             comboTradeFeeBps: 80,
             comboMakerFeeBps: 8_500,
             comboCreatorFeeBps: 400,
             comboProtocolFeeBps: 1_000,
             comboVaultFeeBps: 100,
+            comboResolverFeeBps: 0,
+            comboEvRiskFeeBps: 0,
             parimutuelEntryFeeBps: 250,
             parimutuelCreatorFeeBps: 8_000,
             parimutuelProtocolFeeBps: 3_000,
             parimutuelVaultFeeBps: 0,
+            parimutuelResolverFeeBps: 0,
+            parimutuelEvRiskFeeBps: 0,
             parimutuelMinEntry: 1e18,
             parimutuelCreationSeedAmount: 0,
             parimutuelEpochWindowCap: 30 days,
@@ -447,14 +497,17 @@ contract DeployScriptTest is Test {
             delayedOrderExecutionGraceBlocks: 20,
             delayedOrderRestingDurationMinutes: 180,
             delayedOrderProcessorFeeShareBps: 0,
-            delayedOrderProcessingMode: uint8(LibEveMarket.ProcessingMode.ProtocolOnly)
+            delayedOrderProcessingMode: uint8(LibEveMarket.ProcessingMode.ProtocolOnly),
+            maxDelayedOrderRouteLength: 64,
+            minDelayedOrderQuoteWad: 1e18,
+            minDelayedOrderBaseWad: 1e18
         });
 
         vm.expectRevert(bytes("invalid parimutuel fee split"));
         deployScript.deploy(config, address(deployScript));
     }
 
-    function test_DeployFullStackAutoDeploysVaultLendingAndDiamondRouters() public {
+    function test_DeployFullStackAutoDeploysSeniorPoolAndDiamondRouters() public {
         DeployScript deployScript = new DeployScript();
         address protocolOwner = address(deployScript);
         address treasury = makeAddr("treasury");
@@ -466,8 +519,8 @@ contract DeployScriptTest is Test {
             collateralToken: address(0),
             eveToken: address(0),
             eveTreasury: treasury,
-            stakingVault: address(0),
-            secondaryStakingVault: address(0),
+            seniorCapitalPool: address(0),
+            evRiskStakingRewards: address(0),
             evesPositionManager: address(0),
             parimutuelShareToken: address(0),
             parlayTicketToken: address(0),
@@ -480,19 +533,27 @@ contract DeployScriptTest is Test {
             orderbookCreatorFeeBps: 400,
             orderbookProtocolFeeBps: 1_000,
             orderbookVaultFeeBps: 100,
+            orderbookResolverFeeBps: 0,
+            orderbookEvRiskFeeBps: 0,
             spotTradeFeeBps: 75,
             spotMakerFeeBps: 8_500,
             spotProtocolFeeBps: 1_400,
             spotVaultFeeBps: 100,
+            spotResolverFeeBps: 0,
+            spotEvRiskFeeBps: 0,
             comboTradeFeeBps: 80,
             comboMakerFeeBps: 8_500,
             comboCreatorFeeBps: 400,
             comboProtocolFeeBps: 1_000,
             comboVaultFeeBps: 100,
+            comboResolverFeeBps: 0,
+            comboEvRiskFeeBps: 0,
             parimutuelEntryFeeBps: 250,
             parimutuelCreatorFeeBps: 500,
             parimutuelProtocolFeeBps: 9_500,
             parimutuelVaultFeeBps: 0,
+            parimutuelResolverFeeBps: 0,
+            parimutuelEvRiskFeeBps: 0,
             parimutuelMinEntry: 1e18,
             parimutuelCreationSeedAmount: 25e18,
             parimutuelEpochWindowCap: 30 days,
@@ -515,31 +576,23 @@ contract DeployScriptTest is Test {
             delayedOrderExecutionGraceBlocks: 20,
             delayedOrderRestingDurationMinutes: 180,
             delayedOrderProcessorFeeShareBps: 0,
-            delayedOrderProcessingMode: uint8(LibEveMarket.ProcessingMode.ProtocolOnly)
+            delayedOrderProcessingMode: uint8(LibEveMarket.ProcessingMode.ProtocolOnly),
+            maxDelayedOrderRouteLength: 64,
+            minDelayedOrderQuoteWad: 1e18,
+            minDelayedOrderBaseWad: 1e18
         });
 
         DeployScript.FullDeploymentConfig memory config = DeployScript.FullDeploymentConfig({
             market: marketConfig,
             usdcToken: address(0),
             eveUSDC: address(0),
-            seveUsdcLending: address(0),
-            seveUsdVault: address(0),
-            seveUsdLending: address(0),
-            makerLendingRouter: address(0),
+            seniorCapitalPool: address(0),
             eveUsdcOnramp: address(0),
             eveUsdcOfframp: address(0),
             feeRecipient: address(0),
-            aumFeeBps: 200,
-            lendingMaxLtvBps: 9_500,
-            lendingOriginationFeeBps: 100,
-            lendingExtensionFeeBps: 50,
-            lendingFeeRecipientBps: 3_000,
-            lendingMinDurationSeconds: 1 days,
-            lendingMaxDurationSeconds: 400 days,
-            lendingGracePeriodSeconds: 1 days,
             initialUsdcMint: 5_000_000e6,
             initialEveMint: 1_000_000e18,
-            initialVaultBootstrap: 0,
+            initialSeniorPoolBootstrap: 0,
             faucetOwner: protocolOwner,
             wethToken: address(0),
             eveETH: address(0),
@@ -599,55 +652,27 @@ contract DeployScriptTest is Test {
         assertTrue(deployment.usdcToken != address(0));
         assertTrue(deployment.eveToken != address(0));
         assertTrue(deployment.eveUSDC != address(0));
-        assertTrue(deployment.seveUsdcVault != address(0));
-        assertTrue(deployment.seveUsdcLending != address(0));
-        assertTrue(deployment.makerLendingRouter != address(0));
+        assertTrue(deployment.seniorCapitalPool != address(0));
         assertTrue(deployment.faucet != address(0));
         assertTrue(deployment.wethToken != address(0));
         assertTrue(deployment.eveETH != address(0));
         assertTrue(deployment.market.parimutuelShareToken != address(0));
-        assertTrue(deployment.seveUsdVault != address(0));
-        assertTrue(deployment.seveUsdLending != address(0));
 
         assertEq(OwnershipFacet(deployment.market.diamond).owner(), protocolOwner);
         assertEq(EveUSDC(deployment.eveUSDC).usdc(), deployment.usdcToken);
         assertEq(EveUSDC(deployment.eveUSDC).onramp(), protocolOwner);
         assertEq(EveUSDC(deployment.eveUSDC).offramp(), protocolOwner);
 
-        assertEq(SEveUSDCVault(deployment.seveUsdcVault).asset(), deployment.eveUSDC);
-        assertEq(SEveUSDCVault(deployment.seveUsdcVault).owner(), protocolOwner);
-        assertEq(SEveUSDCVault(deployment.seveUsdcVault).feeRecipient(), treasury);
-        assertEq(SEveUSDCVault(deployment.seveUsdcVault).lendingContract(), deployment.seveUsdcLending);
-        assertEq(SEveUSDCVault(deployment.seveUsdcVault).totalSupply(), bootstrapAssets);
-        assertEq(SEveUSDCVault(deployment.seveUsdcVault).balanceOf(protocolOwner), bootstrapAssets);
+        assertEq(SeniorCapitalPool(deployment.seniorCapitalPool).asset(), deployment.eveUSDC);
+        assertEq(SeniorCapitalPool(deployment.seniorCapitalPool).owner(), protocolOwner);
+        assertEq(SeniorCapitalPool(deployment.seniorCapitalPool).riskManager(), deployment.market.diamond);
+        assertEq(SeniorCapitalPool(deployment.seniorCapitalPool).totalSupply(), bootstrapAssets);
+        assertEq(SeniorCapitalPool(deployment.seniorCapitalPool).balanceOf(protocolOwner), bootstrapAssets);
 
-        assertEq(address(SEveUSDCLending(deployment.seveUsdcLending).vault()), deployment.seveUsdcVault);
-        assertEq(address(SEveUSDCLending(deployment.seveUsdcLending).eveUSDC()), deployment.eveUSDC);
-        assertTrue(SEveUSDCLending(deployment.seveUsdcLending).approvedRouters(deployment.makerLendingRouter));
-        assertEq(SEveUSDVault(deployment.seveUsdVault).asset(), deployment.eveUSD);
-        assertEq(SEveUSDVault(deployment.seveUsdVault).name(), "sEVEUSD");
-        assertEq(SEveUSDVault(deployment.seveUsdVault).symbol(), "sEVEUSD");
-        assertEq(SEveUSDVault(deployment.seveUsdVault).owner(), protocolOwner);
-        assertEq(SEveUSDVault(deployment.seveUsdVault).feeRecipient(), treasury);
-        assertEq(SEveUSDVault(deployment.seveUsdVault).lendingContract(), deployment.seveUsdLending);
-        assertEq(address(SEveUSDLending(deployment.seveUsdLending).vault()), deployment.seveUsdVault);
-        assertEq(address(SEveUSDLending(deployment.seveUsdLending).eveUSD()), deployment.eveUSD);
         assertEq(CanonicalWETH9(payable(deployment.wethToken)).symbol(), "WETH");
         assertEq(EveETH(deployment.eveETH).weth(), deployment.wethToken);
         _assertEveUSDDeployment(deployment, config, protocolOwner, treasury);
 
-        assertEq(
-            DiamondLoupeFacet(deployment.market.diamond).facetAddress(IVaultRouter.wrapAndDeposit.selector),
-            deployment.market.vaultRouterFacet
-        );
-        assertEq(
-            DiamondLoupeFacet(deployment.market.diamond).facetAddress(IVaultRouter.redeemAndUnwrap.selector),
-            deployment.market.vaultRouterFacet
-        );
-        assertEq(
-            DiamondLoupeFacet(deployment.market.diamond).facetAddress(IVaultRouter.wrapETHToEveETH.selector),
-            deployment.market.vaultRouterFacet
-        );
         assertEq(
             DiamondLoupeFacet(deployment.market.diamond).facetAddress(ITradeRouter.buyWithEveUSDC.selector),
             deployment.market.tradeRouterFacet
@@ -661,34 +686,29 @@ contract DeployScriptTest is Test {
             deployment.market.parimutuelFacet
         );
 
-        assertEq(MakerLendingRouter(deployment.makerLendingRouter).usdc(), deployment.usdcToken);
-        assertEq(MakerLendingRouter(deployment.makerLendingRouter).eveUSDC(), deployment.eveUSDC);
-        assertEq(MakerLendingRouter(deployment.makerLendingRouter).vault(), deployment.seveUsdcVault);
-        assertEq(MakerLendingRouter(deployment.makerLendingRouter).lending(), deployment.seveUsdcLending);
-        assertEq(MakerLendingRouter(deployment.makerLendingRouter).diamond(), deployment.market.diamond);
-        assertEq(
-            MakerLendingRouter(deployment.makerLendingRouter).defaultConditionalTokens(),
-            deployment.market.conditionalTokens
-        );
-
         assertEq(marketView.collateralToken, deployment.eveUSDC);
         assertEq(marketView.eveToken, deployment.eveToken);
-        assertEq(marketView.stakingVault, deployment.seveUsdcVault);
-        assertEq(marketView.secondaryStakingVault, deployment.seveUsdVault);
+        assertEq(marketView.seniorCapitalPool, deployment.seniorCapitalPool);
+        assertEq(marketView.evRiskStakingRewards, deployment.evRiskStakingRewards);
         assertEq(marketView.parimutuelShareToken, deployment.market.parimutuelShareToken);
         assertEq(marketView.comboFeeConfig.tradeFeeBps, config.market.comboTradeFeeBps);
         assertEq(marketView.comboFeeConfig.makerFeeBps, config.market.comboMakerFeeBps);
         assertEq(marketView.comboFeeConfig.creatorFeeBps, config.market.comboCreatorFeeBps);
         assertEq(marketView.comboFeeConfig.protocolFeeBps, config.market.comboProtocolFeeBps);
         assertEq(marketView.comboFeeConfig.vaultFeeBps, config.market.comboVaultFeeBps);
+        assertEq(marketView.comboFeeConfig.resolverFeeBps, config.market.comboResolverFeeBps);
+        assertEq(marketView.comboFeeConfig.evRiskFeeBps, config.market.comboEvRiskFeeBps);
         assertEq(marketView.parimutuelFeeConfig.entryFeeBps, config.market.parimutuelEntryFeeBps);
         assertEq(marketView.parimutuelFeeConfig.creatorFeeBps, config.market.parimutuelCreatorFeeBps);
         assertEq(marketView.parimutuelFeeConfig.protocolFeeBps, config.market.parimutuelProtocolFeeBps);
         assertEq(marketView.parimutuelFeeConfig.vaultFeeBps, config.market.parimutuelVaultFeeBps);
+        assertEq(marketView.parimutuelFeeConfig.resolverFeeBps, config.market.parimutuelResolverFeeBps);
+        assertEq(marketView.parimutuelFeeConfig.evRiskFeeBps, config.market.parimutuelEvRiskFeeBps);
         assertEq(marketView.parimutuelMinEntry, config.market.parimutuelMinEntry);
         assertEq(marketView.parimutuelCreationSeedAmount, config.market.parimutuelCreationSeedAmount);
         assertEq(marketView.comboMarketCreationFee, config.market.comboMarketCreationFee);
         assertEq(marketView.marketCreationBatchCap, config.market.marketCreationBatchCap);
+        assertEq(marketView.resolutionMode, uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap));
         MarketFactoryTypes.CollateralProfileView memory eveEthProfile =
             IMarketFactoryFacet(deployment.market.diamond).getCollateralProfile(1);
         assertEq(eveEthProfile.collateralToken, deployment.eveETH);
@@ -752,6 +772,7 @@ contract DeployScriptTest is Test {
     ) internal view {
         assertTrue(deployment.eveUSD != address(0));
         assertTrue(deployment.evRisk != address(0));
+        assertTrue(deployment.evRiskStakingRewards != address(0));
         assertTrue(deployment.eveUsdPool != address(0));
         assertTrue(deployment.eveUsdRouter != address(0));
         assertTrue(deployment.eveUsdOracle != address(0));
@@ -760,6 +781,9 @@ contract DeployScriptTest is Test {
         assertEq(EveUSD(deployment.eveUSD).pool(), deployment.eveUsdPool);
         assertEq(EveRiskShares(deployment.evRisk).pool(), deployment.eveUsdPool);
         uint256 wethProfileId = EveUSDPool(deployment.eveUsdPool).firstCollateralProfileId();
+        assertEq(EvRiskStakingRewards(deployment.evRiskStakingRewards).evRisk(), deployment.evRisk);
+        assertEq(EvRiskStakingRewards(deployment.evRiskStakingRewards).eveUSDPool(), deployment.eveUsdPool);
+        assertEq(EvRiskStakingRewards(deployment.evRiskStakingRewards).primaryProfileId(), wethProfileId);
         IEveUSDPool.StableCollateralProfile memory stableProfile =
             EveUSDPool(deployment.eveUsdPool).collateralProfile(wethProfileId);
         assertEq(stableProfile.collateralToken, deployment.wethToken);
@@ -949,7 +973,7 @@ contract DeployScriptTest is Test {
         vm.startPrank(protocolOwner);
         IOBRResolutionFacet(diamond).settleMarketEarly(marketId, uint8(LibEveMarket.MarketOutcome.Yes));
         vm.warp(block.timestamp + disputeWindow + 1);
-        IOBRResolutionFacet(diamond).finalizeResolution(marketId);
+        IOBRResolutionFacet(diamond).adminFinalizeResolution(marketId, uint8(LibEveMarket.MarketOutcome.Yes));
         vm.stopPrank();
     }
 
