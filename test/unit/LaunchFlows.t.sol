@@ -14,6 +14,7 @@ import {BookViewFacet} from "../../src/facets/BookViewFacet.sol";
 import {CollateralTradeRouterFacet} from "../../src/facets/CollateralTradeRouterFacet.sol";
 import {CollateralTradeRouterSellFacet} from "../../src/facets/CollateralTradeRouterSellFacet.sol";
 import {CollateralTradeRouterPreviewFacet} from "../../src/facets/CollateralTradeRouterPreviewFacet.sol";
+import {CollateralTradeExecutionFacet} from "../../src/facets/CollateralTradeExecutionFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
@@ -28,6 +29,7 @@ import {IMarketSettlementFacet} from "../../src/interfaces/IMarketSettlementFace
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
 import {IParimutuelFacet} from "../../src/interfaces/IParimutuelFacet.sol";
 import {ITradeRouter} from "../../src/interfaces/ITradeRouter.sol";
+import {ICollateralTradeExecution} from "../../src/interfaces/ICollateralTradeExecution.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {ParimutuelShareToken} from "../../src/tokens/ParimutuelShareToken.sol";
@@ -410,6 +412,7 @@ contract LaunchRouterFlowsTest is CollateralRouterFixture {
         _addFacet(address(new CollateralTradeRouterFacet()), _tradeRouterSelectors());
         _addFacet(address(new CollateralTradeRouterSellFacet()), _tradeRouterSellSelectors());
         _addFacet(address(new CollateralTradeRouterPreviewFacet()), _tradeRouterPreviewSelectors());
+        _addFacet(address(new CollateralTradeExecutionFacet()), _collateralTradeExecutionSelectors());
         _addFacet(address(new ResolutionHarnessFacet()), _resolutionHarnessSelectors());
         _addFacet(address(new ParimutuelFacet()), _parimutuelSelectors());
         _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
@@ -548,5 +551,10 @@ contract LaunchRouterFlowsTest is CollateralRouterFixture {
         selectors = new bytes4[](2);
         selectors[0] = ITradeRouter.previewSellBest.selector;
         selectors[1] = ITradeRouter.executeExactRouterTransfer.selector;
+    }
+
+    function _collateralTradeExecutionSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = ICollateralTradeExecution.executeCollateralBuy.selector;
     }
 }

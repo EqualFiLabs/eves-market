@@ -34,12 +34,14 @@ contract ParimutuelFeePropertiesTest is ParimutuelPropertiesBase {
 
         (bytes32 marketId,,,) = _createParimutuelMarket("fee exhaustiveness");
 
-        vm.startPrank(owner);
         if (hasSeniorPool) {
             collateralToken.mint(owner, 1);
+        }
+        vm.startPrank(owner);
+        if (hasSeniorPool) {
             collateralToken.approve(address(diamond), 1);
             ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(1);
-            vm.warp(block.timestamp + 24 hours);
+            vm.warp(block.timestamp + 15 minutes);
             ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
         }
         OwnershipFacet(address(diamond)).setPermissionlessCreationEnabled(permissionlessEnabled);

@@ -42,10 +42,10 @@ contract ParimutuelFacetInterfaceTest is Test {
                 )
             ),
             bytes4(
-                keccak256(
-                    "createParimutuelMarketWithCollateralProfile(uint8,string,string,string,uint64,uint64,uint64)"
+                    keccak256(
+                        "createParimutuelMarketWithCollateralProfile(uint8,string,string,string,uint64,uint64,uint64)"
+                    )
                 )
-            )
         );
         assertEq(
             IParimutuelFacet.buyShares.selector, bytes4(keccak256("buyShares(bytes32,bool,uint128,address,uint128)"))

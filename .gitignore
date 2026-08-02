@@ -4,9 +4,11 @@
 
 /broadcast/
 /cache/
+/cache-release/
 /coverage/
 /coverage.json
 /out/
+/out-release/
 
 /lib/*
 !/lib/openzeppelin-contracts

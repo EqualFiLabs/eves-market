@@ -902,7 +902,7 @@ contract ParimutuelFacetTest is ResolutionFixture {
         vm.startPrank(owner);
         collateralToken.approve(address(diamond), 1);
         ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(1);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
         vm.stopPrank();
 
@@ -940,7 +940,7 @@ contract ParimutuelFacetTest is ResolutionFixture {
         vm.startPrank(creator);
         collateralToken.approve(address(diamond), 100e6);
         ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(100e6);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
         vm.stopPrank();
 

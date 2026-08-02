@@ -47,9 +47,9 @@ contract DeployFaucetScript is Script {
         console2.log("faucet", deployment.faucet);
         console2.log("owner", config.owner);
         console2.log("mUSDG", config.usdc);
-        console2.log("mEVE", config.eve);
+        console2.log("EVE", config.eve);
         console2.log("mUSDG claim amount", config.usdcClaimAmount);
-        console2.log("mEVE claim amount", config.eveClaimAmount);
+        console2.log("EVE claim amount", config.eveClaimAmount);
     }
 
     function _loadConfig() private view returns (Config memory config) {

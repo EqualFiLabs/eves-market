@@ -285,7 +285,7 @@ contract FeeRouterTest is SettlementFeeFixture {
         vm.startPrank(depositor);
         collateralToken.approve(address(diamond), 1_000e6);
         ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(1_000e6);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
         vm.stopPrank();
 

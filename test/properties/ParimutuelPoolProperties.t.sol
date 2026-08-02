@@ -22,8 +22,7 @@ contract ParimutuelPoolPropertiesTest is ParimutuelPropertiesBase {
         _setParimutuelFees(entryFeeBps, 1);
         (bytes32 marketId,,,) = _createParimutuelMarket("pool accounting");
 
-        (, uint64 createdAt, uint64 expiryTime,,,,,) =
-            StateProbeFacet(address(diamond)).getStoredMarketStatus(marketId);
+        (, uint64 createdAt, uint64 expiryTime,,,,,) = StateProbeFacet(address(diamond)).getStoredMarketStatus(marketId);
         uint256 duration = uint256(expiryTime) - createdAt;
         vm.warp(createdAt + ((duration * expectedEpoch) / 8));
 
@@ -32,7 +31,8 @@ contract ParimutuelPoolPropertiesTest is ParimutuelPropertiesBase {
         uint128 sharesMinted = _buyShares(alice, marketId, isYes, amount, bob);
 
         IParimutuelFacet.PoolView memory afterPool = IParimutuelFacet(address(diamond)).getParimutuelPool(marketId);
-        (uint256 bobYesShares, uint256 bobNoShares) = IParimutuelFacet(address(diamond)).getParimutuelBalances(marketId, bob);
+        (uint256 bobYesShares, uint256 bobNoShares) =
+            IParimutuelFacet(address(diamond)).getParimutuelBalances(marketId, bob);
 
         assertEq(preview.epoch, expectedEpoch);
         assertEq(sharesMinted, preview.sharesMinted);
@@ -50,8 +50,7 @@ contract ParimutuelPoolPropertiesTest is ParimutuelPropertiesBase {
             assertEq(bobNoShares, preview.sharesMinted);
         }
 
-        uint256 expectedShares =
-            (uint256(preview.netCollateral) * preview.multiplierBps) / EPOCH_MULTIPLIER_SCALE;
+        uint256 expectedShares = (uint256(preview.netCollateral) * preview.multiplierBps) / EPOCH_MULTIPLIER_SCALE;
         assertEq(preview.sharesMinted, expectedShares);
 
         if (preview.multiplierBps > EPOCH_MULTIPLIER_SCALE) {

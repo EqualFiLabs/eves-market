@@ -12,7 +12,7 @@ library LibSeniorCapital {
 
     bytes32 internal constant STORAGE_SLOT = keccak256("eve.prediction.senior.capital.storage.v1");
     uint256 internal constant RAY = 1e27;
-    uint64 internal constant ACTIVATION_DELAY = 24 hours;
+    uint64 internal constant ACTIVATION_DELAY = 15 minutes;
     uint256 internal constant MAX_EXIT_BATCH = 50;
 
     uint8 internal constant FEE_SOURCE_DONATION = 0;

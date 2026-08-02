@@ -63,12 +63,12 @@ contract SeniorCapitalFacetTest is Test {
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ISeniorCapitalFacet.SeniorCapitalActivationPending.selector, block.timestamp + 24 hours
+                ISeniorCapitalFacet.SeniorCapitalActivationPending.selector, block.timestamp + 15 minutes
             )
         );
         senior.activateSeniorCapital();
 
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(alice);
         (uint256 principal, uint256 stored) = senior.activateSeniorCapital();
 
@@ -79,12 +79,12 @@ contract SeniorCapitalFacetTest is Test {
 
     function test_WeightedPendingAgeDoesNotResetEarlierCapital() public {
         _deposit(alice, 100e18);
-        vm.warp(block.timestamp + 12 hours);
+        vm.warp(block.timestamp + 10 minutes);
         uint256 secondDepositAt = block.timestamp;
         _deposit(alice, 100e18);
 
         ISeniorCapitalFacet.SeniorCapitalAccount memory account = senior.seniorCapitalAccount(alice);
-        assertEq(account.pendingSince, secondDepositAt - 6 hours);
+        assertEq(account.pendingSince, secondDepositAt - 5 minutes);
     }
 
     function test_PendingCapitalCanBeWithdrawnWithoutBecomingRiskBearing() public {
@@ -120,14 +120,14 @@ contract SeniorCapitalFacetTest is Test {
     function test_AdditionalActivationCannotEarnHistoricalFees() public {
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(alice);
         senior.activateSeniorCapital();
         vm.prank(bob);
         senior.activateSeniorCapital();
 
         _deposit(alice, 100e18);
-        vm.warp(uint256(senior.seniorCapitalAccount(alice).pendingSince) + 24 hours);
+        vm.warp(uint256(senior.seniorCapitalAccount(alice).pendingSince) + 15 minutes);
         _mintAndApprove(donor, 200e18);
         vm.prank(donor);
         senior.donateSeniorCapitalFees(200e18);
@@ -180,7 +180,7 @@ contract SeniorCapitalFacetTest is Test {
         selectiveSenior.depositSeniorCapital(100e18);
         vm.prank(bob);
         selectiveSenior.depositSeniorCapital(100e18);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(alice);
         selectiveSenior.activateSeniorCapital();
         vm.prank(bob);
@@ -287,7 +287,7 @@ contract SeniorCapitalFacetTest is Test {
         uint256 bobPrincipal = bound(uint256(bobRaw), 1e6, 1e24);
         _deposit(alice, alicePrincipal);
         _deposit(bob, bobPrincipal);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(alice);
         senior.activateSeniorCapital();
         vm.prank(bob);
@@ -312,7 +312,7 @@ contract SeniorCapitalFacetTest is Test {
         uint256 donation = bound(uint256(donationRaw), 1, 1e24);
         _deposit(alice, alicePrincipal);
         _deposit(bob, bobPrincipal);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(alice);
         senior.activateSeniorCapital();
         vm.prank(bob);
@@ -349,14 +349,14 @@ contract SeniorCapitalFacetTest is Test {
         uint256 donation = bound(uint256(donationRaw), 1e12, 1e24);
         _deposit(alice, alicePrincipal);
         _deposit(bob, bobPrincipal);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(alice);
         senior.activateSeniorCapital();
         vm.prank(bob);
         senior.activateSeniorCapital();
 
         _deposit(alice, topUp);
-        vm.warp(uint256(senior.seniorCapitalAccount(alice).pendingSince) + 24 hours);
+        vm.warp(uint256(senior.seniorCapitalAccount(alice).pendingSince) + 15 minutes);
         _mintAndApprove(donor, donation * 3);
         vm.prank(donor);
         senior.donateSeniorCapitalFees(donation);
@@ -400,7 +400,7 @@ contract SeniorCapitalFacetTest is Test {
         uint256 reserved = bound(uint256(reserveRaw), 0, total);
         _deposit(alice, alicePrincipal);
         _deposit(bob, bobPrincipal);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(alice);
         senior.activateSeniorCapital();
         vm.prank(bob);
@@ -431,7 +431,7 @@ contract SeniorCapitalFacetTest is Test {
 
     function _depositAndActivate(address account, uint256 assets) internal {
         _deposit(account, assets);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(account);
         senior.activateSeniorCapital();
     }

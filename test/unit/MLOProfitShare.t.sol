@@ -631,7 +631,7 @@ contract MLOProfitShareTest is TestBase {
         collateral.approve(address(diamond), assets);
         ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(assets);
         vm.stopPrank();
-        vm.warp(uint256(ISeniorCapitalFacet(address(diamond)).seniorCapitalAccount(account).pendingSince) + 24 hours);
+        vm.warp(uint256(ISeniorCapitalFacet(address(diamond)).seniorCapitalAccount(account).pendingSince) + 15 minutes);
         vm.prank(account);
         ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
     }

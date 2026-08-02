@@ -111,10 +111,7 @@ contract SharedLibrariesTest is Test {
             uint256(vm.load(address(parimutuelHarness), bytes32(uint256(poolSlot) + 1))),
             (uint256(44) << 128) | uint256(33)
         );
-        assertEq(
-            uint256(vm.load(address(parimutuelHarness), bytes32(uint256(poolSlot) + 2))),
-            uint256(55)
-        );
+        assertEq(uint256(vm.load(address(parimutuelHarness), bytes32(uint256(poolSlot) + 2))), uint256(55));
     }
 
     function test_LibParimutuelStoresPoolState() public {
@@ -176,9 +173,7 @@ contract SharedLibrariesTest is Test {
             bytes4(keccak256("PositionTokenTypeMismatch(bytes32,uint8,uint8)"))
         );
         assertEq(Errors.NoWinningShares.selector, bytes4(keccak256("NoWinningShares(bytes32,address)")));
-        assertEq(
-            Errors.ParimutuelPoolNotFinalized.selector, bytes4(keccak256("ParimutuelPoolNotFinalized(bytes32)"))
-        );
+        assertEq(Errors.ParimutuelPoolNotFinalized.selector, bytes4(keccak256("ParimutuelPoolNotFinalized(bytes32)")));
         assertEq(Errors.FeeExceedsAmount.selector, bytes4(keccak256("FeeExceedsAmount(uint128,uint128)")));
         assertEq(Errors.ClaimableSharesRemain.selector, bytes4(keccak256("ClaimableSharesRemain(bytes32,uint256)")));
         assertEq(

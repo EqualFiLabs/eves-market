@@ -29,7 +29,8 @@ contract MarketCreationPropertiesTest is MarketFactoryFixture {
         ExpectedMarketData memory expected = _expectedMarketData(question, category, expiryTime);
 
         vm.prank(creator);
-        bytes32 marketId = IMarketFactoryFacet(address(diamond)).createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, 0, true);
+        bytes32 marketId = IMarketFactoryFacet(address(diamond))
+            .createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, 0, true);
 
         _assertValidCreatedMarket(marketId, expected, expiryTime, creationFee, creationBond);
     }
@@ -50,14 +51,20 @@ contract MarketCreationPropertiesTest is MarketFactoryFixture {
         vm.expectRevert(
             abi.encodeWithSelector(Errors.ExpiryTooSoon.selector, tooSoonExpiry, nowTimestamp + minDuration)
         );
-        IMarketFactoryFacet(address(diamond)).createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), tooSoonExpiry, 0, true);
+        IMarketFactoryFacet(address(diamond))
+            .createMarket(
+                question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), tooSoonExpiry, 0, true
+            );
 
         uint64 tooLateExpiry = nowTimestamp + maxDuration + uint64(bound(uint256(tooLateSeed), 1, 30 days));
         vm.prank(creator);
         vm.expectRevert(
             abi.encodeWithSelector(Errors.ExpiryTooLate.selector, tooLateExpiry, nowTimestamp + maxDuration)
         );
-        IMarketFactoryFacet(address(diamond)).createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), tooLateExpiry, 0, true);
+        IMarketFactoryFacet(address(diamond))
+            .createMarket(
+                question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), tooLateExpiry, 0, true
+            );
     }
 
     // Feature: eve-prediction-market, Property 5: market creation fee enforcement
@@ -72,7 +79,8 @@ contract MarketCreationPropertiesTest is MarketFactoryFixture {
 
         vm.prank(creator);
         vm.expectRevert(Errors.InsufficientCreationFeeOrReserve.selector);
-        IMarketFactoryFacet(address(diamond)).createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, 0, true);
+        IMarketFactoryFacet(address(diamond))
+            .createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, 0, true);
     }
 
     // Feature: eve-prediction-market, Property 5: creation bond enforcement
@@ -88,7 +96,8 @@ contract MarketCreationPropertiesTest is MarketFactoryFixture {
 
         vm.prank(creator);
         vm.expectRevert(Errors.InsufficientCreationBond.selector);
-        IMarketFactoryFacet(address(diamond)).createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, 0, true);
+        IMarketFactoryFacet(address(diamond))
+            .createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, 0, true);
     }
 
     // Feature: eve-prediction-market, Property 5: bootstrap liquidity funding enforcement
@@ -105,7 +114,10 @@ contract MarketCreationPropertiesTest is MarketFactoryFixture {
 
         vm.prank(creator);
         vm.expectRevert(Errors.InsufficientInitialLiquidityCollateral.selector);
-        IMarketFactoryFacet(address(diamond)).createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, initialVolume, true);
+        IMarketFactoryFacet(address(diamond))
+            .createMarket(
+                question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, initialVolume, true
+            );
     }
 
     // Feature: eve-prediction-market, Property 6: initial curve at 50/50
@@ -120,7 +132,15 @@ contract MarketCreationPropertiesTest is MarketFactoryFixture {
 
         vm.prank(creator);
         bytes32 marketId = IMarketFactoryFacet(address(diamond))
-            .createMarket(question, category, DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, initialVolume, initialDirection);
+            .createMarket(
+                question,
+                category,
+                DEFAULT_RESOLUTION_SOURCE,
+                uint64(block.timestamp),
+                expiryTime,
+                initialVolume,
+                initialDirection
+            );
 
         _assertSeededCurveState(marketId, initialVolume, initialDirection);
         _assertBootstrapInventory(marketId, initialVolume, initialDirection);

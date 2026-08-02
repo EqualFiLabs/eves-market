@@ -79,15 +79,16 @@ contract StaticsDollarTradeRouterFacet {
         uint128 retainedFeeBalance = LibTradeRouter.previewRetainedBuyFeeBalance(routedOrder);
 
         if (usePermit) {
-            IERC20Permit(config.usdcToken).permit(
-                msg.sender,
-                address(this),
-                mintPreview.totalCollateralIn,
-                permitSignature.deadline,
-                permitSignature.v,
-                permitSignature.r,
-                permitSignature.s
-            );
+            IERC20Permit(config.usdcToken)
+                .permit(
+                    msg.sender,
+                    address(this),
+                    mintPreview.totalCollateralIn,
+                    permitSignature.deadline,
+                    permitSignature.v,
+                    permitSignature.r,
+                    permitSignature.s
+                );
         }
         IERC20(config.usdcToken).safeTransferFrom(msg.sender, address(this), mintPreview.totalCollateralIn);
         IERC20(config.usdcToken).forceApprove(config.staticsDiamond, mintPreview.totalCollateralIn);

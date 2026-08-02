@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "../lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Script} from "../lib/forge-std/src/Script.sol";
 import {stdJson} from "../lib/forge-std/src/StdJson.sol";
@@ -124,7 +125,7 @@ import {EvesPositionManager} from "../src/tokens/EvesPositionManager.sol";
 import {EvesNegRiskAdapter} from "../src/EvesNegRiskAdapter.sol";
 import {EvesCTFSettlementAdapter} from "../src/EvesCTFSettlementAdapter.sol";
 import {ParlayTicketToken} from "../src/tokens/ParlayTicketToken.sol";
-import {MockEveToken} from "../test/helpers/MockEveToken.sol";
+import {TestnetEVE} from "../src/mocks/TestnetEVE.sol";
 import {MarketFactoryTypes} from "../src/types/MarketFactoryTypes.sol";
 import {MarginTypes} from "../src/types/MarginTypes.sol";
 
@@ -310,7 +311,8 @@ contract DeployScript is Script {
         address mloInsuranceFund;
         address feeRecipient;
         uint256 initialEveMint;
-        uint256 initialMloInsuranceBootstrap;
+        uint256 initialMloInsuranceBootstrapUsdg;
+        uint256 initialSeniorCapitalBootstrapUsdg;
         uint16 mloFundingSeniorBps;
         uint16 mloMaxCleanupBatch;
         address faucetOwner;
@@ -334,7 +336,19 @@ contract DeployScript is Script {
         address staticsDiamond;
     }
 
-    function run() external returns (FullDeployment memory deployment) {
+    struct ReleaseSurface {
+        string[] criticalNames;
+        address[] criticalAddresses;
+        bytes32[] criticalRuntimeCodeHashes;
+        address[] facetAddresses;
+        bytes32[] facetRuntimeCodeHashes;
+        uint256[] facetSelectorCounts;
+        bytes32[] selectors;
+        address[] selectorFacets;
+        bytes32[] absentSelectors;
+    }
+
+    function run() external virtual returns (FullDeployment memory deployment) {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address temporaryOwner = vm.addr(deployerPrivateKey);
         FullDeploymentConfig memory config = _loadFullConfigFromEnv();
@@ -342,6 +356,13 @@ contract DeployScript is Script {
         vm.startBroadcast(deployerPrivateKey);
         deployment = deployFullStack(config, temporaryOwner);
         vm.stopBroadcast();
+
+        string memory manifestPath = vm.envOr("DEPLOYMENT_MANIFEST_PATH", string(""));
+        if (bytes(manifestPath).length != 0) {
+            writeFullDeploymentManifest(
+                deployment, config, manifestPath, vm.envString("RELEASE_COMMIT"), vm.envString("STATICS_RELEASE_COMMIT")
+            );
+        }
     }
 
     function deployFullStack(FullDeploymentConfig memory config, address temporaryOwner)
@@ -354,7 +375,7 @@ contract DeployScript is Script {
         bool autoDeployEveToken = config.market.eveToken == address(0);
 
         deployment.usdcToken = config.usdcToken;
-        deployment.eveToken = _resolveEveToken(config.market.eveToken);
+        deployment.eveToken = _resolveEveToken(config.market.eveToken, temporaryOwner);
         StaticsDollarStackDeployment memory staticsDollarDeployment = _resolveStaticsDollarStack(config.staticsDollar);
         deployment.staticsDollar = staticsDollarDeployment.staticsDollar;
         deployment.staticsDollarCore = staticsDollarDeployment.core;
@@ -381,7 +402,8 @@ contract DeployScript is Script {
         _configureFullStack(deployment, config);
         _mintFullStackEveToken(deployment, config, autoDeployEveToken);
         _fundFaucet(deployment, config, autoDeployEveToken);
-        _bootstrapMLOInsurance(deployment, config, temporaryOwner);
+        _finalizeEveTokenOwnership(deployment, config, autoDeployEveToken);
+        _bootstrapMLOLiquidity(deployment, config, temporaryOwner);
         DiamondCutFacet(deployment.market.diamond).finalizeGovernanceDelay(finalOwner, config.market.governanceDelay);
         _verifyFullDeployment(deployment, config);
     }
@@ -1261,6 +1283,124 @@ contract DeployScript is Script {
         _verifyFullDeployment(deployment, config);
     }
 
+    function verifyRobinhoodPreflightFromEnv(address broadcaster) external view {
+        verifyRobinhoodPreflight(_loadFullConfigFromEnv(), broadcaster);
+    }
+
+    function verifyRobinhoodPreflight(FullDeploymentConfig memory config, address broadcaster) public view {
+        require(block.chainid == ROBINHOOD_TESTNET_CHAIN_ID, "wrong Robinhood testnet chain");
+        config = _withFullConfigDefaults(config);
+        _validateFullConfig(config, broadcaster);
+        require(config.market.conditionalTokens.code.length != 0, "invalid conditional tokens");
+        require(
+            config.market.conditionalTokens.codehash
+                == keccak256(_loadConditionalTokensRuntimeCode(config.market.conditionalTokensArtifactPath)),
+            "conditional tokens runtime mismatch"
+        );
+        require(config.usdcToken.code.length != 0, "invalid USDG");
+        require(IERC20Metadata(config.usdcToken).decimals() == 6, "USDG decimals mismatch");
+
+        FullDeployment memory statics;
+        statics.usdcToken = config.usdcToken;
+        statics.staticsDollarCore = config.staticsDollar.core;
+        statics.staticsDollar = IStaticsDollarCore(config.staticsDollar.core).staticsDollar();
+        statics.staticsDiamond = IStaticsDollarCore(config.staticsDollar.core).periphery();
+        _validateStaticsDollarIntegration(statics, config);
+
+        require(broadcaster.balance != 0, "deployment broadcaster has no native gas");
+        uint256 bootstrapAssets =
+            (config.initialMloInsuranceBootstrapUsdg + config.initialSeniorCapitalBootstrapUsdg) * 1e12;
+        uint256 requiredUsdg = config.faucetUsdcEnabled ? config.faucetUsdcFundAmount : 0;
+        uint256 existingStaticsDollar = IERC20(statics.staticsDollar).balanceOf(broadcaster);
+        if (bootstrapAssets > existingStaticsDollar) {
+            requiredUsdg += IStaticsDollarCore(config.staticsDollar.core)
+            .previewPeggedMint(config.staticsDollar.peggedProfileId, bootstrapAssets - existingStaticsDollar)
+            .totalCollateralIn;
+        }
+        require(IERC20(config.usdcToken).balanceOf(broadcaster) >= requiredUsdg, "insufficient deployment USDG");
+
+        if (config.market.eveToken != address(0)) {
+            require(config.market.eveToken.code.length != 0, "invalid configured EVE");
+            uint256 requiredEve = config.faucetEveEnabled ? config.faucetEveFundAmount : 0;
+            require(IERC20(config.market.eveToken).balanceOf(broadcaster) >= requiredEve, "insufficient deployment EVE");
+        }
+    }
+
+    function writeFullDeploymentManifest(
+        FullDeployment memory deployment,
+        FullDeploymentConfig memory config,
+        string memory path,
+        string memory releaseCommit,
+        string memory staticsReleaseCommit
+    ) public returns (string memory json) {
+        require(block.chainid == ROBINHOOD_TESTNET_CHAIN_ID, "wrong manifest chain");
+        require(bytes(path).length != 0, "empty manifest path");
+        require(bytes(releaseCommit).length != 0, "empty release commit");
+        require(bytes(staticsReleaseCommit).length != 0, "empty Statics release commit");
+        config = _withFullConfigDefaults(config);
+        _verifyFullDeployment(deployment, config);
+
+        ReleaseSurface memory surface = _releaseSurface(deployment);
+        string memory objectKey = "robinhood-release";
+        json = vm.serializeUint(objectKey, "schemaVersion", 1);
+        json = vm.serializeString(objectKey, "network", "Robinhood Chain Testnet");
+        json = vm.serializeUint(objectKey, "chainId", block.chainid);
+        json = vm.serializeUint(objectKey, "deploymentBlock", block.number);
+        json = vm.serializeString(objectKey, "releaseCommit", releaseCommit);
+        json = vm.serializeString(objectKey, "staticsReleaseCommit", staticsReleaseCommit);
+        json = vm.serializeAddress(objectKey, "owner", config.market.owner);
+        json = vm.serializeAddress(objectKey, "treasury", config.market.eveTreasury);
+        json = vm.serializeUint(objectKey, "governanceDelaySeconds", config.market.governanceDelay);
+        json = vm.serializeUint(objectKey, "mloProfitSplitDelaySeconds", config.market.mloProfitSplitDelay);
+        json = vm.serializeBool(objectKey, "permissionlessCreationEnabled", config.market.permissionlessCreationEnabled);
+        json = vm.serializeUint(objectKey, "marketCreationFee", config.market.marketCreationFee);
+        json = vm.serializeUint(objectKey, "initialMloInsuranceBootstrapUsdg", config.initialMloInsuranceBootstrapUsdg);
+        json =
+            vm.serializeUint(objectKey, "initialSeniorCapitalBootstrapUsdg", config.initialSeniorCapitalBootstrapUsdg);
+        json = vm.serializeBytes32(objectKey, "deploymentHash", keccak256(abi.encode(deployment)));
+        json = vm.serializeBytes32(objectKey, "configHash", keccak256(abi.encode(config)));
+        json = vm.serializeBytes(objectKey, "deploymentAbi", abi.encode(deployment));
+        json = vm.serializeBytes(objectKey, "configAbi", abi.encode(config));
+        json = vm.serializeString(objectKey, "criticalContractNames", surface.criticalNames);
+        json = vm.serializeAddress(objectKey, "criticalContractAddresses", surface.criticalAddresses);
+        json = vm.serializeBytes32(objectKey, "criticalRuntimeCodeHashes", surface.criticalRuntimeCodeHashes);
+        json = vm.serializeAddress(objectKey, "facetAddresses", surface.facetAddresses);
+        json = vm.serializeBytes32(objectKey, "facetRuntimeCodeHashes", surface.facetRuntimeCodeHashes);
+        json = vm.serializeUint(objectKey, "facetSelectorCounts", surface.facetSelectorCounts);
+        json = vm.serializeBytes32(objectKey, "selectors", surface.selectors);
+        json = vm.serializeAddress(objectKey, "selectorFacets", surface.selectorFacets);
+        json = vm.serializeBytes32(objectKey, "absentSelectors", surface.absentSelectors);
+        vm.writeJson(json, path);
+    }
+
+    function verifyFullDeploymentManifestFromFile(string memory path)
+        public
+        view
+        returns (FullDeployment memory deployment, FullDeploymentConfig memory config)
+    {
+        string memory json = vm.readFile(path);
+        require(vm.parseJsonUint(json, ".schemaVersion") == 1, "manifest schema mismatch");
+        require(vm.parseJsonUint(json, ".chainId") == block.chainid, "manifest chain mismatch");
+        require(bytes(vm.parseJsonString(json, ".releaseCommit")).length != 0, "manifest release commit missing");
+        require(
+            bytes(vm.parseJsonString(json, ".staticsReleaseCommit")).length != 0,
+            "manifest Statics release commit missing"
+        );
+
+        deployment = abi.decode(vm.parseJsonBytes(json, ".deploymentAbi"), (FullDeployment));
+        config = abi.decode(vm.parseJsonBytes(json, ".configAbi"), (FullDeploymentConfig));
+        config = _withFullConfigDefaults(config);
+        require(
+            vm.parseJsonBytes32(json, ".deploymentHash") == keccak256(abi.encode(deployment)),
+            "manifest deployment hash mismatch"
+        );
+        require(
+            vm.parseJsonBytes32(json, ".configHash") == keccak256(abi.encode(config)), "manifest config hash mismatch"
+        );
+        _verifyFullDeployment(deployment, config);
+        _verifyReleaseSurface(json, _releaseSurface(deployment));
+    }
+
     function _loadConfigFromEnv() internal view returns (DeploymentConfig memory config) {
         config.owner = vm.envAddress("INITIAL_OWNER");
         config.governanceDelay =
@@ -1337,7 +1477,8 @@ contract DeployScript is Script {
         config.mloInsuranceFund = vm.envOr("MLO_INSURANCE_FUND", address(0));
         config.feeRecipient = vm.envOr("FEE_RECIPIENT", config.market.eveTreasury);
         config.initialEveMint = vm.envOr("INITIAL_EVE_MINT", uint256(1_000_000e18));
-        config.initialMloInsuranceBootstrap = vm.envOr("INITIAL_MLO_INSURANCE_BOOTSTRAP", uint256(0));
+        config.initialMloInsuranceBootstrapUsdg = vm.envOr("INITIAL_MLO_INSURANCE_BOOTSTRAP_USDG", uint256(100_000e6));
+        config.initialSeniorCapitalBootstrapUsdg = vm.envOr("INITIAL_SENIOR_CAPITAL_BOOTSTRAP_USDG", uint256(100_000e6));
         config.mloFundingSeniorBps = uint16(vm.envOr("MLO_FUNDING_SENIOR_BPS", uint256(5_000)));
         config.mloMaxCleanupBatch = uint16(vm.envOr("MLO_MAX_CLEANUP_BATCH", uint256(32)));
         config.faucetOwner = vm.envOr("FAUCET_OWNER", config.market.owner);
@@ -1795,7 +1936,7 @@ contract DeployScript is Script {
         bool autoDeployEveToken
     ) internal {
         if (autoDeployEveToken && config.initialEveMint != 0) {
-            MockEveToken(deployment.eveToken).mintAndDelegate(config.market.owner, config.initialEveMint);
+            TestnetEVE(deployment.eveToken).mintAndDelegate(config.market.owner, config.initialEveMint);
         }
     }
 
@@ -1807,25 +1948,42 @@ contract DeployScript is Script {
         }
         if (config.faucetEveEnabled && config.faucetEveFundAmount != 0) {
             if (autoDeployEveToken) {
-                MockEveToken(deployment.eveToken).mint(deployment.faucet, config.faucetEveFundAmount);
+                TestnetEVE(deployment.eveToken).mint(deployment.faucet, config.faucetEveFundAmount);
             } else {
                 IERC20(deployment.eveToken).safeTransfer(deployment.faucet, config.faucetEveFundAmount);
             }
         }
     }
 
-    function _bootstrapMLOInsurance(
+    function _finalizeEveTokenOwnership(
+        FullDeployment memory deployment,
+        FullDeploymentConfig memory config,
+        bool autoDeployEveToken
+    ) internal {
+        if (autoDeployEveToken && TestnetEVE(deployment.eveToken).owner() != config.market.owner) {
+            TestnetEVE(deployment.eveToken).transferOwnership(config.market.owner);
+        }
+    }
+
+    function _bootstrapMLOLiquidity(
         FullDeployment memory deployment,
         FullDeploymentConfig memory config,
         address temporaryOwner
     ) internal {
-        uint256 bootstrapUsdc = config.initialMloInsuranceBootstrap;
-        if (bootstrapUsdc == 0) return;
+        uint256 insuranceAssets = config.initialMloInsuranceBootstrapUsdg * 1e12;
+        uint256 seniorAssets = config.initialSeniorCapitalBootstrapUsdg * 1e12;
+        uint256 totalAssets = insuranceAssets + seniorAssets;
+        if (totalAssets == 0) return;
 
-        uint256 bootstrapAssets = bootstrapUsdc * 1e12;
-        _ensureStaticsDollarBalance(deployment, config, temporaryOwner, bootstrapAssets);
-        IERC20(deployment.staticsDollar).forceApprove(deployment.mloInsuranceFund, bootstrapAssets);
-        MLOInsuranceFund(deployment.mloInsuranceFund).sponsor(bootstrapAssets);
+        _ensureStaticsDollarBalance(deployment, config, temporaryOwner, totalAssets);
+        if (insuranceAssets != 0) {
+            IERC20(deployment.staticsDollar).forceApprove(deployment.mloInsuranceFund, insuranceAssets);
+            MLOInsuranceFund(deployment.mloInsuranceFund).sponsor(insuranceAssets);
+        }
+        if (seniorAssets != 0) {
+            IERC20(deployment.staticsDollar).forceApprove(deployment.market.diamond, seniorAssets);
+            ISeniorCapitalFacet(deployment.market.diamond).depositSeniorCapital(seniorAssets);
+        }
     }
 
     function _ensureStaticsDollarBalance(
@@ -2162,11 +2320,19 @@ contract DeployScript is Script {
         require(recoveryConfig.insuranceFund == deployment.mloInsuranceFund, "insurance config mismatch");
         require(recoveryConfig.seniorFundingBps == config.mloFundingSeniorBps, "funding split mismatch");
         require(recoveryConfig.maxCleanupBatch == config.mloMaxCleanupBatch, "cleanup cap mismatch");
-        if (config.initialMloInsuranceBootstrap != 0) {
+        if (config.initialMloInsuranceBootstrapUsdg != 0) {
             require(
-                MLOInsuranceFund(deployment.mloInsuranceFund).availableInsurance() != 0, "insurance bootstrap missing"
+                MLOInsuranceFund(deployment.mloInsuranceFund).availableInsurance()
+                    >= config.initialMloInsuranceBootstrapUsdg * 1e12,
+                "insurance bootstrap missing"
             );
         }
+        require(seniorState.activationDelay == 15 minutes, "senior activation delay mismatch");
+        require(
+            seniorState.pendingPrincipal + seniorState.totalPrincipal
+                == config.initialSeniorCapitalBootstrapUsdg * 1e12,
+            "senior bootstrap mismatch"
+        );
         if (_staticsDollarStackRequested(config.staticsDollar)) {
             require(deployment.staticsDollar != address(0), "staticsDollar missing");
             require(deployment.staticsDollarCore != address(0), "staticsDollar core missing");
@@ -2279,12 +2445,12 @@ contract DeployScript is Script {
         require(conditionalTokens != address(0), "conditional tokens deploy failed");
     }
 
-    function _resolveEveToken(address configuredAddress) internal returns (address) {
+    function _resolveEveToken(address configuredAddress, address temporaryOwner) internal returns (address) {
         if (configuredAddress != address(0)) {
             return configuredAddress;
         }
 
-        return address(new MockEveToken());
+        return address(new TestnetEVE(temporaryOwner));
     }
 
     function _resolveStaticsDollarStack(StaticsDollarStackConfig memory config)
@@ -2334,6 +2500,158 @@ contract DeployScript is Script {
         return address(new MLOInsuranceFund(asset, governance, riskManager));
     }
 
+    function _releaseSurface(FullDeployment memory deployment) internal view returns (ReleaseSurface memory surface) {
+        (surface.criticalNames, surface.criticalAddresses) = _criticalContracts(deployment);
+        surface.criticalRuntimeCodeHashes = new bytes32[](surface.criticalAddresses.length);
+        for (uint256 index; index < surface.criticalAddresses.length; ++index) {
+            require(surface.criticalAddresses[index].code.length != 0, "critical contract has no code");
+            surface.criticalRuntimeCodeHashes[index] = surface.criticalAddresses[index].codehash;
+        }
+
+        DiamondLoupeFacet.Facet[] memory facets = DiamondLoupeFacet(deployment.market.diamond).facets();
+        uint256 selectorCount;
+        for (uint256 index; index < facets.length; ++index) {
+            selectorCount += facets[index].functionSelectors.length;
+        }
+
+        surface.facetAddresses = new address[](facets.length);
+        surface.facetRuntimeCodeHashes = new bytes32[](facets.length);
+        surface.facetSelectorCounts = new uint256[](facets.length);
+        surface.selectors = new bytes32[](selectorCount);
+        surface.selectorFacets = new address[](selectorCount);
+
+        uint256 flatIndex;
+        for (uint256 facetIndex; facetIndex < facets.length; ++facetIndex) {
+            DiamondLoupeFacet.Facet memory facet = facets[facetIndex];
+            surface.facetAddresses[facetIndex] = facet.facetAddress;
+            surface.facetRuntimeCodeHashes[facetIndex] = facet.facetAddress.codehash;
+            surface.facetSelectorCounts[facetIndex] = facet.functionSelectors.length;
+            for (uint256 selectorIndex; selectorIndex < facet.functionSelectors.length; ++selectorIndex) {
+                surface.selectors[flatIndex] = bytes32(facet.functionSelectors[selectorIndex]);
+                surface.selectorFacets[flatIndex] = facet.facetAddress;
+                ++flatIndex;
+            }
+        }
+
+        surface.absentSelectors = _legacyAbsentSelectors();
+        for (uint256 index; index < surface.absentSelectors.length; ++index) {
+            require(
+                DiamondLoupeFacet(deployment.market.diamond).facetAddress(bytes4(surface.absentSelectors[index]))
+                    == address(0),
+                "legacy selector routed"
+            );
+        }
+    }
+
+    function _criticalContracts(FullDeployment memory deployment)
+        internal
+        pure
+        returns (string[] memory names, address[] memory addresses)
+    {
+        names = new string[](15);
+        addresses = new address[](15);
+
+        names[0] = "EveMarketDiamond";
+        addresses[0] = deployment.market.diamond;
+        names[1] = "ConditionalTokens";
+        addresses[1] = deployment.market.conditionalTokens;
+        names[2] = "EVE";
+        addresses[2] = deployment.eveToken;
+        names[3] = "MLOInsuranceFund";
+        addresses[3] = deployment.mloInsuranceFund;
+        names[4] = "Faucet";
+        addresses[4] = deployment.faucet;
+        names[5] = "USDstx";
+        addresses[5] = deployment.staticsDollar;
+        names[6] = "StaticsDollarCoreDiamond";
+        addresses[6] = deployment.staticsDollarCore;
+        names[7] = "StaticsDiamond";
+        addresses[7] = deployment.staticsDiamond;
+        names[8] = "MockUSDG";
+        addresses[8] = deployment.usdcToken;
+        names[9] = "EvesPositionManager";
+        addresses[9] = deployment.market.evesPositionManager;
+        names[10] = "EvesNegRiskAdapter";
+        addresses[10] = deployment.market.negRiskAdapter;
+        names[11] = "EvesCTFSettlementAdapter";
+        addresses[11] = deployment.market.ctfSettlementAdapter;
+        names[12] = "ParimutuelShareToken";
+        addresses[12] = deployment.market.parimutuelShareToken;
+        names[13] = "ParlayTicketToken";
+        addresses[13] = deployment.market.parlayTicketToken;
+        names[14] = "EveIdentity";
+        addresses[14] = deployment.market.eveIdentity;
+    }
+
+    function _legacyAbsentSelectors() internal pure returns (bytes32[] memory selectors) {
+        selectors = new bytes32[](5);
+        selectors[0] = bytes32(
+            bytes4(
+                keccak256(
+                    "buyWithEveUSDC((bytes32,bool,uint128,uint128,uint128,uint256[],uint32[],bytes32[],address,address))"
+                )
+            )
+        );
+        selectors[1] = bytes32(
+            bytes4(
+                keccak256(
+                    "buyWithUSDC((bytes32,bool,uint128,uint128,uint128,uint256[],uint32[],bytes32[],address,address))"
+                )
+            )
+        );
+        selectors[2] = bytes32(
+            bytes4(keccak256("sellWithEveUSDC((bytes32,bool,uint128,uint128,uint256[],uint32[],bytes32[],address))"))
+        );
+        selectors[3] = bytes32(
+            bytes4(keccak256("sellWithUSDC((bytes32,bool,uint128,uint128,uint256[],uint32[],bytes32[],address))"))
+        );
+        selectors[4] = bytes32(bytes4(keccak256("splitWithUSDC(bytes32,uint128,address)")));
+    }
+
+    function _verifyReleaseSurface(string memory json, ReleaseSurface memory expected) internal pure {
+        string[] memory criticalNames = vm.parseJsonStringArray(json, ".criticalContractNames");
+        address[] memory criticalAddresses = vm.parseJsonAddressArray(json, ".criticalContractAddresses");
+        bytes32[] memory criticalHashes = vm.parseJsonBytes32Array(json, ".criticalRuntimeCodeHashes");
+        require(criticalNames.length == expected.criticalNames.length, "critical name count mismatch");
+        require(criticalAddresses.length == expected.criticalAddresses.length, "critical address count mismatch");
+        require(criticalHashes.length == expected.criticalRuntimeCodeHashes.length, "critical hash count mismatch");
+        for (uint256 index; index < criticalNames.length; ++index) {
+            require(
+                keccak256(bytes(criticalNames[index])) == keccak256(bytes(expected.criticalNames[index])),
+                "critical name mismatch"
+            );
+            require(criticalAddresses[index] == expected.criticalAddresses[index], "critical address mismatch");
+            require(criticalHashes[index] == expected.criticalRuntimeCodeHashes[index], "critical codehash mismatch");
+        }
+
+        address[] memory facetAddresses = vm.parseJsonAddressArray(json, ".facetAddresses");
+        bytes32[] memory facetHashes = vm.parseJsonBytes32Array(json, ".facetRuntimeCodeHashes");
+        uint256[] memory selectorCounts = vm.parseJsonUintArray(json, ".facetSelectorCounts");
+        require(facetAddresses.length == expected.facetAddresses.length, "facet address count mismatch");
+        require(facetHashes.length == expected.facetRuntimeCodeHashes.length, "facet hash count mismatch");
+        require(selectorCounts.length == expected.facetSelectorCounts.length, "facet selector count mismatch");
+        for (uint256 index; index < facetAddresses.length; ++index) {
+            require(facetAddresses[index] == expected.facetAddresses[index], "facet address mismatch");
+            require(facetHashes[index] == expected.facetRuntimeCodeHashes[index], "facet codehash mismatch");
+            require(selectorCounts[index] == expected.facetSelectorCounts[index], "facet selector mismatch");
+        }
+
+        bytes32[] memory selectors = vm.parseJsonBytes32Array(json, ".selectors");
+        address[] memory selectorFacets = vm.parseJsonAddressArray(json, ".selectorFacets");
+        require(selectors.length == expected.selectors.length, "selector count mismatch");
+        require(selectorFacets.length == expected.selectorFacets.length, "selector route count mismatch");
+        for (uint256 index; index < selectors.length; ++index) {
+            require(selectors[index] == expected.selectors[index], "selector mismatch");
+            require(selectorFacets[index] == expected.selectorFacets[index], "selector facet mismatch");
+        }
+
+        bytes32[] memory absentSelectors = vm.parseJsonBytes32Array(json, ".absentSelectors");
+        require(absentSelectors.length == expected.absentSelectors.length, "absent selector count mismatch");
+        for (uint256 index; index < absentSelectors.length; ++index) {
+            require(absentSelectors[index] == expected.absentSelectors[index], "absent selector mismatch");
+        }
+    }
+
     function _loadConditionalTokensCreationCode(string memory artifactPath)
         internal
         view
@@ -2346,6 +2664,20 @@ contract DeployScript is Script {
         }
 
         return artifactJson.readBytes(".bytecode");
+    }
+
+    function _loadConditionalTokensRuntimeCode(string memory artifactPath)
+        internal
+        view
+        returns (bytes memory runtimeCode)
+    {
+        string memory artifactJson = vm.readFile(string.concat(vm.projectRoot(), "/", artifactPath));
+
+        if (artifactJson.keyExists(".deployedBytecode.object")) {
+            return artifactJson.readBytes(".deployedBytecode.object");
+        }
+
+        return artifactJson.readBytes(".deployedBytecode");
     }
 
     function _cut(address facetAddress, bytes4[] memory selectors)

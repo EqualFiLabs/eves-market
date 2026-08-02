@@ -76,7 +76,10 @@ interface IDelayedOrderLifecycleFacet {
         view
         returns (DelayedOrderTypes.CreditBalanceView memory credit);
     function getBookQueue(bytes32 bookId) external view returns (DelayedOrderTypes.BookQueueView memory queue);
-    function getDelayedOrderHead(bytes32 bookId) external view returns (DelayedOrderTypes.DelayedOrderHeadView memory view_);
+    function getDelayedOrderHead(bytes32 bookId)
+        external
+        view
+        returns (DelayedOrderTypes.DelayedOrderHeadView memory view_);
     function withdrawBaseCredit(uint8 assetType, address token, uint256 tokenId, uint128 amount) external;
 }
 
@@ -375,8 +378,7 @@ contract DelayedOrderTest is TestBase {
     function test_ExpireDelayedOrdersWorksWhenProcessingPaused() public {
         (, bytes32 bookId,) = _createYesBook();
         uint256 orderId = _submitMarketBuy(bookId, QUOTE_ESCROW, _emptyRoute());
-        ITestStateFacet(address(diamond))
-            .setDelayedOrderProcessingFixture(uint8(LibEveMarket.ProcessingMode.Paused), 0);
+        ITestStateFacet(address(diamond)).setDelayedOrderProcessingFixture(uint8(LibEveMarket.ProcessingMode.Paused), 0);
 
         vm.roll(_delayedOrder(orderId).expiryBlock + 1);
         DelayedOrderTypes.ProcessDelayedOrderResult memory result =
@@ -404,8 +406,7 @@ contract DelayedOrderTest is TestBase {
         head = IDelayedOrderLifecycleFacet(address(diamond)).getDelayedOrderHead(bookId);
         assertEq(uint8(head.processState), uint8(DelayedOrderTypes.DelayedOrderHeadState.NeedsRoute));
 
-        ITestStateFacet(address(diamond))
-            .setDelayedOrderProcessingFixture(uint8(LibEveMarket.ProcessingMode.Paused), 0);
+        ITestStateFacet(address(diamond)).setDelayedOrderProcessingFixture(uint8(LibEveMarket.ProcessingMode.Paused), 0);
         head = IDelayedOrderLifecycleFacet(address(diamond)).getDelayedOrderHead(bookId);
         assertEq(uint8(head.processState), uint8(DelayedOrderTypes.DelayedOrderHeadState.Paused));
 

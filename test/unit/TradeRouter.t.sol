@@ -505,7 +505,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
         token.approve(address(diamond), assets);
         ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(assets);
         vm.stopPrank();
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(provider);
         ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
     }
@@ -517,7 +517,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
         token.approve(address(diamond), assets);
         ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(assets);
         vm.stopPrank();
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(provider);
         ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
     }

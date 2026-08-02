@@ -107,13 +107,15 @@ contract PlainGnosisCTFMock is ERC1155, IGnosisConditionalTokens {
         for (uint256 index; index < indexSets.length; ++index) {
             uint256 indexSet = indexSets[index];
             require(indexSet > 0 && indexSet < fullIndexSet, "got invalid index set");
-            uint256 positionId = getPositionId(collateralToken, getCollectionId(parentCollectionId, conditionId, indexSet));
+            uint256 positionId =
+                getPositionId(collateralToken, getCollectionId(parentCollectionId, conditionId, indexSet));
             uint256 balance = super.balanceOf(msg.sender, positionId);
             if (balance == 0) {
                 continue;
             }
             _burn(msg.sender, positionId, balance);
-            totalPayout += (balance * _payoutNumeratorForIndexSet(conditionId, outcomeSlotCount, indexSet)) / denominator;
+            totalPayout += (balance * _payoutNumeratorForIndexSet(conditionId, outcomeSlotCount, indexSet))
+                / denominator;
         }
 
         if (totalPayout != 0) {
@@ -199,11 +201,7 @@ contract PlainGnosisCTFMock is ERC1155, IGnosisConditionalTokens {
         bytes32 conditionId,
         uint256[] calldata partition,
         uint256 amount
-    )
-        internal
-        view
-        returns (PreparedPartition memory prepared)
-    {
+    ) internal view returns (PreparedPartition memory prepared) {
         require(partition.length > 1, "got empty or singleton partition");
         uint256 outcomeSlotCount = _outcomeSlotCounts[conditionId];
         require(outcomeSlotCount != 0, "condition not prepared yet");

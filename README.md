@@ -167,6 +167,20 @@ Test organization:
 
 Fuzz runs are configured low (`runs = 12`) in `foundry.toml` for speed; raise locally when hardening a change.
 
+Before a release, run the deterministic gate from the repository root:
+
+```shell
+scripts/test-release.sh
+```
+
+The gate reads `ROBINHOOD_MAINNET` from the workspace `.rpc` file, uses a
+fixed fuzz seed, and keeps release artifacts in ignored `out-release/` and
+`cache-release/` directories. It compiles the canonical ConditionalTokens
+fixture, runs every unit, property, and audit test in three bounded suite
+shards, reruns every stateful invariant under the elevated `security` profile,
+and requires the pinned Robinhood Statics Dollar fork lifecycle to execute
+rather than skip.
+
 ### Testing guidance
 
 - Keep the test pyramid balanced: unit harnesses for edges, live/launch-level tests for every value-moving lifecycle, invariant/fuzz to broaden coverage. Prefer real flows.
@@ -259,28 +273,54 @@ BASESCAN_API_KEY=unused forge script script/DeployMockUSDG.s.sol:DeployMockUSDG 
   -vv
 ```
 
-After filling every required value in a private copy of `.env.example`,
-simulate `DeployScript` without `--broadcast`. With separate authorization for
-the public deployment, run:
+After filling every required value in the ignored
+`.env.robinhood-testnet`, use the release wrapper. It loads the RPC and
+deployment key from the workspace files by default, checks chain `46630`,
+normalizes the private-key prefix without printing the key, validates the
+ConditionalTokens/Mock USDG/Statics Dollar dependencies, and simulates without
+broadcasting:
 
 ```shell
-BASESCAN_API_KEY=unused forge script script/Deploy.s.sol:DeployScript \
-  --rpc-url "$ROBINHOOD_TESTNET_RPC_URL" \
-  --chain-id 46630 \
-  --broadcast \
-  --verify \
-  --verifier blockscout \
-  --verifier-url "$ROBINHOOD_TESTNET_VERIFIER_URL" \
-  --retries 20 \
-  --delay 5 \
-  -vv
+cp .env.example .env.robinhood-testnet
+# Fill the dependency addresses, owner, and treasury first.
+scripts/robinhood-testnet-release.sh
 ```
 
-Preserve each broadcast artifact and Explorer link. Confirm every standalone
-contract and facet is marked verified; verifying only the Eve Diamond does not
-publish the facet implementations. The current Blockscout endpoint does not
-require its own API key. Do not treat a successful broadcast as verification
-evidence until Explorer reports the sources.
+Run `scripts/test-release.sh` immediately before this simulation and again
+against the exact commit selected for broadcast. The gate uses Robinhood
+mainnet only as a read-only fork fixture; deployment simulation and broadcast
+continue to use the chain `46630` testnet endpoint.
+
+The simulation writes an ignored manifest under `cache/` and immediately
+replays the post-deployment verifier against it. With separate authorization
+for the public deployment, `--broadcast` writes
+`deployments/robinhood-testnet-46630.json`, requests Blockscout verification,
+rechecks every configured relationship and selector route, and polls
+Blockscout for the standalone contracts and all 67 facets:
+
+```shell
+scripts/robinhood-testnet-release.sh --broadcast
+```
+
+The release manifest pins the Eve and Statics commits, chain, roles, timing
+policy, bootstrap amounts, critical runtime code hashes, every facet runtime
+code hash, the flattened selector routing table, and legacy selectors that
+must remain absent. A successful broadcast is not release evidence until both
+the manifest verifier and Blockscout poller pass.
+
+The initial Senior deposit remains pending for 15 minutes. Activate it as the
+same deployment broadcaster only after its eligibility time:
+
+```shell
+scripts/robinhood-testnet-release.sh --activate-senior
+```
+
+Read-only checks can be repeated independently:
+
+```shell
+scripts/robinhood-testnet-release.sh --verify-only
+scripts/robinhood-testnet-release.sh --check-verification
+```
 
 Upgrade scripts (each performs a targeted DiamondCut) live alongside `Deploy.s.sol`, e.g. `UpgradeOBRResolutionFacet.s.sol`, `UpgradeSpotCurveFacets.s.sol`, and `UpgradeBookDecommission.s.sol`.
 
@@ -314,7 +354,7 @@ After expiry the creator may settle; otherwise the community proposes outcomes w
 
 ### Collateral rail
 
-Statics Dollar is the launch collateral, bond, Senior-capital, and MLO-insurance rail. Users can supply existing Statics Dollar directly or call `mintAndBuyWithUSDC`, which mints exact Statics Dollar through the configured pegged USDC profile. Pegged profiles have no Risk Share receiver; their static mint fee is retained as isolated Statics protocol revenue. Other collateral can still be added through generic collateral profiles. Senior principal is non-transferable internal Diamond accounting: deposits wait 24 hours before activation, active principal earns indexed protocol and MLO funding fees, and withdrawals use a FIFO exit queue constrained by unreserved liquidity.
+Statics Dollar is the launch collateral, bond, Senior-capital, and MLO-insurance rail. Users can supply existing Statics Dollar directly or call `mintAndBuyWithUSDC`, which mints exact Statics Dollar through the configured pegged USDC profile. Pegged profiles have no Risk Share receiver; their static mint fee is retained as isolated Statics protocol revenue. Other collateral can still be added through generic collateral profiles. Senior principal is non-transferable internal Diamond accounting: Robinhood testnet deposits wait 15 minutes before activation, active principal earns indexed protocol and MLO funding fees, and withdrawals use a FIFO exit queue constrained by unreserved liquidity. Restore the production activation delay to 24 hours before a mainnet release.
 
 ---
 
@@ -373,7 +413,7 @@ parimutuel.claimPayout(marketId);
 ```solidity
 IERC20(staticsDollar).approve(diamond, 10_000e18);
 seniorCapital.depositSeniorCapital(10_000e18);
-// after the 24-hour activation gate
+// after the 15-minute Robinhood testnet activation gate
 seniorCapital.activateSeniorCapital();
 seniorCapital.requestSeniorCapitalExit(10_000e18, msg.sender);
 seniorCapital.processSeniorCapitalExits(1);
