@@ -11,8 +11,8 @@ library MLOProfitShareTypes {
 
     struct PendingProfitSplit {
         ProfitSplit split;
-        uint64 executableAt;
-        uint64 expiresAt;
+        uint256 executableAt;
+        uint256 expiresAt;
         bool exists;
     }
 

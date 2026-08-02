@@ -15,7 +15,7 @@ import {EvesCTFSettlementAdapter} from "../../src/EvesCTFSettlementAdapter.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibMarketMetadata} from "../../src/libraries/LibMarketMetadata.sol";
 import {EvesPositionManager} from "../../src/tokens/EvesPositionManager.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {PlainGnosisCTFMock} from "../helpers/PlainGnosisCTFMock.sol";
 import {DiamondFixture} from "../helpers/DiamondFixtures.sol";
 
@@ -74,7 +74,7 @@ contract ComboCTFCustodyStateFacet {
 }
 
 contract ComboCTFCustodyHandler is IERC1155Receiver {
-    MockUSDC internal immutable collateral;
+    MockUSDG internal immutable collateral;
     EvesPositionManager internal immutable positions;
     IComboCoreFacet internal immutable combo;
     bytes32 internal immutable conditionId;
@@ -82,7 +82,7 @@ contract ComboCTFCustodyHandler is IERC1155Receiver {
     uint256 internal immutable comboNo;
 
     constructor(
-        MockUSDC collateral_,
+        MockUSDG collateral_,
         EvesPositionManager positions_,
         address diamond_,
         bytes32 conditionId_,
@@ -134,7 +134,7 @@ contract ComboCTFCustodyHandler is IERC1155Receiver {
 contract ComboCTFCustodyTest is DiamondFixture {
     uint128 internal constant AMOUNT = 100e6;
 
-    MockUSDC internal collateral;
+    MockUSDG internal collateral;
     PlainGnosisCTFMock internal ctf;
     EvesCTFSettlementAdapter internal adapter;
     ComboCTFCustodyStateFacet internal custodyStateFacet;
@@ -152,7 +152,7 @@ contract ComboCTFCustodyTest is DiamondFixture {
 
     function setUp() public override {
         super.setUp();
-        collateral = new MockUSDC();
+        collateral = new MockUSDG();
         ctf = new PlainGnosisCTFMock();
         adapter = new EvesCTFSettlementAdapter(address(ctf), address(collateral));
         custodyStateFacet = new ComboCTFCustodyStateFacet();

@@ -19,6 +19,22 @@ remappings = [
 	"forge-std/=lib/forge-std/src/"
 ]
 
+[profile.conditional-tokens]
+src = "conditional-tokens/contracts"
+test = "conditional-tokens/contracts"
+script = "conditional-tokens/contracts"
+out = "out/conditional-tokens"
+libs = ["lib"]
+cache_path = "cache/conditional-tokens"
+solc_version = "0.5.17"
+evm_version = "istanbul"
+optimizer = false
+via_ir = false
+bytecode_hash = "ipfs"
+remappings = [
+	"openzeppelin-solidity/=lib/openzeppelin-solidity/"
+]
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 [fuzz]

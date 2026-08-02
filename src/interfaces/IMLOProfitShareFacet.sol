@@ -18,10 +18,11 @@ interface IMLOProfitShareFacet {
 
     event MLOProfitSplitInitialized(uint16 makerBps, uint16 seniorBps, uint16 insuranceBps, uint64 version);
     event MLOProfitSplitScheduled(
-        uint16 makerBps, uint16 seniorBps, uint16 insuranceBps, uint64 version, uint64 executableAt, uint64 expiresAt
+        uint16 makerBps, uint16 seniorBps, uint16 insuranceBps, uint64 version, uint256 executableAt, uint256 expiresAt
     );
     event MLOProfitSplitCancelled(uint16 makerBps, uint16 seniorBps, uint16 insuranceBps);
     event MLOProfitSplitActivated(uint16 makerBps, uint16 seniorBps, uint16 insuranceBps, uint64 version);
+    event MLOProfitSplitDelayUpdated(uint64 previousDelay, uint64 newDelay);
     event MLOBucketProfitSplitSnapshotted(
         bytes32 indexed bucketId, uint16 makerBps, uint16 seniorBps, uint16 insuranceBps, uint64 version
     );
@@ -49,10 +50,17 @@ interface IMLOProfitShareFacet {
         bytes32 indexed bucketId, address indexed account, address indexed receiver, uint256 assets
     );
 
-    function initializeMLOProfitSplit(uint256 makerBps, uint256 seniorBps, uint256 insuranceBps) external;
+    function initializeMLOProfitSplit(
+        uint256 makerBps,
+        uint256 seniorBps,
+        uint256 insuranceBps,
+        uint64 profitSplitDelay
+    ) external;
     function scheduleMLOProfitSplit(uint256 makerBps, uint256 seniorBps, uint256 insuranceBps) external;
     function cancelMLOProfitSplit() external;
     function executeMLOProfitSplit() external;
+    function setMLOProfitSplitDelay(uint64 newDelay) external;
+    function mloProfitSplitDelay() external view returns (uint64);
 
     function activeMLOProfitSplit() external view returns (MLOProfitShareTypes.ProfitSplit memory split);
     function pendingMLOProfitSplit() external view returns (MLOProfitShareTypes.PendingProfitSplit memory pending);

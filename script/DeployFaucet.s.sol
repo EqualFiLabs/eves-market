@@ -46,9 +46,9 @@ contract DeployFaucetScript is Script {
 
         console2.log("faucet", deployment.faucet);
         console2.log("owner", config.owner);
-        console2.log("mUSDC", config.usdc);
+        console2.log("mUSDG", config.usdc);
         console2.log("mEVE", config.eve);
-        console2.log("mUSDC claim amount", config.usdcClaimAmount);
+        console2.log("mUSDG claim amount", config.usdcClaimAmount);
         console2.log("mEVE claim amount", config.eveClaimAmount);
     }
 

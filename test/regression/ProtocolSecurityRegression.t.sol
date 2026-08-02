@@ -30,7 +30,7 @@ import {
     ResolutionHarnessFacet,
     StateProbeFacet
 } from "../helpers/DiamondFixtures.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {ITestStateFacet, TestBase} from "../helpers/TestBase.sol";
 
 contract MaliciousCurveProfile {
@@ -111,14 +111,14 @@ contract ProtocolSecuritySpotBookTest is TestBase {
 
     CurveCLOBFacet internal curveFacet;
     MaliciousCurveProfile internal maliciousProfile;
-    MockUSDC internal spotToken;
+    MockUSDG internal spotToken;
 
     function setUp() public override {
         super.setUp();
 
         curveFacet = new CurveCLOBFacet();
         maliciousProfile = new MaliciousCurveProfile();
-        spotToken = new MockUSDC();
+        spotToken = new MockUSDG();
         spotToken.mint(maker, 1_000_000e6);
         spotToken.mint(taker, 1_000_000e6);
         usdc.mint(taker, uint256(type(uint128).max));

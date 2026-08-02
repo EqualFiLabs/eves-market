@@ -17,8 +17,7 @@ library LibMLOProfitShare {
 
     bytes32 internal constant STORAGE_SLOT = keccak256("eve.prediction.mlo.profit.share.storage.v1");
     uint256 internal constant BPS_DENOMINATOR = 10_000;
-    uint64 internal constant CONFIG_TIMELOCK = 7 days;
-    uint64 internal constant CONFIG_EXECUTION_WINDOW = 2 days;
+    uint256 internal constant CONFIG_EXECUTION_WINDOW = 2 days;
     uint16 internal constant DEFAULT_MAKER_BPS = 7_500;
     uint16 internal constant DEFAULT_SENIOR_BPS = 2_000;
     uint16 internal constant DEFAULT_INSURANCE_BPS = 500;
@@ -30,6 +29,7 @@ library LibMLOProfitShare {
         mapping(bytes32 bucketId => MLOProfitShareTypes.BucketProfitAccount account) bucketAccounts;
         uint256 totalSeniorRewardReserve;
         mapping(bytes32 bucketId => mapping(address account => uint256 assets)) rewardClaimed;
+        uint64 profitSplitDelay;
     }
 
     function s() internal pure returns (Storage storage state) {
@@ -39,16 +39,20 @@ library LibMLOProfitShare {
         }
     }
 
-    function initialize(uint256 makerBps, uint256 seniorBps, uint256 insuranceBps) internal {
+    function initialize(uint256 makerBps, uint256 seniorBps, uint256 insuranceBps, uint64 initialProfitSplitDelay)
+        internal
+    {
         Storage storage state = s();
         if (state.initialized) revert IMLOProfitShareFacet.MLOProfitSplitAlreadyInitialized();
         MLOProfitShareTypes.ProfitSplit memory split = _validatedSplit(makerBps, seniorBps, insuranceBps);
         split.version = 1;
         state.activeSplit = split;
+        state.profitSplitDelay = initialProfitSplitDelay;
         state.initialized = true;
         emit IMLOProfitShareFacet.MLOProfitSplitInitialized(
             split.makerBps, split.seniorBps, split.insuranceBps, split.version
         );
+        emit IMLOProfitShareFacet.MLOProfitSplitDelayUpdated(0, initialProfitSplitDelay);
     }
 
     function schedule(uint256 makerBps, uint256 seniorBps, uint256 insuranceBps) internal {
@@ -56,8 +60,8 @@ library LibMLOProfitShare {
         if (!state.initialized) revert IMLOProfitShareFacet.MLOProfitSplitNotInitialized();
         MLOProfitShareTypes.ProfitSplit memory split = _validatedSplit(makerBps, seniorBps, insuranceBps);
         split.version = state.activeSplit.version + 1;
-        uint64 executableAt = uint64(block.timestamp + CONFIG_TIMELOCK);
-        uint64 expiresAt = executableAt + CONFIG_EXECUTION_WINDOW;
+        uint256 executableAt = block.timestamp + state.profitSplitDelay;
+        uint256 expiresAt = executableAt + CONFIG_EXECUTION_WINDOW;
         state.pendingSplit = MLOProfitShareTypes.PendingProfitSplit({
             split: split, executableAt: executableAt, expiresAt: expiresAt, exists: true
         });
@@ -103,6 +107,18 @@ library LibMLOProfitShare {
 
     function pendingSplit() internal view returns (MLOProfitShareTypes.PendingProfitSplit memory pending) {
         pending = s().pendingSplit;
+    }
+
+    function setProfitSplitDelay(uint64 newDelay) internal {
+        Storage storage state = s();
+        if (!state.initialized) revert IMLOProfitShareFacet.MLOProfitSplitNotInitialized();
+        uint64 previousDelay = state.profitSplitDelay;
+        state.profitSplitDelay = newDelay;
+        emit IMLOProfitShareFacet.MLOProfitSplitDelayUpdated(previousDelay, newDelay);
+    }
+
+    function profitSplitDelay() internal view returns (uint64) {
+        return s().profitSplitDelay;
     }
 
     function bucketAccount(bytes32 bucketId)

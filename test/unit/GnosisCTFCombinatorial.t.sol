@@ -4,18 +4,18 @@ pragma solidity ^0.8.28;
 import {Test} from "../../lib/forge-std/src/Test.sol";
 import {ERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {PlainGnosisCTFMock} from "../helpers/PlainGnosisCTFMock.sol";
 
 contract GnosisCTFCombinatorialTest is Test {
     PlainGnosisCTFMock internal ctf;
-    MockUSDC internal collateral;
+    MockUSDG internal collateral;
 
     address internal trader = makeAddr("trader");
 
     function setUp() public {
         ctf = new PlainGnosisCTFMock();
-        collateral = new MockUSDC();
+        collateral = new MockUSDG();
         collateral.mint(trader, 1_000e6);
     }
 

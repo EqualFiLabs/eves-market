@@ -15,7 +15,7 @@ contract EveMarketDiamond is IERC1155Receiver {
 
         LibDiamond.setContractOwner(initialOwner);
 
-        bytes4[] memory selectors = new bytes4[](10);
+        bytes4[] memory selectors = new bytes4[](11);
         selectors[0] = DiamondCutFacet.diamondCut.selector;
         selectors[1] = DiamondCutFacet.freezeFacet.selector;
         selectors[2] = DiamondCutFacet.isSelectorFrozen.selector;
@@ -26,6 +26,7 @@ contract EveMarketDiamond is IERC1155Receiver {
         selectors[7] = DiamondCutFacet.governanceOperationReadyAt.selector;
         selectors[8] = DiamondCutFacet.governanceDelay.selector;
         selectors[9] = DiamondCutFacet.governanceDelayFinalized.selector;
+        selectors[10] = DiamondCutFacet.setGovernanceDelay.selector;
 
         LibDiamond.addFunctions(diamondCutFacet, selectors);
     }

@@ -3,8 +3,10 @@ pragma solidity ^0.8.28;
 
 import {IMLOProfitShareFacet} from "../interfaces/IMLOProfitShareFacet.sol";
 import {IMarginAccountFacet} from "../interfaces/IMarginAccountFacet.sol";
+import {Errors} from "../libraries/Errors.sol";
 import {LibDiamond} from "../libraries/LibDiamond.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
+import {LibGovernanceDelay} from "../libraries/LibGovernanceDelay.sol";
 import {LibMLOProfitShare} from "../libraries/LibMLOProfitShare.sol";
 import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 import {MarginTypes} from "../types/MarginTypes.sol";
@@ -17,9 +19,14 @@ contract MLOProfitShareFacet is IMLOProfitShareFacet {
         LibReentrancy.exit();
     }
 
-    function initializeMLOProfitSplit(uint256 makerBps, uint256 seniorBps, uint256 insuranceBps) external {
+    function initializeMLOProfitSplit(
+        uint256 makerBps,
+        uint256 seniorBps,
+        uint256 insuranceBps,
+        uint64 profitSplitDelay
+    ) external {
         LibDiamond.enforceIsContractOwnerRaw();
-        LibMLOProfitShare.initialize(makerBps, seniorBps, insuranceBps);
+        LibMLOProfitShare.initialize(makerBps, seniorBps, insuranceBps, profitSplitDelay);
     }
 
     function scheduleMLOProfitSplit(uint256 makerBps, uint256 seniorBps, uint256 insuranceBps) external {
@@ -35,6 +42,16 @@ contract MLOProfitShareFacet is IMLOProfitShareFacet {
     function executeMLOProfitSplit() external {
         LibDiamond.enforceIsContractOwnerRaw();
         LibMLOProfitShare.execute();
+    }
+
+    function setMLOProfitSplitDelay(uint64 newDelay) external {
+        LibDiamond.enforceIsContractOwner();
+        if (!LibGovernanceDelay.s().finalized) revert Errors.GovernanceDelayNotFinalized();
+        LibMLOProfitShare.setProfitSplitDelay(newDelay);
+    }
+
+    function mloProfitSplitDelay() external view returns (uint64) {
+        return LibMLOProfitShare.profitSplitDelay();
     }
 
     function activeMLOProfitSplit() external view returns (MLOProfitShareTypes.ProfitSplit memory split) {

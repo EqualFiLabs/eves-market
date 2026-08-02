@@ -66,7 +66,7 @@ import {MockConditionalTokens} from "./MockConditionalTokens.sol";
 import {MockCurveProfile} from "./MockCurveProfile.sol";
 import {MockCollateral} from "./MockCollateral.sol";
 import {MockEveToken} from "./MockEveToken.sol";
-import {MockUSDC} from "./MockUSDC.sol";
+import {MockUSDG} from "./MockUSDG.sol";
 
 contract RoutingProbeFacet {
     bytes32 internal constant WORD_SLOT = bytes32(uint256(keccak256("eve.prediction.market.routing.probe.word")) - 1);
@@ -870,7 +870,7 @@ abstract contract MarketFactoryFixture is DiamondFixture {
     address internal treasury;
 
     MockConditionalTokens internal conditionalTokens;
-    MockUSDC internal collateralToken;
+    MockUSDG internal collateralToken;
     MockEveToken internal eveToken;
     MarketFactoryFacet internal marketFactoryFacet;
     MarketGroupFacet internal marketGroupFacet;
@@ -884,7 +884,7 @@ abstract contract MarketFactoryFixture is DiamondFixture {
         treasury = makeAddr("treasury");
 
         conditionalTokens = new MockConditionalTokens();
-        collateralToken = new MockUSDC();
+        collateralToken = new MockUSDG();
         eveToken = new MockEveToken();
         marketFactoryFacet = new MarketFactoryFacet();
         marketGroupFacet = new MarketGroupFacet();

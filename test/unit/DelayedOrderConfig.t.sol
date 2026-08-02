@@ -19,7 +19,7 @@ import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {CurveCLOBTypes} from "../../src/types/CurveCLOBTypes.sol";
 import {DelayedOrderTypes} from "../../src/types/DelayedOrderTypes.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {ITestStateFacet, TestBase} from "../helpers/TestBase.sol";
 
 interface IDelayedOrderConfigFacet {
@@ -134,7 +134,7 @@ contract DelayedOrderConfigTest is TestBase {
     }
 
     function test_DelayedSubmissionRejectsSpotBooks() public {
-        MockUSDC spotToken = new MockUSDC();
+        MockUSDG spotToken = new MockUSDG();
         bytes32 bookId = IBookAdminFacet(address(diamond))
             .createBook(
                 LibEveMarket.BookAssetType.ERC20,

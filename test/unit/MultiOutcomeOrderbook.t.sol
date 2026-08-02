@@ -16,7 +16,7 @@ import {LibMultiOutcome} from "../../src/libraries/LibMultiOutcome.sol";
 import {EvesNegRiskAdapter} from "../../src/EvesNegRiskAdapter.sol";
 
 import {MockEveToken} from "../helpers/MockEveToken.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 import {PlainGnosisCTFMock} from "../helpers/PlainGnosisCTFMock.sol";
 
@@ -190,7 +190,7 @@ contract MultiOutcomeOrderbookTest is Test {
     MultiOutcomeHarness internal market;
     PlainGnosisCTFMock internal positions;
     EvesNegRiskAdapter internal adapter;
-    MockUSDC internal collateral;
+    MockUSDG internal collateral;
     MockEveToken internal eve;
     MockEveToken internal profileCollateral;
 
@@ -207,7 +207,7 @@ contract MultiOutcomeOrderbookTest is Test {
     function setUp() public {
         market = new MultiOutcomeHarness();
         positions = new PlainGnosisCTFMock();
-        collateral = new MockUSDC();
+        collateral = new MockUSDG();
         eve = new MockEveToken();
         profileCollateral = new MockEveToken();
         adapter = new EvesNegRiskAdapter(address(positions), address(collateral), address(market));

@@ -5,21 +5,21 @@ import {Test} from "../../lib/forge-std/src/Test.sol";
 
 import {EvesNegRiskAdapter} from "../../src/EvesNegRiskAdapter.sol";
 import {IGnosisConditionalTokens} from "../../src/interfaces/IGnosisConditionalTokens.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {PlainGnosisCTFMock} from "../helpers/PlainGnosisCTFMock.sol";
 
 contract NegRiskCTFIntegrationTest is Test {
     uint256 internal constant AMOUNT = 300e6;
     uint256 internal constant OUTCOME_COUNT = 3;
 
-    MockUSDC internal collateral;
+    MockUSDG internal collateral;
     PlainGnosisCTFMock internal ctf;
     EvesNegRiskAdapter internal adapter;
     address internal alice = makeAddr("alice");
     bytes32 internal eventId;
 
     function setUp() public {
-        collateral = new MockUSDC();
+        collateral = new MockUSDG();
         ctf = new PlainGnosisCTFMock();
         adapter = new EvesNegRiskAdapter(address(ctf), address(collateral), address(this));
         eventId = adapter.prepareEvent(keccak256("election"), OUTCOME_COUNT);

@@ -17,7 +17,7 @@ import {ResolverRegistryRewardsFacet} from "src/facets/ResolverRegistryRewardsFa
 import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
-import {MockUSDC} from "test/helpers/MockUSDC.sol";
+import {MockUSDG} from "test/helpers/MockUSDG.sol";
 
 contract ResolverJuryEconomicsPropertyHarness is
     ResolverJuryFacet,
@@ -231,7 +231,7 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
 
     ResolverJuryEconomicsPropertyHarness internal jury;
     EveIdentity internal identity;
-    MockUSDC internal feeToken;
+    MockUSDG internal feeToken;
     MockEveToken internal eveToken;
     MockEveToken internal bondToken;
 
@@ -249,7 +249,7 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
     function setUp() public {
         jury = new ResolverJuryEconomicsPropertyHarness();
         identity = new EveIdentity(address(jury), "Eve Identity", "EVE-ID");
-        feeToken = new MockUSDC();
+        feeToken = new MockUSDG();
         eveToken = new MockEveToken();
         bondToken = new MockEveToken();
         jury.configure(address(identity), address(feeToken), address(bondToken));

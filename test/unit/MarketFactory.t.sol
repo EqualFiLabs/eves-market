@@ -17,7 +17,7 @@ import {LibMarketCreation} from "../../src/libraries/LibMarketCreation.sol";
 
 import {MarketFactoryFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 import {MockEveToken} from "../helpers/MockEveToken.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {PlainGnosisCTFMock} from "../helpers/PlainGnosisCTFMock.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 
@@ -134,7 +134,7 @@ contract MarketFactoryTest is MarketFactoryFixture {
 
     function test_RevertWhen_CreateMarketWithDisabledCollateralProfile() public {
         uint8 profileId = 2;
-        MockUSDC profileCollateral = new MockUSDC();
+        MockUSDG profileCollateral = new MockUSDG();
 
         vm.prank(owner);
         OwnershipFacet(address(diamond))

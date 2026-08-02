@@ -21,14 +21,14 @@ import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {CurveTradingFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 import {MockConditionalTokens} from "../helpers/MockConditionalTokens.sol";
 import {MockEveToken} from "../helpers/MockEveToken.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 
 contract TradingInvariantHandler is Test {
     uint72 internal constant PRICE_SCALE = 1_000_000_000;
     string internal constant DEFAULT_RESOLUTION_SOURCE = "Invariant harness settlement rules and primary source.";
 
     address internal immutable diamond;
-    MockUSDC internal immutable collateralToken;
+    MockUSDG internal immutable collateralToken;
     MockConditionalTokens internal immutable conditionalTokens;
     MockEveToken internal immutable eveToken;
     address internal immutable creator;
@@ -40,7 +40,7 @@ contract TradingInvariantHandler is Test {
 
     constructor(
         address diamond_,
-        MockUSDC collateralToken_,
+        MockUSDG collateralToken_,
         MockConditionalTokens conditionalTokens_,
         MockEveToken eveToken_,
         address creator_,
@@ -54,7 +54,6 @@ contract TradingInvariantHandler is Test {
 
         for (uint256 index = 0; index < actors_.length; ++index) {
             actors.push(actors_[index]);
-            collateralToken.mint(actors_[index], 10_000_000e6);
 
             vm.startPrank(actors_[index]);
             collateralToken.approve(diamond_, type(uint256).max);
@@ -62,7 +61,6 @@ contract TradingInvariantHandler is Test {
             vm.stopPrank();
         }
 
-        collateralToken.mint(creator_, 10_000_000e6);
         eveToken.mint(creator_, 20_000e18);
         vm.startPrank(creator_);
         collateralToken.approve(diamond_, type(uint256).max);
@@ -270,12 +268,14 @@ contract TradingStatefulInvariantsTest is StdInvariant, CurveTradingFixture {
     function setUp() public override {
         super.setUp();
 
-        collateralToken.mint(outsider, 10_000_000e6);
-
         trackedActors.push(maker);
         trackedActors.push(trader);
         trackedActors.push(taker);
         trackedActors.push(outsider);
+        for (uint256 index = 0; index < trackedActors.length; ++index) {
+            collateralToken.mint(trackedActors[index], 10_000_000e6);
+        }
+        collateralToken.mint(creator, 10_000_000e6);
 
         handler = new TradingInvariantHandler(
             address(diamond), collateralToken, conditionalTokens, eveToken, creator, trackedActors

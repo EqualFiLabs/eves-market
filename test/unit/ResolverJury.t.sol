@@ -16,7 +16,7 @@ import {ResolverRegistryRewardsFacet} from "src/facets/ResolverRegistryRewardsFa
 import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
-import {MockUSDC} from "test/helpers/MockUSDC.sol";
+import {MockUSDG} from "test/helpers/MockUSDG.sol";
 
 contract ResolverJuryHarness is
     ResolverJuryFacet,
@@ -328,14 +328,14 @@ contract ResolverJuryTest is Test {
 
     ResolverJuryHarness internal jury;
     EveIdentity internal identity;
-    MockUSDC internal feeToken;
+    MockUSDG internal feeToken;
     MockEveToken internal eveToken;
     MockEveToken internal bondToken;
 
     function setUp() public {
         jury = new ResolverJuryHarness();
         identity = new EveIdentity(address(jury), "Eve Identity", "EVE-ID");
-        feeToken = new MockUSDC();
+        feeToken = new MockUSDG();
         eveToken = new MockEveToken();
         bondToken = new MockEveToken();
         jury.configureIdentityAndRandomness(
@@ -1311,7 +1311,7 @@ contract ResolverJuryTest is Test {
         (bytes32 disputeId, uint256 aliceId, uint256 bobId,) =
             _openFinalizableRewardDispute(keccak256("finality-protocol-fee-market"));
         bytes32 marketId = jury.disputeView(disputeId).marketId;
-        MockUSDC collateralToken = new MockUSDC();
+        MockUSDG collateralToken = new MockUSDG();
         uint128 accruedProtocolFees = 101e6;
         uint16 allocationBps = 2_500;
         uint256 expectedRewardPool = 25_250_000;
@@ -1354,7 +1354,7 @@ contract ResolverJuryTest is Test {
         bytes32 disputeId = _openFinalizableNoRevealDispute(keccak256("finality-protocol-fee-treasury-market"));
         bytes32 marketId = jury.disputeView(disputeId).marketId;
         address treasury = jury.eveTreasury();
-        MockUSDC collateralToken = new MockUSDC();
+        MockUSDG collateralToken = new MockUSDG();
         uint128 accruedProtocolFees = 10_000_001;
         uint16 allocationBps = 4_000;
         uint256 expectedRewardPool = 4_000_000;

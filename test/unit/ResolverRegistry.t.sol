@@ -20,7 +20,7 @@ import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {EvesPositionManager} from "src/tokens/EvesPositionManager.sol";
 import {IEvesPositionManager} from "src/interfaces/IEvesPositionManager.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
-import {MockUSDC} from "test/helpers/MockUSDC.sol";
+import {MockUSDG} from "test/helpers/MockUSDG.sol";
 
 contract ResolverRegistryHarness is
     ResolverRegistryFacet,
@@ -334,7 +334,7 @@ contract ResolverRegistryTest is Test {
 
     ResolverRegistryHarness internal registry;
     EveIdentity internal identity;
-    MockUSDC internal feeToken;
+    MockUSDG internal feeToken;
     MockEveToken internal eveToken;
     MockEveToken internal bondToken;
     EvesPositionManager internal positions;
@@ -342,7 +342,7 @@ contract ResolverRegistryTest is Test {
     function setUp() public {
         registry = new ResolverRegistryHarness();
         identity = new EveIdentity(address(registry), "Eve Identity", "EVE-ID");
-        feeToken = new MockUSDC();
+        feeToken = new MockUSDG();
         eveToken = new MockEveToken();
         bondToken = new MockEveToken();
         positions = new EvesPositionManager(address(registry), "");

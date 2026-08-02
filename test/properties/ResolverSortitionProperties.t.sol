@@ -17,7 +17,7 @@ import {IResolverJuryFacet} from "src/interfaces/IResolverJuryFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {EvesPositionManager} from "src/tokens/EvesPositionManager.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
-import {MockUSDC} from "test/helpers/MockUSDC.sol";
+import {MockUSDG} from "test/helpers/MockUSDG.sol";
 import {ResolutionFixture, StateProbeFacet} from "test/helpers/DiamondFixtures.sol";
 
 contract ResolverSortitionPropertyHarness is
@@ -195,7 +195,7 @@ contract ResolverSortitionPropertiesTest is Test {
     ResolverSortitionPropertyHarness internal registry;
     ResolverRandomnessSeedHarness internal seedHarness;
     EveIdentity internal identity;
-    MockUSDC internal feeToken;
+    MockUSDG internal feeToken;
     MockEveToken internal eveToken;
     EvesPositionManager internal positions;
 
@@ -203,7 +203,7 @@ contract ResolverSortitionPropertiesTest is Test {
         registry = new ResolverSortitionPropertyHarness();
         seedHarness = new ResolverRandomnessSeedHarness();
         identity = new EveIdentity(address(registry), "Eve Identity", "EVE-ID");
-        feeToken = new MockUSDC();
+        feeToken = new MockUSDG();
         eveToken = new MockEveToken();
         positions = new EvesPositionManager(address(registry), "");
     }

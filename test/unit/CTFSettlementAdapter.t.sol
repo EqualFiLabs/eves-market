@@ -4,13 +4,13 @@ pragma solidity ^0.8.28;
 import {Test} from "../../lib/forge-std/src/Test.sol";
 
 import {EvesCTFSettlementAdapter} from "../../src/EvesCTFSettlementAdapter.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {PlainGnosisCTFMock} from "../helpers/PlainGnosisCTFMock.sol";
 
 contract CTFSettlementAdapterTest is Test {
     uint256 internal constant AMOUNT = 100e6;
 
-    MockUSDC internal collateral;
+    MockUSDG internal collateral;
     PlainGnosisCTFMock internal ctf;
     EvesCTFSettlementAdapter internal adapter;
     address internal alice = makeAddr("alice");
@@ -20,7 +20,7 @@ contract CTFSettlementAdapterTest is Test {
     uint256 internal noPositionId;
 
     function setUp() public {
-        collateral = new MockUSDC();
+        collateral = new MockUSDG();
         ctf = new PlainGnosisCTFMock();
         adapter = new EvesCTFSettlementAdapter(address(ctf), address(collateral));
         ctf.prepareCondition(address(this), questionId, 2);
