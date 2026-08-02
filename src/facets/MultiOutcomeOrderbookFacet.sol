@@ -5,7 +5,7 @@ import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IER
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC1155} from "../../lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155.sol";
 
-import {IEvesPositionManager} from "../interfaces/IEvesPositionManager.sol";
+import {IEvesNegRiskAdapter} from "../interfaces/IEvesNegRiskAdapter.sol";
 import {IMultiOutcomeOrderbookFacet} from "../interfaces/IMultiOutcomeOrderbookFacet.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Events} from "../libraries/Events.sol";
@@ -15,13 +15,14 @@ import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 import {LibMarketCreation} from "../libraries/LibMarketCreation.sol";
 import {LibMarketMetadata} from "../libraries/LibMarketMetadata.sol";
 import {LibMultiOutcome} from "../libraries/LibMultiOutcome.sol";
+import {LibNativePosition} from "../libraries/LibNativePosition.sol";
 import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 import {MarketFactoryTypes} from "../types/MarketFactoryTypes.sol";
 
 contract MultiOutcomeOrderbookFacet {
     using SafeERC20 for IERC20;
 
-    uint128 internal constant DEFAULT_EVEUSDC_PAYOUT_UNIT = 1 ether;
+    uint128 internal constant DEFAULT_COLLATERAL_PAYOUT_UNIT = 1 ether;
 
     modifier nonReentrant() {
         LibReentrancy.enter();
@@ -42,7 +43,8 @@ contract MultiOutcomeOrderbookFacet {
         uint8 outcomeCount;
         bytes32 outcomesHash;
         bytes32 conditionId;
-        address positionManager;
+        address positionToken;
+        address adapter;
     }
 
     function createMultiOutcomeMarket(IMultiOutcomeOrderbookFacet.CreateMultiOutcomeMarketParams calldata params)
@@ -56,7 +58,7 @@ contract MultiOutcomeOrderbookFacet {
             MultiOutcomeCollateralContext({
                 profileId: 0,
                 collateralToken: config.collateralToken,
-                payoutUnit: DEFAULT_EVEUSDC_PAYOUT_UNIT,
+                payoutUnit: DEFAULT_COLLATERAL_PAYOUT_UNIT,
                 marketCreationFee: config.marketCreationFee,
                 emitProfileEvent: false
             })
@@ -88,16 +90,24 @@ contract MultiOutcomeOrderbookFacet {
         LibMultiOutcome.validateLabels(params.outcomes);
         LibMultiOutcome.validateOutcomeDisplayLength(params.outcomes.length, params.outcomeDisplay.length);
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        address positionManager = state.config.evesPositionManager;
-        if (positionManager == address(0)) {
+        address adapterAddress = state.negRiskAdapter;
+        if (adapterAddress == address(0)) {
             revert Errors.ZeroAddress();
+        }
+        IEvesNegRiskAdapter adapter = IEvesNegRiskAdapter(adapterAddress);
+        if (adapter.collateralToken() != collateralContext.collateralToken) {
+            revert Errors.UnsupportedCollateralToken(adapter.collateralToken(), collateralContext.collateralToken);
+        }
+        if (adapter.conditionalTokens() != state.config.defaultConditionalTokens) {
+            revert Errors.UnsupportedCollateralToken(state.config.defaultConditionalTokens, adapter.conditionalTokens());
         }
 
         LibMarketCreation.CreationInput memory creation = LibMarketCreation.profileCreationInputForCaller(
             state.config, collateralContext.marketCreationFee, params.tradingStartTime, params.expiryTime
         );
         MultiOutcomeCreationContext memory creationContext;
-        creationContext.positionManager = positionManager;
+        creationContext.positionToken = adapter.conditionalTokens();
+        creationContext.adapter = adapterAddress;
         creationContext.outcomeCount = LibMultiOutcome.validateOutcomeCount(params.outcomes.length);
         creationContext.outcomesHash = LibMultiOutcome.outcomesHash(params.outcomes);
 
@@ -111,7 +121,7 @@ contract MultiOutcomeOrderbookFacet {
             collateralContext.payoutUnit,
             creationContext.outcomeCount,
             creationContext.outcomesHash,
-            LibEveMarket.PositionTokenType.EVES_POSITION
+            LibEveMarket.PositionTokenType.CTF
         );
         creationContext.marketId = marketId;
         if (state.markets[marketId].marketId != bytes32(0)) {
@@ -127,8 +137,7 @@ contract MultiOutcomeOrderbookFacet {
             0
         );
 
-        creationContext.conditionId =
-            LibMultiOutcome.conditionIdFor(marketId, creationContext.outcomeCount, creationContext.outcomesHash);
+        creationContext.conditionId = adapter.prepareEvent(marketId, creationContext.outcomeCount);
 
         LibEveMarket.Market storage market =
             _storeMultiOutcomeMarket(state, params, collateralContext, creation, creationContext);
@@ -168,8 +177,8 @@ contract MultiOutcomeOrderbookFacet {
             market,
             creationContext.marketId,
             LibEveMarket.MarketType.MULTI_OUTCOME_ORDERBOOK,
-            LibEveMarket.PositionTokenType.EVES_POSITION,
-            creationContext.positionManager,
+            LibEveMarket.PositionTokenType.CTF,
+            creationContext.positionToken,
             collateralContext.collateralToken,
             msg.sender,
             details,
@@ -186,7 +195,7 @@ contract MultiOutcomeOrderbookFacet {
             creationContext.marketId,
             creationContext.conditionId,
             creationContext.outcomesHash,
-            creationContext.positionManager,
+            creationContext.adapter,
             params.outcomes,
             params.outcomeDisplay
         );
@@ -208,13 +217,14 @@ contract MultiOutcomeOrderbookFacet {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
         LibEveMarket.MultiOutcomeMarket storage multi = LibMultiOutcome.requireUnresolvedMultiOutcome(state, marketId);
         LibEveMarket.Market storage market = state.markets[marketId];
-        IERC20(market.collateralToken).safeTransferFrom(msg.sender, address(this), amount);
-
+        IERC20 collateral = IERC20(market.collateralToken);
+        collateral.safeTransferFrom(msg.sender, address(this), amount);
+        collateral.forceApprove(multi.adapter, amount);
+        IEvesNegRiskAdapter(multi.adapter).splitEvent(multi.conditionId, amount, receiver);
+        collateral.forceApprove(multi.adapter, 0);
         positionIds = new uint256[](multi.outcomeCount);
         for (uint8 outcome; outcome < multi.outcomeCount; ++outcome) {
-            uint256 positionId = state.multiOutcomePositionIds[marketId][outcome];
-            positionIds[outcome] = positionId;
-            IEvesPositionManager(market.positionToken).mint(receiver, positionId, amount);
+            positionIds[outcome] = state.multiOutcomePositionIds[marketId][outcome];
         }
 
         emit Events.OutcomeSetSplit(marketId, msg.sender, amount);
@@ -236,21 +246,22 @@ contract MultiOutcomeOrderbookFacet {
         LibEveMarket.MultiOutcomeMarket storage multi = LibMultiOutcome.requireUnresolvedMultiOutcome(state, marketId);
         LibEveMarket.Market storage market = state.markets[marketId];
         IERC1155 positionToken = IERC1155(market.positionToken);
-
+        uint256[] memory positionIds = new uint256[](multi.outcomeCount);
+        uint256[] memory amounts = new uint256[](multi.outcomeCount);
         for (uint8 outcome; outcome < multi.outcomeCount; ++outcome) {
             uint256 positionId = state.multiOutcomePositionIds[marketId][outcome];
+            positionIds[outcome] = positionId;
+            amounts[outcome] = amount;
             uint256 balance = positionToken.balanceOf(msg.sender, positionId);
             if (balance < amount) {
                 revert Errors.MissingCompleteOutcomeSet(marketId, outcome, amount, balance);
             }
         }
 
-        for (uint8 outcome; outcome < multi.outcomeCount; ++outcome) {
-            IEvesPositionManager(market.positionToken)
-                .burn(msg.sender, state.multiOutcomePositionIds[marketId][outcome], amount);
-        }
-
-        IERC20(market.collateralToken).safeTransfer(receiver, amount);
+        positionToken.safeBatchTransferFrom(msg.sender, address(this), positionIds, amounts, "");
+        positionToken.setApprovalForAll(multi.adapter, true);
+        IEvesNegRiskAdapter(multi.adapter).mergeEvent(multi.conditionId, amount, receiver);
+        positionToken.setApprovalForAll(multi.adapter, false);
         collateralOut = amount;
 
         emit Events.OutcomeSetMerged(marketId, msg.sender, amount);
@@ -277,17 +288,15 @@ contract MultiOutcomeOrderbookFacet {
 
         LibEveMarket.Market storage market = state.markets[marketId];
         uint256 positionId = state.multiOutcomePositionIds[marketId][outcome];
-        IEvesPositionManager(market.positionToken).burn(msg.sender, positionId, amount);
-
-        if (multi.invalid) {
-            collateralOut = uint128(uint256(amount) / multi.payoutDenominator);
-        } else if (outcome == multi.resolvedOutcome) {
-            collateralOut = amount;
-        }
-
-        if (collateralOut != 0) {
-            IERC20(market.collateralToken).safeTransfer(receiver, collateralOut);
-        }
+        IERC1155 positionToken = IERC1155(market.positionToken);
+        positionToken.safeTransferFrom(msg.sender, address(this), positionId, amount, "");
+        positionToken.setApprovalForAll(multi.adapter, true);
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = amount;
+        uint256 payout = IEvesNegRiskAdapter(multi.adapter)
+            .redeemPositions(state.multiOutcomeConditionIds[marketId][outcome], amounts, receiver);
+        positionToken.setApprovalForAll(multi.adapter, false);
+        collateralOut = uint128(payout);
 
         emit Events.OutcomeRedeemed(marketId, msg.sender, outcome, amount, collateralOut);
     }
@@ -295,28 +304,74 @@ contract MultiOutcomeOrderbookFacet {
     function _storeOutcomes(
         LibEveMarket.EveMarketStorage storage state,
         bytes32 marketId,
-        bytes32 conditionId,
+        bytes32 eventId,
         bytes32 outcomesHash,
-        address positionManager,
+        address adapterAddress,
         string[] calldata outcomes,
         IMultiOutcomeOrderbookFacet.OutcomeDisplayInput[] calldata outcomeDisplay
     ) internal {
         uint8 outcomeCount = uint8(outcomes.length);
+        IEvesNegRiskAdapter adapter = IEvesNegRiskAdapter(adapterAddress);
+        address positionToken = adapter.conditionalTokens();
+        address collateralToken = state.markets[marketId].collateralToken;
+        uint128 payoutUnit = state.markets[marketId].payoutUnit;
         LibEveMarket.MultiOutcomeMarket storage multi = state.multiOutcomeMarkets[marketId];
         multi.marketId = marketId;
-        multi.conditionId = conditionId;
+        multi.conditionId = eventId;
         multi.outcomesHash = outcomesHash;
         multi.outcomeCount = outcomeCount;
         multi.exists = true;
+        multi.adapter = adapterAddress;
+        multi.wrappedCollateral = adapter.wrappedCollateral();
 
         for (uint8 outcome; outcome < outcomeCount; ++outcome) {
             state.multiOutcomeLabels[marketId].push(outcomes[outcome]);
-            uint256 positionId = LibMultiOutcome.positionIdFor(conditionId, outcome);
-            state.multiOutcomePositionIds[marketId][outcome] = positionId;
-            state.positionMetadata[positionManager][positionId] =
+            bytes32 questionId = adapter.questionIdFor(eventId, outcome);
+            bytes32 conditionId = adapter.conditionIdFor(eventId, outcome);
+            uint256 yesPositionId = adapter.positionIdFor(eventId, outcome, true);
+            uint256 noPositionId = adapter.positionIdFor(eventId, outcome, false);
+            state.multiOutcomeQuestionIds[marketId][outcome] = questionId;
+            state.multiOutcomeConditionIds[marketId][outcome] = conditionId;
+            state.multiOutcomePositionIds[marketId][outcome] = yesPositionId;
+            state.multiOutcomeNoPositionIds[marketId][outcome] = noPositionId;
+            state.positionMetadata[positionToken][yesPositionId] =
                 LibEveMarket.PositionMetadata({marketId: marketId, outcome: outcome, exists: true});
+            state.nativePositionMetadata[yesPositionId] = LibEveMarket.NativePositionMetadata({
+                moduleId: LibNativePosition.MODULE_NEGRISK,
+                conditionId: conditionId,
+                outcomeIndex: LibNativePosition.OUTCOME_YES,
+                marketId: marketId,
+                exists: true
+            });
+            state.nativePositionMetadata[noPositionId] = LibEveMarket.NativePositionMetadata({
+                moduleId: LibNativePosition.MODULE_NEGRISK,
+                conditionId: conditionId,
+                outcomeIndex: LibNativePosition.OUTCOME_NO,
+                marketId: marketId,
+                exists: true
+            });
+            state.ctfPositionMetadata[yesPositionId] = LibEveMarket.CTFPositionMetadata({
+                positionToken: positionToken,
+                collateralToken: collateralToken,
+                settlementAdapter: adapterAddress,
+                conditionId: conditionId,
+                complementPositionId: noPositionId,
+                payoutUnit: payoutUnit,
+                exists: true
+            });
+            state.ctfPositionMetadata[noPositionId] = LibEveMarket.CTFPositionMetadata({
+                positionToken: positionToken,
+                collateralToken: collateralToken,
+                settlementAdapter: adapterAddress,
+                conditionId: conditionId,
+                complementPositionId: yesPositionId,
+                payoutUnit: payoutUnit,
+                exists: true
+            });
+            state.ctfConditionYesPositionId[conditionId] = yesPositionId;
+            state.ctfConditionNoPositionId[conditionId] = noPositionId;
             _storeOutcomeDisplay(state, marketId, outcome, outcomes[outcome], outcomeDisplay);
-            emit Events.OutcomePositionPrepared(marketId, outcome, positionId);
+            emit Events.OutcomePositionPrepared(marketId, outcome, yesPositionId);
         }
     }
 

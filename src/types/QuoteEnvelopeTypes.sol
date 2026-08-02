@@ -35,6 +35,10 @@ library QuoteEnvelopeTypes {
         uint128 currentStartPrice;
         uint128 currentEndPrice;
         uint128 reservedRisk;
+        uint128 remainingRiskVolume;
+        bytes32 marketId;
+        uint8 outcomeIndex;
+        uint8 outcomeCount;
         uint64 expiresAt;
         uint32 generation;
         bool active;
@@ -55,6 +59,10 @@ library QuoteEnvelopeTypes {
         uint128 currentStartPrice;
         uint128 currentEndPrice;
         uint128 reservedRisk;
+        uint128 remainingRiskVolume;
+        bytes32 marketId;
+        uint8 outcomeIndex;
+        uint8 outcomeCount;
         uint64 expiresAt;
         uint32 generation;
         bool active;

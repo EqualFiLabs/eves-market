@@ -6,15 +6,12 @@ import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/
 import {IERC1155} from "../../lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155.sol";
 
 import {CurveCLOBTypes} from "../types/CurveCLOBTypes.sol";
-import {IEveUSDC} from "../interfaces/IEveUSDC.sol";
 import {LibBookAccess} from "../libraries/LibBookAccess.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {LibCLOBBook} from "../libraries/LibCLOBBook.sol";
-import {LibCurveMath} from "../libraries/LibCurveMath.sol";
 import {LibCurveLifecycle} from "../libraries/LibCurveLifecycle.sol";
 import {LibCTF} from "../libraries/LibCTF.sol";
 import {LibCurveEscrow} from "../libraries/LibCurveEscrow.sol";
-import {LibEveUSDCUnits} from "../libraries/LibEveUSDCUnits.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 import {LibMarketAccess} from "../libraries/LibMarketAccess.sol";
 import {LibSafeCast} from "../libraries/LibSafeCast.sol";
@@ -28,15 +25,6 @@ contract CurveLifecycleFacet is CurveCLOBTypes {
         _;
         LibReentrancy.exit();
     }
-
-    event BidCurvePostedWithUSDC(
-        address indexed maker,
-        bytes32 indexed marketId,
-        bool isYesSide,
-        uint256 curveId,
-        uint128 usdcEscrowed,
-        uint128 eveUsdcEscrowed
-    );
 
     function postCurve(
         bytes32 marketId,
@@ -98,103 +86,6 @@ contract CurveLifecycleFacet is CurveCLOBTypes {
             }),
             msg.sender
         );
-    }
-
-    function postBidCurveWithUSDC(
-        bytes32 marketId,
-        bool isYesSide,
-        uint128 volume,
-        uint72 startPrice,
-        uint72 endPrice,
-        uint24 durationMinutes,
-        uint8 profileId,
-        LibEveMarket.PositionTokenType positionTokenType
-    ) external nonReentrant returns (uint256 curveId, uint128 usdcEscrowed) {
-        CurveCreationParams memory params = CurveCreationParams({
-            isYesSide: isYesSide,
-            volume: volume,
-            startPrice: startPrice,
-            endPrice: endPrice,
-            durationMinutes: durationMinutes,
-            profileId: profileId,
-            tickPresetId: 0
-        });
-        (curveId, usdcEscrowed) = _postBidCurveWithUSDC(marketId, positionTokenType, params);
-    }
-
-    function _postBidCurveWithUSDC(
-        bytes32 marketId,
-        LibEveMarket.PositionTokenType positionTokenType,
-        CurveCreationParams memory params
-    ) internal returns (uint256 curveId, uint128 usdcEscrowed) {
-        if (params.volume == 0) {
-            revert Errors.InvalidAmount(params.volume);
-        }
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        LibEveMarket.Market storage market = LibMarketAccess.requirePostableMarket(state, marketId);
-        LibMarketAccess.requirePositionTokenType(market, positionTokenType);
-        _requireDefaultCollateralForUSDCPath(state, market);
-        LibCLOBBook.ensureMarketSideBook(state, market, params.isYesSide);
-
-        bytes32 bookId = LibBookAccess.marketSideBookId(market, params.isYesSide);
-        LibEveMarket.Book storage book = LibBookAccess.requireExecutableBook(state, bookId);
-        uint256 packed = LibCurveLifecycle.packCurve(
-            state,
-            book,
-            params.startPrice,
-            params.endPrice,
-            params.durationMinutes,
-            params.profileId,
-            params.tickPresetId
-        );
-        LibCurveLifecycle.validatePackedCurve(state, bookId, packed);
-        uint128 quoteEscrow = LibCurveMath.quoteEscrowRequiredForPacked(book, params.volume, packed);
-        uint256 dust = LibEveUSDCUnits.eveUSDCDust(quoteEscrow);
-        if (dust != 0) {
-            revert Errors.InvalidAmount(dust);
-        }
-
-        usdcEscrowed = LibSafeCast.toUint128(quoteEscrow / LibEveUSDCUnits.USDC_TO_EVEUSDC_SCALE);
-        _wrapUSDCForBidEscrow(market.collateralToken, usdcEscrowed, quoteEscrow);
-
-        curveId = LibCurveLifecycle.storeWrappedBidCurve(state, bookId, msg.sender, params.volume, quoteEscrow, packed);
-
-        emit BidCurvePostedWithUSDC(msg.sender, marketId, params.isYesSide, curveId, usdcEscrowed, quoteEscrow);
-    }
-
-    function _requireDefaultCollateralForUSDCPath(
-        LibEveMarket.EveMarketStorage storage state,
-        LibEveMarket.Market storage market
-    ) internal view {
-        address expectedCollateral = state.config.collateralToken;
-        if (market.collateralToken != expectedCollateral) {
-            revert Errors.UnsupportedCollateralToken(expectedCollateral, market.collateralToken);
-        }
-    }
-
-    function _wrapUSDCForBidEscrow(address eveUSDC, uint128 usdcEscrowed, uint128 quoteEscrow) internal {
-        address usdc = IEveUSDC(eveUSDC).usdc();
-        uint256 usdcBalanceBefore = IERC20(usdc).balanceOf(address(this));
-        uint256 eveUsdcBalanceBefore = IERC20(eveUSDC).balanceOf(address(this));
-
-        if (usdcEscrowed != 0) {
-            IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcEscrowed);
-            IERC20(usdc).forceApprove(eveUSDC, usdcEscrowed);
-            uint256 wrapped = IEveUSDC(eveUSDC).wrap(usdcEscrowed, address(this));
-            IERC20(usdc).forceApprove(eveUSDC, 0);
-            if (wrapped != quoteEscrow) {
-                revert Errors.BaseTransferDeltaMismatch(eveUSDC, quoteEscrow, wrapped);
-            }
-        }
-
-        uint256 eveUsdcBalanceAfter = IERC20(eveUSDC).balanceOf(address(this));
-        if (eveUsdcBalanceAfter != eveUsdcBalanceBefore + quoteEscrow) {
-            revert Errors.BaseTransferDeltaMismatch(eveUSDC, eveUsdcBalanceBefore + quoteEscrow, eveUsdcBalanceAfter);
-        }
-        uint256 usdcBalanceAfter = IERC20(usdc).balanceOf(address(this));
-        if (usdcBalanceAfter != usdcBalanceBefore) {
-            revert Errors.BaseTransferDeltaMismatch(usdc, usdcBalanceBefore, usdcBalanceAfter);
-        }
     }
 
     function postCurvesBatch(

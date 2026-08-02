@@ -10,6 +10,7 @@ import {Events} from "../libraries/Events.sol";
 import {LibBookAccess} from "../libraries/LibBookAccess.sol";
 import {LibCurveMath} from "../libraries/LibCurveMath.sol";
 import {LibCurveLifecycle} from "../libraries/LibCurveLifecycle.sol";
+import {LibCurveIndex} from "../libraries/LibCurveIndex.sol";
 import {LibCurveEscrow} from "../libraries/LibCurveEscrow.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 import {LibSafeCast} from "../libraries/LibSafeCast.sol";
@@ -128,12 +129,13 @@ contract BookOrderFacet is CurveCLOBTypes {
 
         LibCurveLifecycle.validatePackedCurve(state, bookId, newPacked);
 
+        uint128 storedVolume;
         if (curve.curveSide == LibEveMarket.CurveSide.BID) {
             curve.quoteEscrowRemaining = _settleBidReactivationEscrow(book, curve, newVolume, newPacked);
-            curve.remainingVolume = newVolume;
+            storedVolume = newVolume;
         } else {
             curve.quoteEscrowRemaining = 0;
-            curve.remainingVolume = _settleAskReactivationEscrow(book, curve.remainingVolume, newVolume);
+            storedVolume = _settleAskReactivationEscrow(book, curve.remainingVolume, newVolume);
         }
 
         curve.packed = newPacked;
@@ -141,7 +143,7 @@ contract BookOrderFacet is CurveCLOBTypes {
         unchecked {
             curve.generation += 1;
         }
-        curve.active = true;
+        LibCurveIndex.reactivateWithRemaining(state, curveId, storedVolume);
 
         emit Events.CurveReactivated(
             bookId,
@@ -153,6 +155,13 @@ contract BookOrderFacet is CurveCLOBTypes {
             LibCurveMath.expiresAt(state, curve),
             newPacked
         );
+    }
+
+    function pruneBookCurves(bytes32 bookId, uint256[] calldata curveIds) external returns (uint256 pruned) {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        if (state.books[bookId].bookId != bookId) revert Errors.BookNotFound(bookId);
+        pruned = LibCurveIndex.prune(state, bookId, curveIds);
+        emit Events.BookCurvesPruned(bookId, msg.sender, pruned);
     }
 
     function _settleBidReactivationEscrow(

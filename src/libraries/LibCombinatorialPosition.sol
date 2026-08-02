@@ -8,6 +8,7 @@ import {Events} from "./Events.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
 import {LibNativePosition} from "./LibNativePosition.sol";
 import {NativePositionTypes} from "../types/NativePositionTypes.sol";
+import {IGnosisConditionalTokens} from "../interfaces/IGnosisConditionalTokens.sol";
 
 library LibCombinatorialPosition {
     uint256 internal constant MAX_LEGS = 50;
@@ -16,6 +17,15 @@ library LibCombinatorialPosition {
         NativePositionTypes.CompressionResult result;
         uint256[] remaining;
         uint256 remainingCount;
+    }
+
+    struct PayoutScan {
+        uint256[] remaining;
+        uint256 remainingCount;
+        uint256 payoutFactorDown;
+        uint256 payoutFactorUp;
+        bool resolvedAny;
+        bool terminalZero;
     }
 
     function copyLegs(uint256[] calldata legs) internal pure returns (uint256[] memory copiedLegs) {
@@ -89,21 +99,16 @@ library LibCombinatorialPosition {
         }
     }
 
-    function flipBinaryLeg(LibEveMarket.EveMarketStorage storage state, uint256 leg)
+    function flipLeg(LibEveMarket.EveMarketStorage storage state, uint256 leg)
         internal
         view
         returns (uint256 flippedLeg)
     {
         LibEveMarket.NativePositionMetadata storage metadata = state.nativePositionMetadata[leg];
-        if (!metadata.exists || metadata.moduleId != LibNativePosition.MODULE_BINARY) {
+        if (!isSupportedLeg(state, leg, metadata)) {
             revert Errors.ComboUnsupportedPosition(leg);
         }
-        flippedLeg = LibNativePosition.positionIdFor(
-            LibNativePosition.MODULE_BINARY, metadata.conditionId, metadata.outcomeIndex ^ 1
-        );
-        if (!state.nativePositionMetadata[flippedLeg].exists) {
-            revert Errors.NativePositionNotFound(flippedLeg);
-        }
+        flippedLeg = state.ctfPositionMetadata[leg].complementPositionId;
     }
 
     function storeComboConditionFromMemory(LibEveMarket.EveMarketStorage storage state, uint256[] memory legs)
@@ -186,29 +191,23 @@ library LibCombinatorialPosition {
         LibEveMarket.NativePositionMetadata storage metadata,
         uint128 amount
     ) internal view returns (CompressionPlan memory plan) {
-        uint256[] storage storedLegs = state.comboConditionLegs[metadata.conditionId];
-        plan.remaining = new uint256[](storedLegs.length);
-        bool compressed;
+        PayoutScan memory scan = scanPayoutFactors(state, metadata.conditionId);
+        plan.remaining = scan.remaining;
+        plan.remainingCount = scan.remainingCount;
+
+        if (!scan.resolvedAny) {
+            revert Errors.ComboPositionNotCompressible(positionIdFor(metadata));
+        }
+        if (scan.terminalZero) {
+            if (metadata.outcomeIndex == LibNativePosition.OUTCOME_NO) {
+                plan.result.collateralOut = amount;
+            }
+            return plan;
+        }
 
         if (metadata.outcomeIndex == LibNativePosition.OUTCOME_YES) {
-            uint256 payoutFactor = LibNativePosition.PAYOUT_FACTOR_DENOMINATOR;
-            for (uint256 index; index < storedLegs.length; ++index) {
-                (bool resolved, uint256 numerator) = legPayout(state, storedLegs[index]);
-                if (!resolved) {
-                    plan.remaining[plan.remainingCount++] = storedLegs[index];
-                    continue;
-                }
-                compressed = true;
-                if (numerator == 0) {
-                    return plan;
-                }
-                payoutFactor = Math.mulDiv(payoutFactor, numerator, LibNativePosition.RESULT_DENOMINATOR);
-            }
-            if (!compressed) {
-                revert Errors.ComboPositionNotCompressible(positionIdFor(metadata));
-            }
             plan.result.positionAmount =
-                uint128(Math.mulDiv(amount, payoutFactor, LibNativePosition.PAYOUT_FACTOR_DENOMINATOR));
+                uint128(Math.mulDiv(amount, scan.payoutFactorDown, LibNativePosition.PAYOUT_FACTOR_DENOMINATOR));
             if (plan.remainingCount == 0) {
                 plan.result.collateralOut = plan.result.positionAmount;
                 plan.result.positionAmount = 0;
@@ -219,31 +218,67 @@ library LibCombinatorialPosition {
             return plan;
         }
 
-        uint256 payoutFactorUp = LibNativePosition.PAYOUT_FACTOR_DENOMINATOR;
-        for (uint256 index; index < storedLegs.length; ++index) {
-            (bool resolved, uint256 numerator) = legPayout(state, storedLegs[index]);
-            if (!resolved) {
-                plan.remaining[plan.remainingCount++] = storedLegs[index];
-                continue;
-            }
-            compressed = true;
-            if (numerator == 0) {
-                plan.result.collateralOut = amount;
-                return plan;
-            }
-            payoutFactorUp =
-                Math.mulDiv(payoutFactorUp, numerator, LibNativePosition.RESULT_DENOMINATOR, Math.Rounding.Ceil);
-        }
-        if (!compressed) {
-            revert Errors.ComboPositionNotCompressible(positionIdFor(metadata));
-        }
-
         uint256 positionAmount =
-            Math.mulDiv(amount, payoutFactorUp, LibNativePosition.PAYOUT_FACTOR_DENOMINATOR, Math.Rounding.Ceil);
+            Math.mulDiv(amount, scan.payoutFactorUp, LibNativePosition.PAYOUT_FACTOR_DENOMINATOR, Math.Rounding.Ceil);
         plan.result.collateralOut = uint128(uint256(amount) - positionAmount);
         if (plan.remainingCount != 0 && positionAmount != 0) {
             plan.result.positionAmount = uint128(positionAmount);
             plan.result.newPositionId = reducedPositionId(plan.remaining, plan.remainingCount, metadata.outcomeIndex);
+        }
+    }
+
+    function comboPayout(
+        LibEveMarket.EveMarketStorage storage state,
+        LibEveMarket.NativePositionMetadata storage metadata,
+        uint128 amount
+    ) internal view returns (bool redeemable, uint128 collateralOut) {
+        PayoutScan memory scan = scanPayoutFactors(state, metadata.conditionId);
+        if (scan.terminalZero) {
+            return metadata.outcomeIndex == LibNativePosition.OUTCOME_NO ? (true, amount) : (true, 0);
+        }
+        if (scan.remainingCount != 0) {
+            return (false, 0);
+        }
+
+        if (metadata.outcomeIndex == LibNativePosition.OUTCOME_YES) {
+            return
+                (true, uint128(Math.mulDiv(amount, scan.payoutFactorDown, LibNativePosition.PAYOUT_FACTOR_DENOMINATOR)));
+        }
+
+        uint256 conjunctionUp =
+            Math.mulDiv(amount, scan.payoutFactorUp, LibNativePosition.PAYOUT_FACTOR_DENOMINATOR, Math.Rounding.Ceil);
+        return (true, uint128(uint256(amount) - conjunctionUp));
+    }
+
+    function scanPayoutFactors(LibEveMarket.EveMarketStorage storage state, bytes32 conditionId)
+        internal
+        view
+        returns (PayoutScan memory scan)
+    {
+        uint256[] storage storedLegs = state.comboConditionLegs[conditionId];
+        scan.remaining = new uint256[](storedLegs.length);
+        scan.payoutFactorDown = LibNativePosition.PAYOUT_FACTOR_DENOMINATOR;
+        scan.payoutFactorUp = LibNativePosition.PAYOUT_FACTOR_DENOMINATOR;
+
+        for (uint256 index; index < storedLegs.length; ++index) {
+            (bool resolved, uint256 numerator) = legPayout(state, storedLegs[index]);
+            if (!resolved) {
+                scan.remaining[scan.remainingCount++] = storedLegs[index];
+                continue;
+            }
+
+            scan.resolvedAny = true;
+            if (numerator == 0) {
+                scan.terminalZero = true;
+                return scan;
+            }
+            if (numerator != LibNativePosition.RESULT_DENOMINATOR) {
+                scan.payoutFactorDown =
+                    Math.mulDiv(scan.payoutFactorDown, numerator, LibNativePosition.RESULT_DENOMINATOR);
+                scan.payoutFactorUp = Math.mulDiv(
+                    scan.payoutFactorUp, numerator, LibNativePosition.RESULT_DENOMINATOR, Math.Rounding.Ceil
+                );
+            }
         }
     }
 
@@ -315,7 +350,7 @@ library LibCombinatorialPosition {
         }
     }
 
-    function validateCanonicalLiveBinaryLegs(LibEveMarket.EveMarketStorage storage state, uint256[] calldata legs)
+    function validateCanonicalLiveLegs(LibEveMarket.EveMarketStorage storage state, uint256[] calldata legs)
         internal
         view
     {
@@ -325,10 +360,11 @@ library LibCombinatorialPosition {
         }
 
         address expectedCollateral;
+        uint8 expectedCollateralProfileId;
         for (uint256 index; index < length; ++index) {
             uint256 positionId = legs[index];
             LibEveMarket.NativePositionMetadata storage metadata = state.nativePositionMetadata[positionId];
-            if (!metadata.exists || metadata.moduleId != LibNativePosition.MODULE_BINARY) {
+            if (!isSupportedLeg(state, positionId, metadata)) {
                 revert Errors.ComboUnsupportedPosition(positionId);
             }
             if (!LibNativePosition.isBinaryOutcome(metadata.outcomeIndex)) {
@@ -353,21 +389,22 @@ library LibCombinatorialPosition {
             }
             if (index == 0) {
                 expectedCollateral = market.collateralToken;
+                expectedCollateralProfileId = market.collateralProfileId;
             } else if (market.collateralToken != expectedCollateral) {
                 revert Errors.ComboCollateralMismatch(expectedCollateral, market.collateralToken);
+            } else if (market.collateralProfileId != expectedCollateralProfileId) {
+                revert Errors.ComboCollateralProfileMismatch(expectedCollateralProfileId, market.collateralProfileId);
             }
 
             for (uint256 previous; previous < index; ++previous) {
                 LibEveMarket.NativePositionMetadata storage previousMetadata =
                     state.nativePositionMetadata[legs[previous]];
-                if (previousMetadata.conditionId == metadata.conditionId) {
-                    revert Errors.ComboDuplicateCondition(metadata.conditionId);
-                }
+                requireCompatiblePair(state, previousMetadata, metadata);
             }
         }
     }
 
-    function validateCanonicalLiveBinaryLegsMemory(LibEveMarket.EveMarketStorage storage state, uint256[] memory legs)
+    function validateCanonicalLiveLegsMemory(LibEveMarket.EveMarketStorage storage state, uint256[] memory legs)
         internal
         view
     {
@@ -377,10 +414,11 @@ library LibCombinatorialPosition {
         }
 
         address expectedCollateral;
+        uint8 expectedCollateralProfileId;
         for (uint256 index; index < length; ++index) {
             uint256 positionId = legs[index];
             LibEveMarket.NativePositionMetadata storage metadata = state.nativePositionMetadata[positionId];
-            if (!metadata.exists || metadata.moduleId != LibNativePosition.MODULE_BINARY) {
+            if (!isSupportedLeg(state, positionId, metadata)) {
                 revert Errors.ComboUnsupportedPosition(positionId);
             }
             if (!LibNativePosition.isBinaryOutcome(metadata.outcomeIndex)) {
@@ -405,16 +443,17 @@ library LibCombinatorialPosition {
             }
             if (index == 0) {
                 expectedCollateral = market.collateralToken;
+                expectedCollateralProfileId = market.collateralProfileId;
             } else if (market.collateralToken != expectedCollateral) {
                 revert Errors.ComboCollateralMismatch(expectedCollateral, market.collateralToken);
+            } else if (market.collateralProfileId != expectedCollateralProfileId) {
+                revert Errors.ComboCollateralProfileMismatch(expectedCollateralProfileId, market.collateralProfileId);
             }
 
             for (uint256 previous; previous < index; ++previous) {
                 LibEveMarket.NativePositionMetadata storage previousMetadata =
                     state.nativePositionMetadata[legs[previous]];
-                if (previousMetadata.conditionId == metadata.conditionId) {
-                    revert Errors.ComboDuplicateCondition(metadata.conditionId);
-                }
+                requireCompatiblePair(state, previousMetadata, metadata);
             }
         }
     }
@@ -437,6 +476,18 @@ library LibCombinatorialPosition {
         }
     }
 
+    function collateralProfileFor(LibEveMarket.EveMarketStorage storage state, bytes32 conditionId)
+        internal
+        view
+        returns (uint8 collateralProfileId)
+    {
+        uint256[] storage legs = state.comboConditionLegs[conditionId];
+        if (legs.length == 0) {
+            revert Errors.ComboConditionNotFound(conditionId);
+        }
+        collateralProfileId = state.markets[state.nativePositionMetadata[legs[0]].marketId].collateralProfileId;
+    }
+
     function requireLiveConditionAndEarliestExpiry(LibEveMarket.EveMarketStorage storage state, bytes32 conditionId)
         internal
         view
@@ -450,7 +501,7 @@ library LibCombinatorialPosition {
         earliestExpiryTime = type(uint64).max;
         for (uint256 index; index < legs.length; ++index) {
             LibEveMarket.NativePositionMetadata storage metadata = state.nativePositionMetadata[legs[index]];
-            if (!metadata.exists || metadata.moduleId != LibNativePosition.MODULE_BINARY) {
+            if (!isSupportedLeg(state, legs[index], metadata)) {
                 revert Errors.ComboUnsupportedPosition(legs[index]);
             }
 
@@ -479,25 +530,48 @@ library LibCombinatorialPosition {
         returns (bool resolved, uint256 payoutNumerator)
     {
         LibEveMarket.NativePositionMetadata storage metadata = state.nativePositionMetadata[leg];
-        if (!metadata.exists || metadata.moduleId != LibNativePosition.MODULE_BINARY) {
+        if (!isSupportedLeg(state, leg, metadata)) {
             revert Errors.ComboUnsupportedPosition(leg);
         }
+        LibEveMarket.CTFPositionMetadata storage ctfMetadata = state.ctfPositionMetadata[leg];
+        IGnosisConditionalTokens ctf = IGnosisConditionalTokens(ctfMetadata.positionToken);
+        uint256 denominator = ctf.payoutDenominator(ctfMetadata.conditionId);
+        if (denominator == 0) return (false, 0);
+        uint256 numerator = ctf.payoutNumerators(ctfMetadata.conditionId, metadata.outcomeIndex);
+        return (true, Math.mulDiv(numerator, LibNativePosition.RESULT_DENOMINATOR, denominator));
+    }
 
-        LibEveMarket.Market storage market = state.markets[metadata.marketId];
-        if (market.state != LibEveMarket.MarketState.Resolved) {
-            return (false, 0);
-        }
+    function isSupportedLeg(
+        LibEveMarket.EveMarketStorage storage state,
+        uint256 positionId,
+        LibEveMarket.NativePositionMetadata storage metadata
+    ) internal view returns (bool supported) {
+        supported = state.ctfPositionMetadata[positionId].exists && metadata.exists
+            && (metadata.moduleId == LibNativePosition.MODULE_BINARY
+                || metadata.moduleId == LibNativePosition.MODULE_NEGRISK)
+            && LibNativePosition.isBinaryOutcome(metadata.outcomeIndex);
+    }
 
-        resolved = true;
-        if (market.outcome == LibEveMarket.MarketOutcome.Invalid) {
-            return (true, LibNativePosition.RESULT_DENOMINATOR / 2);
+    function requireCompatiblePair(
+        LibEveMarket.EveMarketStorage storage state,
+        LibEveMarket.NativePositionMetadata storage first,
+        LibEveMarket.NativePositionMetadata storage second
+    ) internal view {
+        if (first.conditionId == second.conditionId) {
+            revert Errors.ComboDuplicateCondition(second.conditionId);
         }
-        if (market.outcome == LibEveMarket.MarketOutcome.Yes) {
-            payoutNumerator =
-                metadata.outcomeIndex == LibNativePosition.OUTCOME_YES ? LibNativePosition.RESULT_DENOMINATOR : 0;
-        } else if (market.outcome == LibEveMarket.MarketOutcome.No) {
-            payoutNumerator =
-                metadata.outcomeIndex == LibNativePosition.OUTCOME_NO ? LibNativePosition.RESULT_DENOMINATOR : 0;
+        if (
+            first.moduleId != LibNativePosition.MODULE_NEGRISK || second.moduleId != LibNativePosition.MODULE_NEGRISK
+                || first.marketId != second.marketId
+        ) return;
+
+        LibEveMarket.MultiOutcomeMarket storage multi = state.multiOutcomeMarkets[first.marketId];
+        if (
+            multi.outcomeCount == 2
+                || (first.outcomeIndex == LibNativePosition.OUTCOME_YES
+                    && second.outcomeIndex == LibNativePosition.OUTCOME_YES)
+        ) {
+            revert Errors.ComboConflictingConditions(first.conditionId, second.conditionId);
         }
     }
 }

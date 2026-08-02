@@ -8,7 +8,9 @@ import {Errors} from "src/libraries/Errors.sol";
 import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibEveMarket} from "src/libraries/LibEveMarket.sol";
 import {LibResolverJury} from "src/libraries/LibResolverJury.sol";
+import {ResolverRegistryReputationFacet} from "src/facets/ResolverRegistryReputationFacet.sol";
 import {ResolverRegistryFacet} from "src/facets/ResolverRegistryFacet.sol";
+import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
 import {MockUSDC} from "test/helpers/MockUSDC.sol";
@@ -57,7 +59,11 @@ contract ResolverIdentityReputationHarness {
     }
 }
 
-contract ResolverRegistryPropertyHarness is ResolverRegistryFacet {
+contract ResolverRegistryPropertyHarness is
+    ResolverRegistryFacet,
+    ResolverRegistryViewFacet,
+    ResolverRegistryReputationFacet
+{
     function configure(
         address eveIdentity,
         address mintFeeToken,
@@ -74,6 +80,7 @@ contract ResolverRegistryPropertyHarness is ResolverRegistryFacet {
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
         config.eveToken = eveToken;
         config.bondToken = eveToken;
+        config.eveTreasury = msg.sender;
         config.resolverJuryConfig.identityMintFeeToken = mintFeeToken;
         config.resolverJuryConfig.identityMintFee = 1e6;
         config.resolverJuryConfig.resolverSeatStake = 100e18;

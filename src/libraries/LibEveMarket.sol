@@ -112,27 +112,24 @@ library LibEveMarket {
         uint16 makerFeeBps;
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
-        uint16 vaultFeeBps;
+        uint16 seniorPoolFeeBps;
         uint16 resolverFeeBps;
-        uint16 evRiskFeeBps;
     }
 
     struct ParimutuelFeeConfig {
         uint16 entryFeeBps;
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
-        uint16 vaultFeeBps;
+        uint16 seniorPoolFeeBps;
         uint16 resolverFeeBps;
-        uint16 evRiskFeeBps;
     }
 
     struct SpotFeeConfig {
         uint16 tradeFeeBps;
         uint16 makerFeeBps;
         uint16 protocolFeeBps;
-        uint16 vaultFeeBps;
+        uint16 seniorPoolFeeBps;
         uint16 resolverFeeBps;
-        uint16 evRiskFeeBps;
     }
 
     struct ComboFeeConfig {
@@ -140,9 +137,8 @@ library LibEveMarket {
         uint16 makerFeeBps;
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
-        uint16 vaultFeeBps;
+        uint16 seniorPoolFeeBps;
         uint16 resolverFeeBps;
-        uint16 evRiskFeeBps;
     }
 
     struct ResolverJuryConfig {
@@ -210,8 +206,6 @@ library LibEveMarket {
         address collateralToken;
         address eveToken;
         address eveTreasury;
-        address seniorCapitalPool;
-        address evRiskStakingRewards;
         BookFeeConfig orderbookFeeConfig;
         SpotFeeConfig spotFeeConfig;
         ParimutuelFeeConfig parimutuelFeeConfig;
@@ -249,6 +243,10 @@ library LibEveMarket {
         uint32 maxDelayedOrderRouteLength;
         uint128 minDelayedOrderQuoteWad;
         uint128 minDelayedOrderBaseWad;
+        address staticsDollarCore;
+        address staticsDiamond;
+        address usdcToken;
+        uint256 peggedProfileId;
     }
 
     struct Market {
@@ -383,6 +381,18 @@ library LibEveMarket {
         bool invalid;
         bool resolved;
         bool exists;
+        address adapter;
+        address wrappedCollateral;
+    }
+
+    struct CTFPositionMetadata {
+        address positionToken;
+        address collateralToken;
+        address settlementAdapter;
+        bytes32 conditionId;
+        uint256 complementPositionId;
+        uint128 payoutUnit;
+        bool exists;
     }
 
     struct PositionMetadata {
@@ -404,6 +414,15 @@ library LibEveMarket {
         bytes32 conditionId;
         uint256 yesPositionId;
         uint256 noPositionId;
+        bool exists;
+    }
+
+    struct NativeNegRiskCondition {
+        bytes32 marketId;
+        bytes32 conditionId;
+        uint256 yesPositionId;
+        uint256 noPositionId;
+        uint8 excludedOutcome;
         bool exists;
     }
 
@@ -528,6 +547,14 @@ library LibEveMarket {
         uint64 snapshotBlock;
     }
 
+    struct MLOScenarioExposure {
+        bytes32 marketId;
+        uint8 outcomeCount;
+        bool initialized;
+        int256[17] openLosses;
+        int256[17] filledPositionLosses;
+    }
+
     struct EveMarketStorage {
         MarketConfig config;
         uint256 nextCurveId;
@@ -547,6 +574,8 @@ library LibEveMarket {
         mapping(address => mapping(uint256 => PositionMetadata)) positionMetadata;
         mapping(uint256 => NativePositionMetadata) nativePositionMetadata;
         mapping(bytes32 => NativeBinaryCondition) nativeBinaryConditions;
+        mapping(bytes32 => NativeNegRiskCondition) nativeNegRiskConditions;
+        mapping(bytes32 => mapping(uint8 => bytes32)) nativeNegRiskConditionIds;
         mapping(bytes32 => ComboCondition) comboConditions;
         mapping(bytes32 => uint256[]) comboConditionLegs;
         mapping(bytes32 => ComboMarket) comboMarkets;
@@ -579,7 +608,6 @@ library LibEveMarket {
         uint32 markOracleCautionThreshold;
         uint32 markOracleStaleThreshold;
         address marginAsset;
-        address marginRiskManager;
         bool marginWarningRiskIncreaseAllowed;
         uint256 totalMarginLiabilities;
         mapping(address => MarginTypes.MarginAccount) marginAccounts;
@@ -587,9 +615,10 @@ library LibEveMarket {
         mapping(address => mapping(bytes32 => bytes32)) marginBucketIds;
         mapping(bytes32 => MarginTypes.RiskDomainOracleConfig) marginRiskDomainOracles;
         mapping(uint8 => MarginTypes.RiskParams) marginDefaultRiskParams;
-        mapping(bytes32 => MarginTypes.RiskParams) marginRiskDomainParams;
+        mapping(bytes32 => mapping(uint8 => MarginTypes.RiskParams)) marginRiskDomainParams;
         mapping(bytes32 => MarkOracleTypes.RiskMarkConfig) marginRiskDomainMarkConfigs;
         mapping(bytes32 => MarginTypes.FundingConfig) marginRiskDomainFundingConfigs;
+        mapping(uint8 => MarginTypes.FundingConfig) marginDefaultFundingConfigs;
         uint256 nextQuoteEnvelopeId;
         mapping(uint256 => QuoteEnvelopeTypes.StoredQuoteEnvelope) quoteEnvelopes;
         mapping(address => uint256[]) operatorQuoteEnvelopeIds;
@@ -598,13 +627,35 @@ library LibEveMarket {
         mapping(uint256 => uint256) mloCurveEnvelopeIds;
         mapping(uint256 => uint256) mloEnvelopeCurveIds;
         mapping(uint256 => uint256) mloCurveSeniorReserved;
-        mapping(uint256 => address) mloCurveSeniorPools;
         mapping(bytes32 => mapping(bytes32 => address)) mloInventoryVaults;
-        mapping(bytes32 => mapping(bytes32 => uint256)) mloBucketYesInventory;
-        mapping(bytes32 => mapping(bytes32 => uint256)) mloBucketNoInventory;
+        mapping(bytes32 => mapping(bytes32 => mapping(uint8 => uint256))) mloBucketOutcomeInventory;
         mapping(bytes32 => mapping(bytes32 => uint256)) mloBucketMarketSeniorDebt;
         mapping(bytes32 => mapping(bytes32 => uint256)) mloBucketMarketPositionRisk;
-        mapping(bytes32 => mapping(bytes32 => address)) mloBucketMarketSeniorPools;
+        address mloInsuranceFund;
+        uint16 mloFundingSeniorBps;
+        uint16 mloMaxCleanupBatch;
+        mapping(bytes32 => MLOScenarioExposure) mloScenarioExposures;
+        mapping(uint256 => uint256) mloCurveInventoryReserved;
+        mapping(bytes32 => mapping(bytes32 => mapping(uint8 => uint256))) mloBucketOutcomeInventoryReserved;
+        mapping(bytes32 => mapping(bytes32 => uint256)) mloBucketMarketSeniorReserved;
+        mapping(address => uint256) nativePositionCollateralLiability;
+        // Live execution indexes are separate from append-only history. Curve IDs are
+        // swap-and-popped, so their order is intentionally unstable.
+        mapping(bytes32 => uint256[]) activeBookCurveIds;
+        mapping(uint256 => uint256) activeBookCurveIndexPlusOne;
+        // Remaining ASK volume used by resolver conflict checks. This includes
+        // escrowed and adapter-backed quotes until their lifecycle releases them.
+        mapping(bytes32 => mapping(address => uint256)) bookMakerAskExposure;
+        // CTF-backed NegRisk and combo bridge state is append-only for diamond storage safety.
+        address negRiskAdapter;
+        mapping(bytes32 => mapping(uint8 => bytes32)) multiOutcomeQuestionIds;
+        mapping(bytes32 => mapping(uint8 => bytes32)) multiOutcomeConditionIds;
+        mapping(bytes32 => mapping(uint8 => uint256)) multiOutcomeNoPositionIds;
+        mapping(uint256 => CTFPositionMetadata) ctfPositionMetadata;
+        mapping(uint256 => uint256) ctfComboEscrow;
+        mapping(bytes32 => uint256) ctfConditionYesPositionId;
+        mapping(bytes32 => uint256) ctfConditionNoPositionId;
+        address ctfSettlementAdapter;
     }
 
     function store() internal pure returns (EveMarketStorage storage storage_) {

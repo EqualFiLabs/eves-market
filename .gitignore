@@ -9,6 +9,9 @@
 /out/
 
 /lib/*
+!/lib/openzeppelin-contracts
+!/lib/openzeppelin-solidity
+!/lib/statics
 
 /conditional-tokens-contracts/
 /conditional-tokens/cache_forge/

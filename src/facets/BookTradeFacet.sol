@@ -5,7 +5,6 @@ import {CurveCLOBTypes} from "../types/CurveCLOBTypes.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {LibBuyExecution} from "../libraries/LibBuyExecution.sol";
 import {LibReentrancy} from "../libraries/LibReentrancy.sol";
-import {LibSellExecution} from "../libraries/LibSellExecution.sol";
 
 contract BookTradeFacet is CurveCLOBTypes {
     modifier nonReentrant() {
@@ -25,22 +24,6 @@ contract BookTradeFacet is CurveCLOBTypes {
 
         FillBookParams memory requestParams = params;
         result = LibBuyExecution.fillBookBest(requestParams, LibBuyExecution.FillMode.BestAsk);
-    }
-
-    function sellBookBest(SellBookParams calldata params) external nonReentrant returns (SellBookResult memory result) {
-        SellBookParams memory requestParams = params;
-        result = LibSellExecution.sellBookBest(
-            requestParams, LibSellExecution.immediateContext(msg.sender, params.receiver)
-        );
-    }
-
-    function sellBookBestFor(SellBookParams calldata params, SellExecutionContext calldata context)
-        external
-        returns (SellBookResult memory result)
-    {
-        _enforceSelfCall();
-        SellBookParams memory requestParams = params;
-        result = LibSellExecution.sellBookBest(requestParams, context);
     }
 
     function _enforceSelfCall() internal view {

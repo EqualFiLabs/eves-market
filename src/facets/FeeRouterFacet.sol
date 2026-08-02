@@ -118,13 +118,10 @@ contract FeeRouterFacet is IFeeRouterFacet {
     }
 
     function claimBookCreatorFees(bytes32 bookId) external nonReentrant {
-        LibEveMarket.Book storage book = _loadStandaloneBook(bookId);
+        LibEveMarket.Book storage book = _loadBookFeeAccount(bookId);
 
         if (msg.sender != book.creator) {
             revert Errors.NotMarketCreator(msg.sender, book.creator);
-        }
-        if (book.creatorFeesClaimed) {
-            revert Errors.AlreadyClaimed(bookId, msg.sender);
         }
 
         uint128 amount = book.creatorFeesEscrowed;
@@ -140,7 +137,7 @@ contract FeeRouterFacet is IFeeRouterFacet {
     }
 
     function claimBookMakerFees(bytes32 bookId) external nonReentrant {
-        LibEveMarket.Book storage book = _loadStandaloneBook(bookId);
+        LibEveMarket.Book storage book = _loadBookFeeAccount(bookId);
 
         uint128 accrued = book.makerFeesAccrued[msg.sender];
         uint128 claimed = book.makerFeesClaimed[msg.sender];
@@ -198,7 +195,7 @@ contract FeeRouterFacet is IFeeRouterFacet {
         view
         returns (uint128 accrued, uint128 claimed, uint128 claimable)
     {
-        LibEveMarket.Book storage book = _loadStandaloneBook(bookId);
+        LibEveMarket.Book storage book = _loadBookFeeAccount(bookId);
 
         accrued = book.makerFeesAccrued[maker];
         claimed = book.makerFeesClaimed[maker];
@@ -210,7 +207,7 @@ contract FeeRouterFacet is IFeeRouterFacet {
         view
         returns (uint128 quoteVolume, uint128 accrued, uint128 claimed, uint128 claimable)
     {
-        LibEveMarket.Book storage book = _loadStandaloneBook(bookId);
+        LibEveMarket.Book storage book = _loadBookFeeAccount(bookId);
 
         quoteVolume = book.makerQuoteVolume[maker];
         accrued = book.makerFeesAccrued[maker];
@@ -225,12 +222,13 @@ contract FeeRouterFacet is IFeeRouterFacet {
         }
     }
 
-    function _loadStandaloneBook(bytes32 bookId) internal view returns (LibEveMarket.Book storage book) {
-        book = LibEveMarket.store().books[bookId];
+    function _loadBookFeeAccount(bytes32 bookId) internal view returns (LibEveMarket.Book storage book) {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        book = state.books[bookId];
         if (book.bookId != bookId) {
             revert Errors.BookNotFound(bookId);
         }
-        if (book.marketId != bytes32(0)) {
+        if (book.marketId != bytes32(0) && !state.comboMarkets[book.marketId].exists) {
             revert Errors.InvalidAmount(uint256(book.marketId));
         }
     }

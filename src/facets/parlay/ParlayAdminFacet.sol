@@ -13,15 +13,15 @@ contract ParlayAdminFacet is ParlayBase {
         address ticketToken,
         address feeRecipient,
         uint128 underwritingFee,
-        uint16 vaultFeeBps,
+        uint16 seniorPoolFeeBps,
         uint16 feeRecipientBps
     ) external {
         LibDiamond.enforceIsContractOwner();
         if (feeRecipient == address(0)) {
             revert Errors.ZeroAddress();
         }
-        if (uint256(vaultFeeBps) + feeRecipientBps != LibParlay.BPS_DENOMINATOR) {
-            revert Errors.InvalidFeeSplit(uint256(vaultFeeBps) + feeRecipientBps);
+        if (uint256(seniorPoolFeeBps) + feeRecipientBps != LibParlay.BPS_DENOMINATOR) {
+            revert Errors.InvalidFeeSplit(uint256(seniorPoolFeeBps) + feeRecipientBps);
         }
         _enforceParlayTicketToken(ticketToken);
 
@@ -29,10 +29,10 @@ contract ParlayAdminFacet is ParlayBase {
         config.ticketToken = ticketToken;
         config.feeRecipient = feeRecipient;
         config.underwritingFee = underwritingFee;
-        config.vaultFeeBps = vaultFeeBps;
+        config.seniorPoolFeeBps = seniorPoolFeeBps;
         config.feeRecipientBps = feeRecipientBps;
 
-        emit Events.ParlayConfigSet(ticketToken, feeRecipient, underwritingFee, vaultFeeBps, feeRecipientBps);
+        emit Events.ParlayConfigSet(ticketToken, feeRecipient, underwritingFee, seniorPoolFeeBps, feeRecipientBps);
     }
 
     function getParlayConfig() external view returns (ParlayTypes.ParlayConfigView memory configView) {
@@ -41,7 +41,7 @@ contract ParlayAdminFacet is ParlayBase {
             ticketToken: config.ticketToken,
             feeRecipient: config.feeRecipient,
             underwritingFee: config.underwritingFee,
-            vaultFeeBps: config.vaultFeeBps,
+            seniorPoolFeeBps: config.seniorPoolFeeBps,
             feeRecipientBps: config.feeRecipientBps
         });
     }

@@ -13,7 +13,6 @@ import {LibComboMarket} from "../../libraries/LibComboMarket.sol";
 import {LibCombinatorialPosition} from "../../libraries/LibCombinatorialPosition.sol";
 import {LibDiamond} from "../../libraries/LibDiamond.sol";
 import {LibEveMarket} from "../../libraries/LibEveMarket.sol";
-import {LibNativePosition} from "../../libraries/LibNativePosition.sol";
 import {LibReentrancy} from "../../libraries/LibReentrancy.sol";
 
 contract ComboMarketFacet is IComboMarketFacet {
@@ -32,6 +31,19 @@ contract ComboMarketFacet is IComboMarketFacet {
     {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
         uint256[] memory legs = _prepareComboLegs(state, marketIds, yesLegs);
+        _storeComboCondition(state, legs, preparation);
+        _createComboMarket(state, msg.sender, preparation);
+    }
+
+    function createComboMarketFromLegs(uint256[] calldata positionIds)
+        external
+        nonReentrant
+        returns (ComboMarketPreparation memory preparation)
+    {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        uint256[] memory legs = LibCombinatorialPosition.copyLegs(positionIds);
+        _sortAscending(legs);
+        LibCombinatorialPosition.validateCanonicalLiveLegsMemory(state, legs);
         _storeComboCondition(state, legs, preparation);
         _createComboMarket(state, msg.sender, preparation);
     }
@@ -56,6 +68,9 @@ contract ComboMarketFacet is IComboMarketFacet {
             noBookId: stored.noBookId,
             creator: stored.creator,
             collateralToken: stored.collateralToken,
+            collateralProfileId: stored.exists
+                ? LibCombinatorialPosition.collateralProfileFor(LibEveMarket.store(), stored.conditionId)
+                : 0,
             createdAt: stored.createdAt,
             expiryTime: stored.expiryTime,
             exists: stored.exists
@@ -70,7 +85,7 @@ contract ComboMarketFacet is IComboMarketFacet {
         LibEveMarket.EveMarketStorage storage state,
         bytes32[] calldata marketIds,
         bool[] calldata yesLegs
-    ) internal returns (uint256[] memory legs) {
+    ) internal view returns (uint256[] memory legs) {
         uint256 length = marketIds.length;
         if (length != yesLegs.length) {
             revert Errors.ArrayLengthMismatch(length, yesLegs.length);
@@ -78,12 +93,15 @@ contract ComboMarketFacet is IComboMarketFacet {
 
         legs = new uint256[](length);
         for (uint256 index; index < length; ++index) {
-            LibNativePosition.BinaryPositionIds memory ids =
-                LibNativePosition.prepareBinaryCondition(state, marketIds[index]);
-            legs[index] = yesLegs[index] ? ids.yesPositionId : ids.noPositionId;
+            LibEveMarket.Market storage market = state.markets[marketIds[index]];
+            if (market.marketId != marketIds[index]) revert Errors.MarketNotFound(marketIds[index]);
+            if (market.positionTokenType != LibEveMarket.PositionTokenType.CTF) {
+                revert Errors.ComboUnsupportedPosition(yesLegs[index] ? market.yesPositionId : market.noPositionId);
+            }
+            legs[index] = yesLegs[index] ? market.yesPositionId : market.noPositionId;
         }
         _sortAscending(legs);
-        LibCombinatorialPosition.validateCanonicalLiveBinaryLegsMemory(state, legs);
+        LibCombinatorialPosition.validateCanonicalLiveLegsMemory(state, legs);
     }
 
     function _storeComboCondition(

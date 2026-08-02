@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 library Errors {
+    error InvalidStaticsDollarRail();
     error MarketNotFound(bytes32 marketId);
     error InvalidAmount(uint256 amount);
     error ArrayLengthMismatch(uint256 expected, uint256 actual);
@@ -51,6 +52,8 @@ library Errors {
     error CurveNotActive(uint256 curveId);
     error CurveExpired(uint256 curveId);
     error CurveNotReusable(uint256 curveId, uint128 remainingVolume, uint64 expiresAt);
+    error CurvePruneBatchTooLarge(uint256 length, uint256 maximum);
+    error InvalidPageSize(uint256 size, uint256 maximum);
     error CurveBackingMismatch(uint256 curveId, uint8 expected, uint8 actual);
     error AdapterCurveMetadataMissing(uint256 curveId);
     error AdapterCurveInactive(uint256 curveId);
@@ -175,6 +178,11 @@ library Errors {
     error SelectorsEmpty();
     error SelectorAlreadyExists(bytes4 selector);
     error SelectorMissing(bytes4 selector);
+    error GovernanceDelayAlreadyFinalized();
+    error GovernanceDelayNotFinalized();
+    error GovernanceOperationAlreadyScheduled(bytes32 operationId, uint256 readyAt);
+    error GovernanceOperationNotScheduled(bytes32 operationId);
+    error GovernanceOperationTimelocked(bytes32 operationId, uint256 readyAt);
     error SelectorUnchanged(bytes4 selector, address facet);
     error InitCalldataWithoutInit();
     error InitHasNoCode(address init);
@@ -213,20 +221,32 @@ library Errors {
     error ParlayBudgetCollateralProfileMismatch(uint256 budgetId, uint8 budgetProfileId, uint8 quoteProfileId);
 
     error NativePositionNotFound(uint256 positionId);
+    error NativeCollateralTransferMismatch(address collateralToken, uint256 expected, uint256 received);
+    error NativeCollateralLiabilityInsufficient(address collateralToken, uint256 available, uint256 required);
+    error NativeCollateralBackingInsufficient(address collateralToken, uint256 balance, uint256 liability);
     error NativeConditionNotFound(bytes32 conditionId);
     error NativeModuleUnsupported(uint8 moduleId);
     error NativeOutcomeUnsupported(uint8 outcomeIndex);
     error NativeBinaryConditionNotFound(bytes32 marketId);
+    error NativeNegRiskConditionNotFound(bytes32 marketId, uint8 excludedOutcome);
     error NativePositionConditionMismatch(uint256 positionId, bytes32 expectedConditionId, bytes32 actualConditionId);
+    error EvesPositionManagerAlreadyConfigured(address currentManager);
+    error EvesPositionManagerDiamondMismatch(address manager, address expectedDiamond, address actualDiamond);
+    error NegRiskAdapterAlreadyConfigured(address currentAdapter);
+    error NegRiskAdapterConfigMismatch(address adapter);
 
     error ComboConditionNotFound(bytes32 conditionId);
     error ComboLegCountInvalid(uint256 count);
     error ComboNonCanonicalLegs(uint256 previousPositionId, uint256 currentPositionId);
     error ComboDuplicateCondition(bytes32 conditionId);
+    error ComboConflictingConditions(bytes32 firstConditionId, bytes32 secondConditionId);
     error ComboLegMarketNotStarted(bytes32 marketId);
     error ComboLegMarketResolved(bytes32 marketId);
     error ComboUnsupportedPosition(uint256 positionId);
+    error ComboCTFEscrowInsufficient(uint256 positionId, uint256 available, uint256 required);
+    error CTFSettlementAdapterAlreadyConfigured(address adapter);
     error ComboCollateralMismatch(address expectedCollateral, address actualCollateral);
+    error ComboCollateralProfileMismatch(uint8 expectedProfileId, uint8 actualProfileId);
     error ComboPositionNotRedeemable(uint256 positionId);
     error ComboPositionNotCompressible(uint256 positionId);
     error ComboSingleLegRequired(uint256 legCount);
@@ -234,6 +254,8 @@ library Errors {
     error ComboParentYesRequired(uint256 positionId);
     error ComboNoPositionRequired(uint256 positionId);
     error ComboLegIndexOutOfRange(uint256 index, uint256 legCount);
+    error ComboBasketPageInvalid(uint256 cursor, uint256 limit, uint256 legCount);
+    error ComboBasketConditionNotPrepared(uint256 fullNoPositionId, uint256 index, bytes32 conditionId);
     error ComboMarketAlreadyExists(bytes32 marketId);
     error ComboMarketNotFound(bytes32 marketId);
     error ComboMarketInvalidPosition(address positionToken, uint256 positionId);

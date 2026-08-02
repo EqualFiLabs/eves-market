@@ -5,6 +5,7 @@ import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol"
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 
 import {SettlementFeeFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 
@@ -36,7 +37,7 @@ contract AdminPropertiesTest is SettlementFeeFixture {
         vm.startPrank(outsider);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
         OwnershipFacet(address(diamond)).setResolutionBondConfig(address(eveToken), 1, 2);
@@ -57,7 +58,7 @@ contract AdminPropertiesTest is SettlementFeeFixture {
         OwnershipFacet(address(diamond)).setEveTreasury(newTreasury);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100, 0, 0);
+        FeeConfigFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100, 0);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
         OwnershipFacet(address(diamond)).setDurationParams(minDuration, maxDuration);
@@ -94,7 +95,7 @@ contract AdminPropertiesTest is SettlementFeeFixture {
         uint128 collateralIn = uint128(bound(uint256(collateralSeed), 10_000e6, 25_000e6));
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(OLD_ORDERBOOK_ENTRY_FEE_BPS);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(OLD_ORDERBOOK_ENTRY_FEE_BPS);
 
         (bytes32 firstMarketId,,) = _createTradingMarket("admin-fee-rate-old", "properties", 7 days);
         _splitFrom(maker, firstMarketId, 150_000e6);
@@ -107,7 +108,7 @@ contract AdminPropertiesTest is SettlementFeeFixture {
         assertEq(feePoolAfterFirst, firstFee);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(newFeeRate);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(newFeeRate);
 
         (bytes32 secondMarketId,,) = _createTradingMarket("admin-fee-rate-new", "properties", 7 days);
         _splitFrom(maker, secondMarketId, 150_000e6);

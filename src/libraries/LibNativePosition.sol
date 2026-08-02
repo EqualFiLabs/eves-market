@@ -17,6 +17,7 @@ library LibNativePosition {
     uint256 internal constant PAYOUT_FACTOR_DENOMINATOR = 1e36;
 
     bytes32 internal constant BINARY_CONDITION_DOMAIN = keccak256("EVE_NATIVE_BINARY_CONDITION");
+    bytes32 internal constant NEGRISK_CONDITION_DOMAIN = keccak256("EVE_NATIVE_NEGRISK_CONDITION");
     bytes32 internal constant COMBO_CONDITION_DOMAIN = keccak256("EVE_NATIVE_COMBO_CONDITION");
     bytes32 internal constant POSITION_DOMAIN = keccak256("EVE_NATIVE_POSITION");
 
@@ -27,8 +28,24 @@ library LibNativePosition {
         uint256 noPositionId;
     }
 
+    struct NegRiskPositionIds {
+        bytes32 marketId;
+        bytes32 conditionId;
+        uint256 yesPositionId;
+        uint256 noPositionId;
+        uint8 excludedOutcome;
+    }
+
     function binaryConditionIdFor(bytes32 marketId) internal pure returns (bytes32 conditionId) {
         conditionId = keccak256(abi.encode(BINARY_CONDITION_DOMAIN, marketId));
+    }
+
+    function negRiskConditionIdFor(bytes32 marketId, uint8 excludedOutcome)
+        internal
+        pure
+        returns (bytes32 conditionId)
+    {
+        conditionId = keccak256(abi.encode(NEGRISK_CONDITION_DOMAIN, marketId, excludedOutcome));
     }
 
     function comboConditionIdFor(uint256[] memory canonicalLegs) internal pure returns (bytes32 conditionId) {
@@ -114,6 +131,209 @@ library LibNativePosition {
             yesPositionId: condition.yesPositionId,
             noPositionId: condition.noPositionId
         });
+    }
+
+    function prepareNegRiskCondition(
+        LibEveMarket.EveMarketStorage storage state,
+        bytes32 marketId,
+        uint8 excludedOutcome
+    ) internal returns (NegRiskPositionIds memory ids) {
+        LibEveMarket.MultiOutcomeMarket storage multi = state.multiOutcomeMarkets[marketId];
+        if (!multi.exists) {
+            revert Errors.MultiOutcomeMarketNotFound(marketId);
+        }
+        if (excludedOutcome >= multi.outcomeCount) {
+            revert Errors.InvalidOutcome(excludedOutcome);
+        }
+
+        bytes32 storedConditionId = state.nativeNegRiskConditionIds[marketId][excludedOutcome];
+        if (storedConditionId != bytes32(0)) {
+            return negRiskPositionIds(state.nativeNegRiskConditions[storedConditionId]);
+        }
+
+        bytes32 conditionId = negRiskConditionIdFor(marketId, excludedOutcome);
+        uint256 yesPositionId = state.multiOutcomePositionIds[marketId][excludedOutcome];
+        if (yesPositionId == 0) {
+            revert Errors.NativePositionNotFound(yesPositionId);
+        }
+        uint256 noPositionId = positionIdFor(MODULE_NEGRISK, conditionId, OUTCOME_NO);
+
+        LibEveMarket.NativeNegRiskCondition storage condition = state.nativeNegRiskConditions[conditionId];
+        condition.marketId = marketId;
+        condition.conditionId = conditionId;
+        condition.yesPositionId = yesPositionId;
+        condition.noPositionId = noPositionId;
+        condition.excludedOutcome = excludedOutcome;
+        condition.exists = true;
+        state.nativeNegRiskConditionIds[marketId][excludedOutcome] = conditionId;
+
+        state.nativePositionMetadata[yesPositionId] = LibEveMarket.NativePositionMetadata({
+            moduleId: MODULE_NEGRISK,
+            conditionId: conditionId,
+            outcomeIndex: OUTCOME_YES,
+            marketId: marketId,
+            exists: true
+        });
+        state.nativePositionMetadata[noPositionId] = LibEveMarket.NativePositionMetadata({
+            moduleId: MODULE_NEGRISK,
+            conditionId: conditionId,
+            outcomeIndex: OUTCOME_NO,
+            marketId: marketId,
+            exists: true
+        });
+
+        emit Events.NativeNegRiskConditionPrepared(marketId, conditionId, excludedOutcome, yesPositionId, noPositionId);
+        ids = negRiskPositionIds(condition);
+    }
+
+    function requireNegRiskCondition(
+        LibEveMarket.EveMarketStorage storage state,
+        bytes32 marketId,
+        uint8 excludedOutcome
+    ) internal view returns (NegRiskPositionIds memory ids) {
+        bytes32 conditionId = state.nativeNegRiskConditionIds[marketId][excludedOutcome];
+        if (conditionId == bytes32(0)) {
+            revert Errors.NativeNegRiskConditionNotFound(marketId, excludedOutcome);
+        }
+        ids = negRiskPositionIds(state.nativeNegRiskConditions[conditionId]);
+    }
+
+    function requireNegRiskConditionById(LibEveMarket.EveMarketStorage storage state, bytes32 conditionId)
+        internal
+        view
+        returns (LibEveMarket.NativeNegRiskCondition storage condition)
+    {
+        condition = state.nativeNegRiskConditions[conditionId];
+        if (!condition.exists) {
+            revert Errors.NativeConditionNotFound(conditionId);
+        }
+    }
+
+    function negRiskPositionIds(LibEveMarket.NativeNegRiskCondition storage condition)
+        internal
+        view
+        returns (NegRiskPositionIds memory ids)
+    {
+        ids = NegRiskPositionIds({
+            marketId: condition.marketId,
+            conditionId: condition.conditionId,
+            yesPositionId: condition.yesPositionId,
+            noPositionId: condition.noPositionId,
+            excludedOutcome: condition.excludedOutcome
+        });
+    }
+
+    function flipPosition(LibEveMarket.EveMarketStorage storage state, uint256 positionId)
+        internal
+        view
+        returns (uint256 flippedPositionId)
+    {
+        LibEveMarket.NativePositionMetadata storage metadata = state.nativePositionMetadata[positionId];
+        if (!metadata.exists || !isBinaryOutcome(metadata.outcomeIndex)) {
+            revert Errors.NativePositionNotFound(positionId);
+        }
+        if (metadata.moduleId == MODULE_BINARY) {
+            flippedPositionId = positionIdFor(MODULE_BINARY, metadata.conditionId, metadata.outcomeIndex ^ 1);
+        } else if (metadata.moduleId == MODULE_NEGRISK) {
+            LibEveMarket.NativeNegRiskCondition storage condition =
+                requireNegRiskConditionById(state, metadata.conditionId);
+            flippedPositionId = metadata.outcomeIndex == OUTCOME_YES ? condition.noPositionId : condition.yesPositionId;
+        } else {
+            revert Errors.NativeModuleUnsupported(metadata.moduleId);
+        }
+        if (!state.nativePositionMetadata[flippedPositionId].exists) {
+            revert Errors.NativePositionNotFound(flippedPositionId);
+        }
+    }
+
+    function positionPayoutNumerator(LibEveMarket.EveMarketStorage storage state, uint256 positionId)
+        internal
+        view
+        returns (bool resolved, uint256 payoutNumerator)
+    {
+        LibEveMarket.NativePositionMetadata storage metadata = state.nativePositionMetadata[positionId];
+        if (!metadata.exists) {
+            revert Errors.NativePositionNotFound(positionId);
+        }
+        if (metadata.moduleId == MODULE_BINARY) {
+            LibEveMarket.Market storage market = state.markets[metadata.marketId];
+            if (market.state != LibEveMarket.MarketState.Resolved) return (false, 0);
+            return (true, binaryPayoutNumerator(market.outcome, metadata.outcomeIndex));
+        }
+        if (metadata.moduleId == MODULE_NEGRISK) {
+            LibEveMarket.NativeNegRiskCondition storage condition =
+                requireNegRiskConditionById(state, metadata.conditionId);
+            LibEveMarket.MultiOutcomeMarket storage multi = state.multiOutcomeMarkets[condition.marketId];
+            if (!multi.resolved) return (false, 0);
+            if (multi.invalid) {
+                uint256 yesNumerator = RESULT_DENOMINATOR / multi.outcomeCount;
+                if (metadata.outcomeIndex == OUTCOME_YES) return (true, yesNumerator);
+                uint256 yesNumeratorUp = (RESULT_DENOMINATOR + multi.outcomeCount - 1) / multi.outcomeCount;
+                return (true, RESULT_DENOMINATOR - yesNumeratorUp);
+            }
+            bool excludedWon = multi.resolvedOutcome == condition.excludedOutcome;
+            if (metadata.outcomeIndex == OUTCOME_YES) {
+                return (true, excludedWon ? RESULT_DENOMINATOR : 0);
+            }
+            return (true, excludedWon ? 0 : RESULT_DENOMINATOR);
+        }
+        revert Errors.NativeModuleUnsupported(metadata.moduleId);
+    }
+
+    function positionPayout(LibEveMarket.EveMarketStorage storage state, uint256 positionId, uint128 amount)
+        internal
+        view
+        returns (bool resolved, uint128 collateralOut)
+    {
+        LibEveMarket.NativePositionMetadata storage metadata = state.nativePositionMetadata[positionId];
+        if (!metadata.exists) {
+            revert Errors.NativePositionNotFound(positionId);
+        }
+
+        if (metadata.moduleId == MODULE_BINARY) {
+            uint256 payoutNumerator;
+            (resolved, payoutNumerator) = positionPayoutNumerator(state, positionId);
+            if (!resolved) return (false, 0);
+            collateralOut = uint128((uint256(amount) * payoutNumerator) / RESULT_DENOMINATOR);
+            return (true, collateralOut);
+        }
+
+        if (metadata.moduleId == MODULE_NEGRISK) {
+            LibEveMarket.NativeNegRiskCondition storage condition =
+                requireNegRiskConditionById(state, metadata.conditionId);
+            LibEveMarket.MultiOutcomeMarket storage multi = state.multiOutcomeMarkets[condition.marketId];
+            if (!multi.resolved) return (false, 0);
+
+            if (multi.invalid) {
+                if (metadata.outcomeIndex == OUTCOME_YES) {
+                    return (true, uint128(uint256(amount) / multi.outcomeCount));
+                }
+                uint256 yesPayoutUp = (uint256(amount) + multi.outcomeCount - 1) / multi.outcomeCount;
+                return (true, uint128(uint256(amount) - yesPayoutUp));
+            }
+
+            bool excludedWon = multi.resolvedOutcome == condition.excludedOutcome;
+            if (metadata.outcomeIndex == OUTCOME_YES) return (true, excludedWon ? amount : 0);
+            return (true, excludedWon ? 0 : amount);
+        }
+
+        revert Errors.NativeModuleUnsupported(metadata.moduleId);
+    }
+
+    function binaryPayoutNumerator(LibEveMarket.MarketOutcome outcome, uint8 outcomeIndex)
+        internal
+        pure
+        returns (uint256 payoutNumerator)
+    {
+        if (outcome == LibEveMarket.MarketOutcome.Yes) {
+            return outcomeIndex == OUTCOME_YES ? RESULT_DENOMINATOR : 0;
+        }
+        if (outcome == LibEveMarket.MarketOutcome.No) {
+            return outcomeIndex == OUTCOME_NO ? RESULT_DENOMINATOR : 0;
+        }
+        if (outcome == LibEveMarket.MarketOutcome.Invalid) {
+            return RESULT_DENOMINATOR / 2;
+        }
     }
 
     function requireCLOBMarket(LibEveMarket.EveMarketStorage storage state, bytes32 marketId)

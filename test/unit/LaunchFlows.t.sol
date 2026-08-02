@@ -3,14 +3,17 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
 import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {BookFacet} from "../../src/facets/BookFacet.sol";
 import {BookOrderFacet} from "../../src/facets/BookOrderFacet.sol";
 import {BookTradeFacet} from "../../src/facets/BookTradeFacet.sol";
+import {BookSellFacet} from "../../src/facets/BookSellFacet.sol";
 import {BookViewFacet} from "../../src/facets/BookViewFacet.sol";
-import {TradeRouterFacet} from "../../src/facets/TradeRouterFacet.sol";
-import {TradeRouterSellFacet} from "../../src/facets/TradeRouterSellFacet.sol";
+import {CollateralTradeRouterFacet} from "../../src/facets/CollateralTradeRouterFacet.sol";
+import {CollateralTradeRouterSellFacet} from "../../src/facets/CollateralTradeRouterSellFacet.sol";
+import {CollateralTradeRouterPreviewFacet} from "../../src/facets/CollateralTradeRouterPreviewFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
@@ -30,7 +33,7 @@ import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {ParimutuelShareToken} from "../../src/tokens/ParimutuelShareToken.sol";
 
 import {
-    EveUSDCRouterFixture,
+    CollateralRouterFixture,
     ResolutionHarnessFacet,
     SettlementFeeFixture,
     StateProbeFacet
@@ -62,11 +65,12 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
         _addFacet(address(new BookFacet()), _bookSelectors());
         _addFacet(address(new BookOrderFacet()), _bookOrderSelectors());
         _addFacet(address(new BookTradeFacet()), _bookTradeSelectors());
+        _addFacet(address(new BookSellFacet()), _bookSellSelectors());
         _addFacet(address(new BookViewFacet()), _bookViewSelectors());
 
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(0, 10_000, 0, 0, 0);
+        FeeConfigFacet(address(diamond)).setParimutuelFeeSplit(0, 10_000, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelEpochWindowCap(30 days);
         vm.stopPrank();
     }
@@ -196,7 +200,7 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
         baseToken.mint(taker, 1_000e6);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         vm.prank(maker);
         spot.bookId = IBookAdminFacet(address(diamond))
@@ -231,13 +235,16 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
     function _assertSpotPreviewAndTopOfBook(SpotLaunchCase memory spot) internal view {
         (uint128 previewBaseOut, uint128 previewFee, uint128 previewAveragePrice, uint128 unfilledQuote) =
             IBookViewFacet(address(diamond)).previewBookExecution(spot.bookId, 200e6, _singleCurve(spot.askCurveId));
-        (uint128 bestAskPrice, uint128 bestBidPrice, uint128 midpointPrice,) =
-            IBookViewFacet(address(diamond)).getBookTopOfBook(spot.bookId);
+        (uint128 bestAskPrice, bool hasAsk, uint128 bestBidPrice, bool hasBid,,,) =
+            IBookViewFacet(address(diamond)).getBookTopOfBookPage(spot.bookId, 0, 128);
+        uint128 midpointPrice = (bestAskPrice + bestBidPrice) / 2;
 
         assertEq(previewBaseOut, 100e6);
         assertEq(previewFee, 0);
         assertEq(previewAveragePrice, spot.askPrice);
         assertEq(unfilledQuote, 0);
+        assertTrue(hasAsk);
+        assertTrue(hasBid);
         assertEq(bestAskPrice, spot.askPrice);
         assertEq(bestBidPrice, spot.bidPrice);
         assertEq(midpointPrice, 1_900_000_000_000_000_000);
@@ -348,16 +355,22 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
     }
 
     function _bookTradeSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](2);
         selectors[0] = IBookTradeFacet.fillBookBest.selector;
         selectors[1] = IBookTradeFacet.fillBookBestFor.selector;
-        selectors[2] = IBookTradeFacet.sellBookBest.selector;
+    }
+
+    function _bookSellSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = IBookTradeFacet.sellBookBest.selector;
     }
 
     function _bookViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](4);
         selectors[0] = IBookViewFacet.previewBookExecution.selector;
-        selectors[1] = IBookViewFacet.getBookTopOfBook.selector;
+        selectors[1] = IBookViewFacet.getBookCurveIdsPage.selector;
+        selectors[2] = IBookViewFacet.getActiveBookCurveIdsPage.selector;
+        selectors[3] = IBookViewFacet.getBookTopOfBookPage.selector;
     }
 
     function _postParimutuelCurve(bytes32 marketId, bool isYesSide, uint128 volume, uint72 price)
@@ -382,7 +395,7 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
     }
 }
 
-contract LaunchRouterFlowsTest is EveUSDCRouterFixture {
+contract LaunchRouterFlowsTest is CollateralRouterFixture {
     ITradeRouter internal tradeRouter;
     ParimutuelShareToken internal shareToken;
     address internal receiver;
@@ -394,31 +407,32 @@ contract LaunchRouterFlowsTest is EveUSDCRouterFixture {
         shareToken = new ParimutuelShareToken(address(diamond), "uri://launch-router/{id}");
         receiver = makeAddr("launch-router-receiver");
 
-        _addFacet(address(new TradeRouterFacet()), _tradeRouterSelectors());
-        _addFacet(address(new TradeRouterSellFacet()), _tradeRouterSellSelectors());
+        _addFacet(address(new CollateralTradeRouterFacet()), _tradeRouterSelectors());
+        _addFacet(address(new CollateralTradeRouterSellFacet()), _tradeRouterSellSelectors());
+        _addFacet(address(new CollateralTradeRouterPreviewFacet()), _tradeRouterPreviewSelectors());
         _addFacet(address(new ResolutionHarnessFacet()), _resolutionHarnessSelectors());
         _addFacet(address(new ParimutuelFacet()), _parimutuelSelectors());
         _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
 
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(0, 10_000, 0, 0, 0);
+        FeeConfigFacet(address(diamond)).setParimutuelFeeSplit(0, 10_000, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelEpochWindowCap(30 days);
         vm.stopPrank();
     }
 
     function test_RouterCLOBHappyPathsUseUserFacingEntrypoints() public {
         (bytes32 marketId,) = _createTradingMarket("launch router clob", 7 days);
-        _splitFromMaker(marketId, 10e6);
+        _splitFromMaker(marketId, 10e18);
         _approvePositions(maker);
 
-        uint256 curveId = _postCurveFromMaker(marketId, true, 6e6, DEFAULT_FLAT_PRICE, DEFAULT_FLAT_PRICE, 180);
+        uint256 curveId = _postCurveFromMaker(marketId, true, 6e18, DEFAULT_FLAT_PRICE, DEFAULT_FLAT_PRICE, 180);
         (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
 
         CurveCLOBTypes.FillBestParams memory buyParams = CurveCLOBTypes.FillBestParams({
             marketId: marketId,
             isYesSide: true,
-            maxCollateralIn: 3e6,
+            maxCollateralIn: 3e18,
             minSharesOut: 1,
             maxAveragePrice: type(uint128).max,
             curveIds: _singleCurve(curveId),
@@ -428,24 +442,12 @@ contract LaunchRouterFlowsTest is EveUSDCRouterFixture {
             receiver: receiver
         });
 
-        usdc.mint(taker, 5e6);
         vm.prank(taker);
-        usdc.approve(address(diamond), type(uint256).max);
+        CurveCLOBTypes.FillBestResult memory buyResult = tradeRouter.buyWithCollateral(buyParams);
 
-        vm.prank(taker);
-        CurveCLOBTypes.FillBestResult memory buyResult = tradeRouter.buyWithUSDC(buyParams);
-
-        (,, uint256 yesPositionId, uint256 noPositionId) =
-            IMarketFactoryFacet(address(diamond)).getMarketPositions(marketId);
+        (,, uint256 yesPositionId,) = IMarketFactoryFacet(address(diamond)).getMarketPositions(marketId);
         assertGt(buyResult.sharesOut, 0);
         assertEq(conditionalTokens.balanceOf(receiver, yesPositionId), buyResult.sharesOut);
-
-        vm.prank(taker);
-        uint128 splitShares = tradeRouter.splitWithUSDC(marketId, 2e6, receiver);
-
-        assertEq(splitShares, 2e18);
-        assertEq(conditionalTokens.balanceOf(receiver, yesPositionId), buyResult.sharesOut + splitShares);
-        assertEq(conditionalTokens.balanceOf(receiver, noPositionId), splitShares);
     }
 
     function test_RouterSupportsDirectBidsOnNativeParimutuelMarketAndRejectsCTFInventory() public {
@@ -453,7 +455,7 @@ contract LaunchRouterFlowsTest is EveUSDCRouterFixture {
 
         vm.expectRevert(_positionTokenTypeMismatch(marketId));
         vm.prank(taker);
-        tradeRouter.splitWithUSDC(marketId, 1, receiver);
+        ICurveInventoryFacet(address(diamond)).splitInventory(marketId, 1);
 
         (,,,, uint256 yesPositionId,) = StateProbeFacet(address(diamond)).getStoredMarketCore(marketId);
 
@@ -463,7 +465,7 @@ contract LaunchRouterFlowsTest is EveUSDCRouterFixture {
         vm.stopPrank();
 
         vm.startPrank(maker);
-        eveUSDC.approve(address(diamond), type(uint256).max);
+        routerCollateral.approve(address(diamond), type(uint256).max);
         uint256 curveId = ICurveLifecycleFacet(address(diamond))
             .postBidCurve(
                 marketId,
@@ -490,7 +492,7 @@ contract LaunchRouterFlowsTest is EveUSDCRouterFixture {
         });
 
         vm.prank(taker);
-        ITradeRouter.SellBestResult memory result = tradeRouter.sellWithEveUSDC(sellParams);
+        ITradeRouter.SellBestResult memory result = tradeRouter.sellWithCollateral(sellParams);
 
         assertEq(result.sharesSold, 500_000);
         assertEq(result.collateralOut, 250_000);
@@ -533,18 +535,18 @@ contract LaunchRouterFlowsTest is EveUSDCRouterFixture {
     }
 
     function _tradeRouterSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
-        selectors[0] = ITradeRouter.buyWithEveUSDC.selector;
-        selectors[1] = ITradeRouter.buyWithUSDC.selector;
-        selectors[2] = ITradeRouter.splitWithUSDC.selector;
-        selectors[3] = ITradeRouter.buyWithCollateral.selector;
+        selectors = new bytes4[](1);
+        selectors[0] = ITradeRouter.buyWithCollateral.selector;
     }
 
     function _tradeRouterSellSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
-        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[1] = ITradeRouter.sellWithUSDC.selector;
-        selectors[2] = ITradeRouter.previewSellBest.selector;
-        selectors[3] = ITradeRouter.sellWithCollateral.selector;
+        selectors = new bytes4[](1);
+        selectors[0] = ITradeRouter.sellWithCollateral.selector;
+    }
+
+    function _tradeRouterPreviewSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = ITradeRouter.previewSellBest.selector;
+        selectors[1] = ITradeRouter.executeExactRouterTransfer.selector;
     }
 }

@@ -13,22 +13,23 @@ contract MLOPredictionCurveFacet {
         LibReentrancy.exit();
     }
 
-    function createMLOAskCurve(MLOPredictionTypes.CreateMLOAskCurveParams calldata params)
+    function createMLOCurve(MLOPredictionTypes.CreateMLOCurveParams calldata params)
         external
         nonReentrant
         returns (uint256 curveId)
     {
-        curveId = LibMLOPredictionAdapter.createAskCurve(LibEveMarket.store(), params);
+        curveId = LibMLOPredictionAdapter.createCurve(LibEveMarket.store(), params);
     }
 
-    function updateMLOAskCurve(MLOPredictionTypes.UpdateMLOAskCurveParams calldata params)
+    function cancelMLOCurve(uint256 curveId) external nonReentrant {
+        LibMLOPredictionAdapter.cancelCurve(LibEveMarket.store(), curveId);
+    }
+
+    function rebalanceMLOAskCurve(uint256 curveId)
         external
-        returns (uint32 curveGeneration)
+        nonReentrant
+        returns (uint256 inventoryReserved, uint256 seniorReserved)
     {
-        curveGeneration = LibMLOPredictionAdapter.updateAskCurve(LibEveMarket.store(), params);
-    }
-
-    function cancelMLOAskCurve(uint256 curveId) external {
-        LibMLOPredictionAdapter.cancelAskCurve(LibEveMarket.store(), curveId);
+        return LibMLOPredictionAdapter.rebalanceAskCurve(LibEveMarket.store(), curveId);
     }
 }

@@ -14,10 +14,9 @@ import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibCurvePacking} from "../../src/libraries/LibCurvePacking.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibMarketCreation} from "../../src/libraries/LibMarketCreation.sol";
-import {EveETH} from "../../src/tokens/EveETH.sol";
 
 import {MarketFactoryFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
-import {CanonicalWETH9} from "../../src/mocks/CanonicalWETH9.sol";
+import {MockEveToken} from "../helpers/MockEveToken.sol";
 import {MockUSDC} from "../helpers/MockUSDC.sol";
 import {PlainGnosisCTFMock} from "../helpers/PlainGnosisCTFMock.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
@@ -25,8 +24,7 @@ import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 contract MarketFactoryTest is MarketFactoryFixture {
     struct ProfileMarketFixture {
         uint8 profileId;
-        address weth;
-        address eveETH;
+        address profileCollateral;
         uint64 tradingStartTime;
         uint64 expiryTime;
         uint128 payoutUnit;
@@ -112,7 +110,7 @@ contract MarketFactoryTest is MarketFactoryFixture {
     function test_CreateMarketWithCollateralProfileStoresPayoutUnitAndUsesQuestionCondition() public {
         string memory question = "Will ETH-denominated markets launch?";
         string memory category = "crypto";
-        ProfileMarketFixture memory fixture = _prepareEveETHProfileMarket();
+        ProfileMarketFixture memory fixture = _prepareProfileCollateralMarket();
         ExpectedMarketData memory expected = _expectedProfileMarketData(question, category, fixture);
 
         _expectProfileMarketCreated(expected, question, fixture);
@@ -782,7 +780,7 @@ contract MarketFactoryTest is MarketFactoryFixture {
         assertEq(repeatedState, uint8(LibEveMarket.MarketState.Pending));
     }
 
-    function _prepareEveETHProfileMarket() internal returns (ProfileMarketFixture memory fixture) {
+    function _prepareProfileCollateralMarket() internal returns (ProfileMarketFixture memory fixture) {
         fixture.profileId = 1;
         fixture.tradingStartTime = uint64(block.timestamp);
         fixture.expiryTime = uint64(block.timestamp + 7 days);
@@ -790,24 +788,19 @@ contract MarketFactoryTest is MarketFactoryFixture {
         fixture.creationFee = 0.002 ether;
         fixture.initialVolume = fixture.payoutUnit * 2;
 
-        CanonicalWETH9 weth = new CanonicalWETH9();
-        EveETH eveETH = new EveETH(address(weth));
-        fixture.weth = address(weth);
-        fixture.eveETH = address(eveETH);
+        MockEveToken profileCollateral = new MockEveToken();
+        fixture.profileCollateral = address(profileCollateral);
 
         vm.prank(owner);
         OwnershipFacet(address(diamond))
             .setCollateralProfile(
-                fixture.profileId, fixture.eveETH, fixture.weth, fixture.payoutUnit, fixture.creationFee, true
+                fixture.profileId, fixture.profileCollateral, address(0), fixture.payoutUnit, fixture.creationFee, true
             );
 
         uint256 funded = uint256(fixture.creationFee) + fixture.initialVolume;
-        vm.deal(creator, 1 ether);
+        profileCollateral.mint(creator, funded);
         vm.startPrank(creator);
-        weth.deposit{value: 1 ether}();
-        weth.approve(fixture.eveETH, funded);
-        eveETH.wrap(funded, creator);
-        eveETH.approve(address(diamond), funded);
+        profileCollateral.approve(address(diamond), funded);
         eveToken.approve(address(diamond), StateProbeFacet(address(diamond)).marketCreationBond());
         vm.stopPrank();
     }
@@ -848,7 +841,7 @@ contract MarketFactoryTest is MarketFactoryFixture {
             category,
             fixture.tradingStartTime,
             fixture.expiryTime,
-            fixture.eveETH,
+            fixture.profileCollateral,
             fixture.profileId,
             fixture.payoutUnit,
             LibEveMarket.MarketType.CLOB,
@@ -858,7 +851,8 @@ contract MarketFactoryTest is MarketFactoryFixture {
             LibMarketCreation.questionIdFor(question, category, fixture.tradingStartTime, fixture.expiryTime);
         expected.resolutionId = expected.questionId;
         expected.conditionId = conditionalTokens.getConditionId(address(diamond), expected.questionId, 2);
-        (expected.yesPositionId, expected.noPositionId) = _positionIdsFor(fixture.eveETH, expected.conditionId);
+        (expected.yesPositionId, expected.noPositionId) =
+            _positionIdsFor(fixture.profileCollateral, expected.conditionId);
     }
 
     function _expectProfileMarketCreated(
@@ -873,7 +867,7 @@ contract MarketFactoryTest is MarketFactoryFixture {
             creator,
             uint8(LibEveMarket.PositionTokenType.CTF),
             address(conditionalTokens),
-            fixture.eveETH,
+            fixture.profileCollateral,
             expected.resolutionId,
             expected.conditionId,
             expected.yesPositionId,
@@ -883,7 +877,7 @@ contract MarketFactoryTest is MarketFactoryFixture {
         );
         vm.expectEmit(true, true, true, true, address(diamond));
         emit Events.MarketCollateralProfile(
-            expected.marketId, fixture.profileId, fixture.eveETH, fixture.payoutUnit, fixture.creationFee
+            expected.marketId, fixture.profileId, fixture.profileCollateral, fixture.payoutUnit, fixture.creationFee
         );
     }
 
@@ -895,19 +889,19 @@ contract MarketFactoryTest is MarketFactoryFixture {
         _assertPreparedCondition(expected.questionId, expected.conditionId);
         assertEq(conditionalTokens.balanceOf(address(diamond), expected.yesPositionId), fixture.initialVolume);
         assertEq(conditionalTokens.balanceOf(creator, expected.noPositionId), fixture.initialVolume);
-        assertEq(conditionalTokens.collateralBalance(IERC20(fixture.eveETH)), fixture.initialVolume);
-        assertEq(EveETH(fixture.eveETH).balanceOf(creator), 0);
-        assertEq(EveETH(fixture.eveETH).balanceOf(treasury), fixture.creationFee);
+        assertEq(conditionalTokens.collateralBalance(IERC20(fixture.profileCollateral)), fixture.initialVolume);
+        assertEq(IERC20(fixture.profileCollateral).balanceOf(creator), 0);
+        assertEq(IERC20(fixture.profileCollateral).balanceOf(treasury), fixture.creationFee);
 
         MarketFactoryTypes.MarketInfo memory info = IMarketFactoryFacet(address(diamond)).getMarketInfo(marketId);
-        assertEq(info.collateralToken, fixture.eveETH);
+        assertEq(info.collateralToken, fixture.profileCollateral);
         assertEq(info.collateralProfileId, fixture.profileId);
         assertEq(info.payoutUnit, fixture.payoutUnit);
         assertEq(info.creationFeePaid, fixture.creationFee);
 
         MarketFactoryTypes.MarketMetadataView memory metadata =
             IMarketFactoryFacet(address(diamond)).getMarketMetadata(marketId);
-        assertEq(metadata.collateralToken, fixture.eveETH);
+        assertEq(metadata.collateralToken, fixture.profileCollateral);
         assertEq(metadata.resolutionId, expected.questionId);
         assertEq(metadata.conditionId, expected.conditionId);
         assertEq(metadata.collateralProfileId, fixture.profileId);
@@ -926,7 +920,7 @@ contract MarketFactoryTest is MarketFactoryFixture {
                 category,
                 fixture.tradingStartTime,
                 fixture.expiryTime,
-                fixture.eveETH,
+                fixture.profileCollateral,
                 fixture.profileId,
                 fixture.payoutUnit,
                 LibEveMarket.MarketType.CLOB,
@@ -937,7 +931,7 @@ contract MarketFactoryTest is MarketFactoryFixture {
             category,
             fixture.tradingStartTime,
             fixture.expiryTime,
-            fixture.eveETH,
+            fixture.profileCollateral,
             fixture.profileId,
             fixture.payoutUnit * 2,
             LibEveMarket.MarketType.CLOB,
@@ -1129,36 +1123,57 @@ contract MarketFactoryTest is MarketFactoryFixture {
         string memory title,
         bytes32[] memory marketIds
     ) internal view {
-        bytes32 groupCreatedSig = keccak256("MarketGroupCreated(bytes32,address,bytes32,string,uint256)");
-        bytes32 groupMarketAddedSig = keccak256("MarketGroupMarketAdded(bytes32,bytes32,uint256)");
-        bytes32 titleHash = keccak256(bytes(title));
-        uint256 addedCount;
-        bool createdFound;
-
-        for (uint256 index = 0; index < entries.length; ++index) {
-            Vm.Log memory entry = entries[index];
-            if (entry.emitter != address(diamond)) {
-                continue;
-            }
-            if (entry.topics[0] == groupCreatedSig) {
-                (string memory emittedTitle, uint256 marketCount) = abi.decode(entry.data, (string, uint256));
-                assertEq(entry.topics[1], groupId);
-                assertEq(entry.topics[2], bytes32(uint256(uint160(creator))));
-                assertEq(entry.topics[3], titleHash);
-                assertEq(emittedTitle, title);
-                assertEq(marketCount, marketIds.length);
-                createdFound = true;
-            } else if (entry.topics[0] == groupMarketAddedSig) {
-                uint256 legIndex = uint256(entry.topics[3]);
-                assertLt(legIndex, marketIds.length);
-                assertEq(entry.topics[1], groupId);
-                assertEq(entry.topics[2], marketIds[legIndex]);
-                addedCount += 1;
-            }
-        }
+        bool createdFound = _assertMarketGroupCreatedLog(entries, groupId, title, marketIds.length);
+        uint256 addedCount = _assertMarketGroupAddedLogs(entries, groupId, marketIds);
 
         assertTrue(createdFound);
         assertEq(addedCount, marketIds.length);
+    }
+
+    function _assertMarketGroupCreatedLog(
+        Vm.Log[] memory entries,
+        bytes32 groupId,
+        string memory title,
+        uint256 expectedMarketCount
+    ) internal view returns (bool createdFound) {
+        bytes32 groupCreatedSig = keccak256("MarketGroupCreated(bytes32,address,bytes32,string,uint256)");
+        bytes32 titleHash = keccak256(bytes(title));
+
+        for (uint256 index = 0; index < entries.length; ++index) {
+            Vm.Log memory entry = entries[index];
+            if (entry.emitter != address(diamond) || entry.topics[0] != groupCreatedSig) {
+                continue;
+            }
+
+            (string memory emittedTitle, uint256 marketCount) = abi.decode(entry.data, (string, uint256));
+            assertEq(entry.topics[1], groupId);
+            assertEq(entry.topics[2], bytes32(uint256(uint160(creator))));
+            assertEq(entry.topics[3], titleHash);
+            assertEq(emittedTitle, title);
+            assertEq(marketCount, expectedMarketCount);
+            createdFound = true;
+        }
+    }
+
+    function _assertMarketGroupAddedLogs(Vm.Log[] memory entries, bytes32 groupId, bytes32[] memory marketIds)
+        internal
+        view
+        returns (uint256 addedCount)
+    {
+        bytes32 groupMarketAddedSig = keccak256("MarketGroupMarketAdded(bytes32,bytes32,uint256)");
+
+        for (uint256 index = 0; index < entries.length; ++index) {
+            Vm.Log memory entry = entries[index];
+            if (entry.emitter != address(diamond) || entry.topics[0] != groupMarketAddedSig) {
+                continue;
+            }
+
+            uint256 legIndex = uint256(entry.topics[3]);
+            assertLt(legIndex, marketIds.length);
+            assertEq(entry.topics[1], groupId);
+            assertEq(entry.topics[2], marketIds[legIndex]);
+            addedCount += 1;
+        }
     }
 
     function _decodeJsonUri(string memory uri) internal pure returns (string memory) {

@@ -2,29 +2,35 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "../../lib/forge-std/src/Test.sol";
+import {ERC1155Holder} from "../../lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 
 import {MultiOutcomeOrderbookFacet} from "../../src/facets/MultiOutcomeOrderbookFacet.sol";
 import {MultiOutcomeOrderbookViewFacet} from "../../src/facets/MultiOutcomeOrderbookViewFacet.sol";
 import {IMultiOutcomeOrderbookFacet} from "../../src/interfaces/IMultiOutcomeOrderbookFacet.sol";
+import {IEvesNegRiskAdapter} from "../../src/interfaces/IEvesNegRiskAdapter.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {Events} from "../../src/libraries/Events.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibMarketCreation} from "../../src/libraries/LibMarketCreation.sol";
 import {LibMultiOutcome} from "../../src/libraries/LibMultiOutcome.sol";
-import {EvesPositionManager} from "../../src/tokens/EvesPositionManager.sol";
+import {EvesNegRiskAdapter} from "../../src/EvesNegRiskAdapter.sol";
 
 import {MockEveToken} from "../helpers/MockEveToken.sol";
 import {MockUSDC} from "../helpers/MockUSDC.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
+import {PlainGnosisCTFMock} from "../helpers/PlainGnosisCTFMock.sol";
 
-contract MultiOutcomeHarness is MultiOutcomeOrderbookFacet {
-    function configure(address collateralToken, address eveToken, address positionManager) external {
+contract MultiOutcomeHarness is MultiOutcomeOrderbookFacet, ERC1155Holder {
+    function configure(address collateralToken, address eveToken, address conditionalTokens, address negRiskAdapter)
+        external
+    {
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
         config.collateralToken = collateralToken;
         config.eveToken = eveToken;
         config.bondToken = eveToken;
         config.eveTreasury = address(0xBEEF);
-        config.evesPositionManager = positionManager;
+        config.defaultConditionalTokens = conditionalTokens;
+        LibEveMarket.store().negRiskAdapter = negRiskAdapter;
         config.permissionlessCreationEnabled = true;
         config.minMarketDuration = 1;
         config.maxMarketDuration = 365 days;
@@ -35,7 +41,7 @@ contract MultiOutcomeHarness is MultiOutcomeOrderbookFacet {
         config.orderbookFeeConfig.makerFeeBps = 4_000;
         config.orderbookFeeConfig.creatorFeeBps = 500;
         config.orderbookFeeConfig.protocolFeeBps = 3_000;
-        config.orderbookFeeConfig.vaultFeeBps = 2_500;
+        config.orderbookFeeConfig.seniorPoolFeeBps = 2_500;
     }
 
     function configureCollateralProfile(
@@ -130,6 +136,22 @@ contract MultiOutcomeHarness is MultiOutcomeOrderbookFacet {
         positionId = state.multiOutcomePositionIds[marketId][outcome];
     }
 
+    function getOutcomeCTFPositions(bytes32 marketId, uint8 outcome)
+        external
+        view
+        returns (IMultiOutcomeOrderbookFacet.OutcomeCTFPositionView memory positions)
+    {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibEveMarket.MultiOutcomeMarket storage multi = LibMultiOutcome.requireMultiOutcome(state, marketId);
+        LibMultiOutcome.requireOutcome(multi, outcome);
+        positions = IMultiOutcomeOrderbookFacet.OutcomeCTFPositionView({
+            questionId: state.multiOutcomeQuestionIds[marketId][outcome],
+            conditionId: state.multiOutcomeConditionIds[marketId][outcome],
+            yesPositionId: state.multiOutcomePositionIds[marketId][outcome],
+            noPositionId: state.multiOutcomeNoPositionIds[marketId][outcome]
+        });
+    }
+
     function getMultiOutcomeBooks(bytes32 marketId) external view returns (bytes32[] memory bookIds) {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
         LibEveMarket.MultiOutcomeMarket storage multi = LibMultiOutcome.requireMultiOutcome(state, marketId);
@@ -156,6 +178,7 @@ contract MultiOutcomeHarness is MultiOutcomeOrderbookFacet {
         multi.invalid = outcome == LibMultiOutcome.OUTCOME_INVALID;
         multi.resolvedOutcome = outcome;
         multi.payoutDenominator = multi.invalid ? multi.outcomeCount : 1;
+        IEvesNegRiskAdapter(multi.adapter).resolveEvent(multi.conditionId, outcome);
 
         emit Events.MultiOutcomeResolved(marketId, outcome, multi.invalid, multi.payoutDenominator);
     }
@@ -165,45 +188,49 @@ contract MultiOutcomeOrderbookTest is Test {
     uint256 internal constant EIP170_MAX_CODE_SIZE = 24_576;
 
     MultiOutcomeHarness internal market;
-    EvesPositionManager internal positions;
+    PlainGnosisCTFMock internal positions;
+    EvesNegRiskAdapter internal adapter;
     MockUSDC internal collateral;
     MockEveToken internal eve;
-    MockEveToken internal eveETH;
+    MockEveToken internal profileCollateral;
 
     address internal creator = makeAddr("creator");
     address internal trader = makeAddr("trader");
     address internal treasury = address(0xBEEF);
 
-    uint8 internal constant EVE_ETH_PROFILE_ID = 1;
-    uint128 internal constant DEFAULT_EVEUSDC_PAYOUT_UNIT = 1 ether;
-    uint128 internal constant EVE_ETH_PAYOUT_UNIT = 0.0005 ether;
-    uint128 internal constant EVE_ETH_CREATION_FEE = 0.002 ether;
+    uint8 internal constant ALT_PROFILE_ID = 1;
+    uint128 internal constant DEFAULT_COLLATERAL_PAYOUT_UNIT = 1 ether;
+    uint128 internal constant ALT_PROFILE_PAYOUT_UNIT = 0.0005 ether;
+    uint128 internal constant ALT_PROFILE_CREATION_FEE = 0.002 ether;
     uint128 internal constant EVE_BOND = 10 ether;
 
     function setUp() public {
         market = new MultiOutcomeHarness();
-        positions = new EvesPositionManager(address(market), "");
+        positions = new PlainGnosisCTFMock();
         collateral = new MockUSDC();
         eve = new MockEveToken();
-        eveETH = new MockEveToken();
+        profileCollateral = new MockEveToken();
+        adapter = new EvesNegRiskAdapter(address(positions), address(collateral), address(market));
 
-        market.configure(address(collateral), address(eve), address(positions));
+        market.configure(address(collateral), address(eve), address(positions), address(adapter));
 
         collateral.mint(creator, 1_000_000e6);
         collateral.mint(trader, 1_000_000e6);
         eve.mint(creator, 1_000_000e18);
         eve.mint(trader, 1_000_000e18);
-        eveETH.mint(creator, 1_000_000e18);
-        eveETH.mint(trader, 1_000_000e18);
+        profileCollateral.mint(creator, 1_000_000e18);
+        profileCollateral.mint(trader, 1_000_000e18);
 
         vm.prank(creator);
         collateral.approve(address(market), type(uint256).max);
         vm.prank(trader);
         collateral.approve(address(market), type(uint256).max);
-        vm.prank(creator);
-        eveETH.approve(address(market), type(uint256).max);
         vm.prank(trader);
-        eveETH.approve(address(market), type(uint256).max);
+        positions.setApprovalForAll(address(market), true);
+        vm.prank(creator);
+        profileCollateral.approve(address(market), type(uint256).max);
+        vm.prank(trader);
+        profileCollateral.approve(address(market), type(uint256).max);
         vm.prank(creator);
         eve.approve(address(market), type(uint256).max);
     }
@@ -216,9 +243,9 @@ contract MultiOutcomeOrderbookTest is Test {
         assertEq(view_.positionToken, address(positions));
         assertEq(view_.collateralToken, address(collateral));
         assertEq(view_.marketType, uint8(LibEveMarket.MarketType.MULTI_OUTCOME_ORDERBOOK));
-        assertEq(view_.positionTokenType, uint8(LibEveMarket.PositionTokenType.EVES_POSITION));
+        assertEq(view_.positionTokenType, uint8(LibEveMarket.PositionTokenType.CTF));
         assertEq(view_.collateralProfileId, 0);
-        assertEq(view_.payoutUnit, DEFAULT_EVEUSDC_PAYOUT_UNIT);
+        assertEq(view_.payoutUnit, DEFAULT_COLLATERAL_PAYOUT_UNIT);
         assertFalse(view_.resolved);
 
         string[] memory outcomes = market.getMultiOutcomeOutcomes(marketId);
@@ -227,8 +254,12 @@ contract MultiOutcomeOrderbookTest is Test {
         assertEq(outcomes[3], "D");
 
         for (uint8 outcome; outcome < 4; ++outcome) {
-            uint256 expectedPositionId = LibMultiOutcome.positionIdFor(view_.conditionId, outcome);
+            uint256 expectedPositionId = adapter.positionIdFor(view_.conditionId, outcome, true);
             assertEq(market.getOutcomePositionId(marketId, outcome), expectedPositionId);
+            IMultiOutcomeOrderbookFacet.OutcomeCTFPositionView memory ctfPosition =
+                market.getOutcomeCTFPositions(marketId, outcome);
+            assertEq(ctfPosition.yesPositionId, expectedPositionId);
+            assertEq(ctfPosition.noPositionId, adapter.positionIdFor(view_.conditionId, outcome, false));
         }
 
         bytes32[] memory bookIds = market.getMultiOutcomeBooks(marketId);
@@ -241,30 +272,22 @@ contract MultiOutcomeOrderbookTest is Test {
         assertLe(address(new MultiOutcomeOrderbookViewFacet()).code.length, EIP170_MAX_CODE_SIZE);
     }
 
-    function test_ProfileCreationUsesEveETHAndStoresMetadata() public {
-        _configureEveETHProfile(true);
+    function test_RevertWhen_ProfileUsesCollateralOutsideConfiguredNegRiskAdapter() public {
+        _configureProfileCollateralProfile(true);
         market.configureCreationCosts(0, EVE_BOND);
 
         string[] memory outcomes = _outcomes("A", "B", "C", "D");
-        bytes32 outcomesHash = LibMultiOutcome.outcomesHash(outcomes);
         uint64 tradingStartTime = uint64(block.timestamp);
         uint64 expiryTime = uint64(block.timestamp + 1 days);
-        bytes32 expectedMarketId = LibMarketCreation.multiOutcomeMarketIdFor(
-            "Who wins?",
-            "Politics",
-            tradingStartTime,
-            expiryTime,
-            address(eveETH),
-            EVE_ETH_PROFILE_ID,
-            EVE_ETH_PAYOUT_UNIT,
-            uint8(outcomes.length),
-            outcomesHash,
-            LibEveMarket.PositionTokenType.EVES_POSITION
-        );
 
         vm.prank(creator);
-        bytes32 marketId = market.createMultiOutcomeMarketWithCollateralProfile(
-            EVE_ETH_PROFILE_ID,
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.UnsupportedCollateralToken.selector, address(collateral), address(profileCollateral)
+            )
+        );
+        market.createMultiOutcomeMarketWithCollateralProfile(
+            ALT_PROFILE_ID,
             IMultiOutcomeOrderbookFacet.CreateMultiOutcomeMarketParams({
                 question: "Who wins?",
                 category: "Politics",
@@ -277,86 +300,48 @@ contract MultiOutcomeOrderbookTest is Test {
                 outcomeDisplay: new IMultiOutcomeOrderbookFacet.OutcomeDisplayInput[](0)
             })
         );
-
-        assertEq(marketId, expectedMarketId);
-        assertEq(eveETH.balanceOf(treasury), EVE_ETH_CREATION_FEE);
-        assertEq(eve.balanceOf(address(market)), EVE_BOND);
-
-        IMultiOutcomeOrderbookFacet.MultiOutcomeMarketView memory view_ = market.getMultiOutcomeMarket(marketId);
-        assertEq(view_.collateralToken, address(eveETH));
-        assertEq(view_.collateralProfileId, EVE_ETH_PROFILE_ID);
-        assertEq(view_.payoutUnit, EVE_ETH_PAYOUT_UNIT);
-        assertEq(view_.marketType, uint8(LibEveMarket.MarketType.MULTI_OUTCOME_ORDERBOOK));
-        assertEq(view_.positionTokenType, uint8(LibEveMarket.PositionTokenType.EVES_POSITION));
-        assertEq(view_.outcomeCount, 4);
-        assertEq(view_.outcomesHash, outcomesHash);
-
-        (
-            address metadataCollateralToken,
-            uint8 metadataProfileId,
-            uint128 metadataPayoutUnit,
-            uint8 metadataMarketType,
-            uint8 metadataPositionTokenType
-        ) = market.metadataFor(marketId);
-        assertEq(metadataCollateralToken, address(eveETH));
-        assertEq(metadataProfileId, EVE_ETH_PROFILE_ID);
-        assertEq(metadataPayoutUnit, EVE_ETH_PAYOUT_UNIT);
-        assertEq(metadataMarketType, uint8(LibEveMarket.MarketType.MULTI_OUTCOME_ORDERBOOK));
-        assertEq(metadataPositionTokenType, uint8(LibEveMarket.PositionTokenType.EVES_POSITION));
-
-        (uint128 creationFeePaid, uint128 creationBond) = market.creationAmounts(marketId);
-        assertEq(creationFeePaid, EVE_ETH_CREATION_FEE);
-        assertEq(creationBond, EVE_BOND);
     }
 
-    function test_ProfileMarketIdSeparatesCollateralPayoutAndOutcomes() public {
-        _configureEveETHProfile(true);
-
+    function test_MarketIdSeparatesOutcomesUnderCtfTokenType() public {
         uint64 tradingStartTime = uint64(block.timestamp);
         uint64 expiryTime = uint64(block.timestamp + 1 days);
         string[] memory firstOutcomes = _outcomes("A", "B", "C", "D");
         string[] memory secondOutcomes = _outcomes("A", "B", "C", "E");
 
         vm.prank(creator);
-        bytes32 profileMarketId = market.createMultiOutcomeMarketWithCollateralProfile(
-            EVE_ETH_PROFILE_ID, _params("Who wins?", "Politics", "Source", tradingStartTime, expiryTime, firstOutcomes)
-        );
-
-        vm.prank(creator);
-        bytes32 defaultMarketId = market.createMultiOutcomeMarket(
+        bytes32 firstMarketId = market.createMultiOutcomeMarket(
             _params("Who wins?", "Politics", "Source", tradingStartTime, expiryTime, firstOutcomes)
         );
 
         vm.prank(creator);
-        bytes32 otherOutcomeMarketId = market.createMultiOutcomeMarketWithCollateralProfile(
-            EVE_ETH_PROFILE_ID, _params("Who wins?", "Politics", "Source", tradingStartTime, expiryTime, secondOutcomes)
+        bytes32 secondMarketId = market.createMultiOutcomeMarket(
+            _params("Who wins?", "Politics", "Source", tradingStartTime, expiryTime, secondOutcomes)
         );
 
-        bytes32 otherPayoutUnitId = LibMarketCreation.multiOutcomeMarketIdFor(
+        bytes32 expectedFirstMarketId = LibMarketCreation.multiOutcomeMarketIdFor(
             "Who wins?",
             "Politics",
             tradingStartTime,
             expiryTime,
-            address(eveETH),
-            EVE_ETH_PROFILE_ID,
-            EVE_ETH_PAYOUT_UNIT * 2,
+            address(collateral),
+            0,
+            DEFAULT_COLLATERAL_PAYOUT_UNIT,
             uint8(firstOutcomes.length),
             LibMultiOutcome.outcomesHash(firstOutcomes),
-            LibEveMarket.PositionTokenType.EVES_POSITION
+            LibEveMarket.PositionTokenType.CTF
         );
 
-        assertTrue(profileMarketId != defaultMarketId);
-        assertTrue(profileMarketId != otherOutcomeMarketId);
-        assertTrue(profileMarketId != otherPayoutUnitId);
+        assertEq(firstMarketId, expectedFirstMarketId);
+        assertTrue(firstMarketId != secondMarketId);
     }
 
     function test_RevertWhen_ProfileDisabled() public {
-        _configureEveETHProfile(false);
+        _configureProfileCollateralProfile(false);
 
         vm.prank(creator);
-        vm.expectRevert(abi.encodeWithSelector(Errors.CollateralProfileDisabled.selector, EVE_ETH_PROFILE_ID));
+        vm.expectRevert(abi.encodeWithSelector(Errors.CollateralProfileDisabled.selector, ALT_PROFILE_ID));
         market.createMultiOutcomeMarketWithCollateralProfile(
-            EVE_ETH_PROFILE_ID,
+            ALT_PROFILE_ID,
             _params(
                 "Who wins?",
                 "Politics",
@@ -480,9 +465,14 @@ contract MultiOutcomeOrderbookTest is Test {
         market.resolveFixture(marketId, outcome);
     }
 
-    function _configureEveETHProfile(bool enabled) internal {
+    function _configureProfileCollateralProfile(bool enabled) internal {
         market.configureCollateralProfile(
-            EVE_ETH_PROFILE_ID, address(eveETH), address(0), EVE_ETH_PAYOUT_UNIT, EVE_ETH_CREATION_FEE, enabled
+            ALT_PROFILE_ID,
+            address(profileCollateral),
+            address(0),
+            ALT_PROFILE_PAYOUT_UNIT,
+            ALT_PROFILE_CREATION_FEE,
+            enabled
         );
     }
 

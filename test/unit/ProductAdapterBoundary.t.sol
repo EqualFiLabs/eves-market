@@ -4,11 +4,14 @@ pragma solidity ^0.8.28;
 import {BookFacet} from "../../src/facets/BookFacet.sol";
 import {BookOrderFacet} from "../../src/facets/BookOrderFacet.sol";
 import {BookTradeFacet} from "../../src/facets/BookTradeFacet.sol";
+import {BookSellFacet} from "../../src/facets/BookSellFacet.sol";
 import {CurveCLOBFacet} from "../../src/facets/CurveCLOBFacet.sol";
 import {CurveInventoryFacet} from "../../src/facets/CurveInventoryFacet.sol";
 import {CurveLifecycleFacet} from "../../src/facets/CurveLifecycleFacet.sol";
 import {CurveViewFacet} from "../../src/facets/CurveViewFacet.sol";
-import {TradeRouterSellFacet} from "../../src/facets/TradeRouterSellFacet.sol";
+import {CollateralTradeRouterSellFacet} from "../../src/facets/CollateralTradeRouterSellFacet.sol";
+import {CollateralTradeRouterPreviewFacet} from "../../src/facets/CollateralTradeRouterPreviewFacet.sol";
+import {MLOPredictionAskRouteFacet} from "../../src/facets/MLOPredictionAskRouteFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
@@ -16,6 +19,8 @@ import {ICurveInventoryFacet} from "../../src/interfaces/ICurveInventoryFacet.so
 import {ICurveLifecycleFacet} from "../../src/interfaces/ICurveLifecycleFacet.sol";
 import {ICurveTradeFacet} from "../../src/interfaces/ICurveTradeFacet.sol";
 import {ICurveViewFacet} from "../../src/interfaces/ICurveViewFacet.sol";
+import {IMarginAccountFacet} from "../../src/interfaces/IMarginAccountFacet.sol";
+import {IMLOPredictionAdapterFacet} from "../../src/interfaces/IMLOPredictionAdapterFacet.sol";
 import {ITradeRouter} from "../../src/interfaces/ITradeRouter.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
@@ -47,11 +52,14 @@ contract ProductAdapterBoundaryTest is TestBase {
         diamond.registerFacet(address(new BookFacet()), _bookSelectors());
         diamond.registerFacet(address(new BookOrderFacet()), _bookOrderSelectors());
         diamond.registerFacet(address(new BookTradeFacet()), _bookTradeSelectors());
+        diamond.registerFacet(address(new BookSellFacet()), _bookSellSelectors());
         diamond.registerFacet(address(new CurveInventoryFacet()), _curveInventorySelectors());
         diamond.registerFacet(address(new CurveLifecycleFacet()), _curveLifecycleSelectors());
         diamond.registerFacet(address(new CurveCLOBFacet()), _curveTradeSelectors());
         diamond.registerFacet(address(new CurveViewFacet()), _curveViewSelectors());
-        diamond.registerFacet(address(new TradeRouterSellFacet()), _tradeRouterSellSelectors());
+        diamond.registerFacet(address(new CollateralTradeRouterSellFacet()), _tradeRouterSellSelectors());
+        diamond.registerFacet(address(new CollateralTradeRouterPreviewFacet()), _tradeRouterPreviewSelectors());
+        diamond.registerFacet(address(new MLOPredictionAskRouteFacet()), _mloAskRouteSelectors());
         diamond.registerFacet(address(new ProductAdapterHarnessFacet()), _adapterHarnessSelectors());
         vm.stopPrank();
     }
@@ -89,40 +97,26 @@ contract ProductAdapterBoundaryTest is TestBase {
         ProductAdapterHarnessFacet(address(diamond)).requireActiveAdapterCurveFixture(curveId);
     }
 
-    function test_AdapterBackedAskCannotUseEscrowBuySettlement() public {
+    function test_AdapterBackedAskRoutesAwayFromEscrowBuySettlement() public {
         bytes32 bookId = _createSpotBook();
         uint256 curveId = _postAdapterCurve(bookId, LibEveMarket.CurveSide.ASK, 100e6, 0, TWO_USDC);
         (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
 
         vm.startPrank(taker);
         usdc.approve(address(diamond), 200e6);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Errors.CurveBackingMismatch.selector,
-                curveId,
-                uint8(ProductAdapterTypes.CurveBackingKind.Escrow),
-                uint8(ProductAdapterTypes.CurveBackingKind.Adapter)
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IMLOPredictionAdapterFacet.MLOAdapterCurveNotFound.selector, curveId));
         ICurveTradeFacet(address(diamond)).fillCurve(curveId, 200e6, 100e6, generation, commitment);
         vm.stopPrank();
     }
 
-    function test_AdapterBackedBidCannotUseEscrowSellSettlement() public {
+    function test_AdapterBackedBidRoutesAwayFromEscrowSellSettlement() public {
         bytes32 bookId = _createSpotBook();
         uint256 curveId = _postAdapterCurve(bookId, LibEveMarket.CurveSide.BID, 100e6, 200e6, TWO_USDC);
         (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
 
         vm.startPrank(taker);
         spotToken.approve(address(diamond), 100e6);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Errors.CurveBackingMismatch.selector,
-                curveId,
-                uint8(ProductAdapterTypes.CurveBackingKind.Escrow),
-                uint8(ProductAdapterTypes.CurveBackingKind.Adapter)
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IMarginAccountFacet.MarginBucketNotFound.selector, BUCKET_ID));
         IBookTradeFacet(address(diamond))
             .sellBookBest(
                 CurveCLOBTypes.SellBookParams({
@@ -138,7 +132,7 @@ contract ProductAdapterBoundaryTest is TestBase {
         vm.stopPrank();
     }
 
-    function test_AdapterBackedComplementSellCannotUseEscrowSettlement() public {
+    function test_AdapterBackedComplementSellRoutesAwayFromEscrowSettlement() public {
         (bytes32 marketId,) = _createMarketFixture("Does adapter complement sell stay isolated?", _expiry(7 days));
         ITestStateFacet(address(diamond)).materializeMarketSideBookFixture(marketId, true);
         bytes32 yesBookId = LibCLOBBook.marketBookId(marketId, true);
@@ -151,14 +145,7 @@ contract ProductAdapterBoundaryTest is TestBase {
 
         vm.startPrank(taker);
         conditionalTokens.setApprovalForAll(address(diamond), true);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Errors.CurveBackingMismatch.selector,
-                curveId,
-                uint8(ProductAdapterTypes.CurveBackingKind.Escrow),
-                uint8(ProductAdapterTypes.CurveBackingKind.Adapter)
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IMarginAccountFacet.MarginBucketNotFound.selector, BUCKET_ID));
         ITradeRouter(address(diamond))
             .sellWithCollateral(
                 ITradeRouter.SellBestParams({
@@ -305,11 +292,15 @@ contract ProductAdapterBoundaryTest is TestBase {
     }
 
     function _bookTradeSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](2);
         selectors[0] = IBookTradeFacet.fillBookBest.selector;
         selectors[1] = IBookTradeFacet.fillBookBestFor.selector;
-        selectors[2] = IBookTradeFacet.sellBookBest.selector;
-        selectors[3] = IBookTradeFacet.sellBookBestFor.selector;
+    }
+
+    function _bookSellSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = IBookTradeFacet.sellBookBest.selector;
+        selectors[1] = IBookTradeFacet.sellBookBestFor.selector;
     }
 
     function _curveInventorySelectors() internal pure returns (bytes4[] memory selectors) {
@@ -319,24 +310,23 @@ contract ProductAdapterBoundaryTest is TestBase {
     }
 
     function _curveLifecycleSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](16);
         selectors[0] = ICurveLifecycleFacet.postCurve.selector;
         selectors[1] = ICurveLifecycleFacet.postBidCurve.selector;
-        selectors[2] = ICurveLifecycleFacet.postBidCurveWithUSDC.selector;
-        selectors[3] = ICurveLifecycleFacet.postCurvesBatch.selector;
-        selectors[4] = ICurveLifecycleFacet.postBidCurvesBatch.selector;
-        selectors[5] = ICurveLifecycleFacet.postCurvesMultiMarket.selector;
-        selectors[6] = ICurveLifecycleFacet.postBidCurvesMultiMarket.selector;
-        selectors[7] = ICurveLifecycleFacet.updateCurve.selector;
-        selectors[8] = ICurveLifecycleFacet.updateCurvesBatch.selector;
-        selectors[9] = ICurveLifecycleFacet.updateCurveFromNow.selector;
-        selectors[10] = ICurveLifecycleFacet.updateCurvesFromNowBatch.selector;
-        selectors[11] = ICurveLifecycleFacet.topUpCurvesBatch.selector;
-        selectors[12] = ICurveLifecycleFacet.topUpCurvesMultiMarket.selector;
-        selectors[13] = ICurveLifecycleFacet.splitAndTopUpCurvesBatch.selector;
-        selectors[14] = ICurveLifecycleFacet.splitAndTopUpCurvesMultiMarket.selector;
-        selectors[15] = ICurveLifecycleFacet.cancelCurve.selector;
-        selectors[16] = ICurveLifecycleFacet.cancelCurvesBatch.selector;
+        selectors[2] = ICurveLifecycleFacet.postCurvesBatch.selector;
+        selectors[3] = ICurveLifecycleFacet.postBidCurvesBatch.selector;
+        selectors[4] = ICurveLifecycleFacet.postCurvesMultiMarket.selector;
+        selectors[5] = ICurveLifecycleFacet.postBidCurvesMultiMarket.selector;
+        selectors[6] = ICurveLifecycleFacet.updateCurve.selector;
+        selectors[7] = ICurveLifecycleFacet.updateCurvesBatch.selector;
+        selectors[8] = ICurveLifecycleFacet.updateCurveFromNow.selector;
+        selectors[9] = ICurveLifecycleFacet.updateCurvesFromNowBatch.selector;
+        selectors[10] = ICurveLifecycleFacet.topUpCurvesBatch.selector;
+        selectors[11] = ICurveLifecycleFacet.topUpCurvesMultiMarket.selector;
+        selectors[12] = ICurveLifecycleFacet.splitAndTopUpCurvesBatch.selector;
+        selectors[13] = ICurveLifecycleFacet.splitAndTopUpCurvesMultiMarket.selector;
+        selectors[14] = ICurveLifecycleFacet.cancelCurve.selector;
+        selectors[15] = ICurveLifecycleFacet.cancelCurvesBatch.selector;
     }
 
     function _curveTradeSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -346,20 +336,27 @@ contract ProductAdapterBoundaryTest is TestBase {
     }
 
     function _curveViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](4);
         selectors[0] = ICurveViewFacet.getCurveCommitment.selector;
         selectors[1] = ICurveViewFacet.getCurveInfo.selector;
         selectors[2] = ICurveViewFacet.previewCurveQuote.selector;
         selectors[3] = ICurveViewFacet.previewBestExecution.selector;
-        selectors[4] = ICurveViewFacet.getMarketTopOfBook.selector;
     }
 
     function _tradeRouterSellSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
-        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[1] = ITradeRouter.sellWithUSDC.selector;
-        selectors[2] = ITradeRouter.previewSellBest.selector;
-        selectors[3] = ITradeRouter.sellWithCollateral.selector;
+        selectors = new bytes4[](1);
+        selectors[0] = ITradeRouter.sellWithCollateral.selector;
+    }
+
+    function _tradeRouterPreviewSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = ITradeRouter.previewSellBest.selector;
+        selectors[1] = ITradeRouter.executeExactRouterTransfer.selector;
+    }
+
+    function _mloAskRouteSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = IMLOPredictionAdapterFacet.executeMLOAskFromRoute.selector;
     }
 
     function _adapterHarnessSelectors() internal pure returns (bytes4[] memory selectors) {

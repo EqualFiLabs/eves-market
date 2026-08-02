@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 /// forge-config: default.fuzz.runs = 100
 /// forge-config: default.invariant.runs = 10
 /// forge-config: default.invariant.depth = 5
+/// forge-config: default.invariant.fail-on-revert = true
 
 import {StdInvariant} from "../../lib/forge-std/src/StdInvariant.sol";
 import {Test} from "../../lib/forge-std/src/Test.sol";
@@ -15,11 +16,21 @@ import {LibResolverJury} from "src/libraries/LibResolverJury.sol";
 import {BondManagerFacet} from "src/facets/BondManagerFacet.sol";
 import {ResolverJuryFacet} from "src/facets/ResolverJuryFacet.sol";
 import {ResolverRegistryFacet} from "src/facets/ResolverRegistryFacet.sol";
+import {ResolverRegistryReputationFacet} from "src/facets/ResolverRegistryReputationFacet.sol";
+import {ResolverRegistryRewardsFacet} from "src/facets/ResolverRegistryRewardsFacet.sol";
+import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
 import {MockUSDC} from "test/helpers/MockUSDC.sol";
 
-contract ResolverJuryFundHarness is ResolverJuryFacet, ResolverRegistryFacet, BondManagerFacet {
+contract ResolverJuryFundHarness is
+    ResolverJuryFacet,
+    ResolverRegistryFacet,
+    ResolverRegistryViewFacet,
+    ResolverRegistryRewardsFacet,
+    ResolverRegistryReputationFacet,
+    BondManagerFacet
+{
     function configure(address eveIdentity, address mintFeeToken, address eveToken, address bondToken) external {
         LibResolverJury.store().eveIdentity = eveIdentity;
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
@@ -123,6 +134,7 @@ contract ResolverJuryFundConservationHandler is Test {
     uint256 public bondRouted;
     uint256 public eveRewardEntered;
     uint256 public eveRewardRouted;
+    uint256 public completedLifecycles;
     uint256 internal nonce;
 
     function runAppealLifecycle(uint8 mode, bytes32 salt) external {
@@ -164,6 +176,7 @@ contract ResolverJuryFundConservationHandler is Test {
         assertEq(scenario.bondToken.balanceOf(address(scenario.jury)), 0);
         bondEntered += appealBond;
         bondRouted += routed;
+        ++completedLifecycles;
         ++nonce;
     }
 
@@ -175,9 +188,9 @@ contract ResolverJuryFundConservationHandler is Test {
         scenario.jury.seedSelectionReady(disputeId, keccak256(abi.encode(salt, "no-reveal")));
         scenario.jury.selectCommittee(disputeId);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         scenario.jury.closeCommit(disputeId);
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         scenario.jury.closeRevealAndTally(disputeId);
 
         uint256 rewardPool = scenario.jury.rewardPool(disputeId);
@@ -189,6 +202,7 @@ contract ResolverJuryFundConservationHandler is Test {
         assertEq(routed, rewardPool);
         eveRewardEntered += rewardPool;
         eveRewardRouted += routed;
+        ++completedLifecycles;
         ++nonce;
     }
 
@@ -251,13 +265,13 @@ contract ResolverJuryFundConservationHandler is Test {
             _commitVoteByIdentity(scenario, disputeId, members[index], outcome, salt);
         }
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         scenario.jury.closeCommit(disputeId);
         for (uint256 index; index < members.length; ++index) {
             _revealVoteByIdentity(scenario, disputeId, members[index], outcome, salt);
         }
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         scenario.jury.closeRevealAndTally(disputeId);
     }
 
@@ -315,5 +329,9 @@ contract ResolverJuryInvariantsTest is StdInvariant, Test {
     function invariant_FundConservationAcrossBondsSlashingAndRewards() public view {
         assertEq(handler.bondRouted(), handler.bondEntered());
         assertEq(handler.eveRewardRouted(), handler.eveRewardEntered());
+    }
+
+    function afterInvariant() public view {
+        assertGt(handler.completedLifecycles(), 0);
     }
 }

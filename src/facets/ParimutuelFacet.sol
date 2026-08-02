@@ -5,8 +5,6 @@ import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IER
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC1155} from "../../lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155.sol";
 
-import {ISeniorCapitalPool} from "../interfaces/ISeniorCapitalPool.sol";
-import {IEvRiskStakingRewards} from "../interfaces/IEvRiskStakingRewards.sol";
 import {IParimutuelFacet} from "../interfaces/IParimutuelFacet.sol";
 import {IParimutuelShareToken} from "../interfaces/IParimutuelShareToken.sol";
 import {Errors} from "../libraries/Errors.sol";
@@ -21,6 +19,7 @@ import {LibParimutuel} from "../libraries/LibParimutuel.sol";
 import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 import {LibResolverRewards} from "../libraries/LibResolverRewards.sol";
 import {LibSafeCast} from "../libraries/LibSafeCast.sol";
+import {LibSeniorCapital} from "../libraries/LibSeniorCapital.sol";
 import {MarketFactoryTypes} from "../types/MarketFactoryTypes.sol";
 
 contract ParimutuelFacet {
@@ -31,7 +30,7 @@ contract ParimutuelFacet {
     uint256 internal constant PROBABILITY_SCALE = 1e18;
     uint256 internal constant EPOCH_MULTIPLIER_SCALE = 10_000;
     uint256 internal constant EPOCH_COUNT = 8;
-    uint128 internal constant DEFAULT_EVEUSDC_PAYOUT_UNIT = 1 ether;
+    uint128 internal constant DEFAULT_COLLATERAL_PAYOUT_UNIT = 1 ether;
 
     modifier nonReentrant() {
         LibReentrancy.enter();
@@ -45,7 +44,6 @@ contract ParimutuelFacet {
         uint128 protocolFee;
         uint128 seniorPoolFee;
         uint128 resolverFee;
-        uint128 evRiskFee;
         uint128 netShares;
     }
 
@@ -174,7 +172,7 @@ contract ParimutuelFacet {
             ParimutuelCollateralContext({
                 profileId: 0,
                 collateralToken: config.collateralToken,
-                payoutUnit: DEFAULT_EVEUSDC_PAYOUT_UNIT,
+                payoutUnit: DEFAULT_COLLATERAL_PAYOUT_UNIT,
                 creationSeedAmount: config.parimutuelCreationSeedAmount,
                 emitProfileEvent: false
             })
@@ -382,12 +380,9 @@ contract ParimutuelFacet {
             collateralToken.safeTransfer(config.eveTreasury, fees.protocolFee);
         }
         if (fees.seniorPoolFee != 0) {
-            collateralToken.forceApprove(config.seniorCapitalPool, fees.seniorPoolFee);
-            ISeniorCapitalPool(config.seniorCapitalPool).notifyRevenue(market.collateralToken, fees.seniorPoolFee);
-        }
-        if (fees.evRiskFee != 0) {
-            collateralToken.forceApprove(config.evRiskStakingRewards, fees.evRiskFee);
-            IEvRiskStakingRewards(config.evRiskStakingRewards).notifyReward(market.collateralToken, fees.evRiskFee);
+            LibSeniorCapital.accrueFees(
+                LibSeniorCapital.s(), fees.seniorPoolFee, LibSeniorCapital.FEE_SOURCE_PARIMUTUEL, marketId
+            );
         }
         LibResolverRewards.accrueTradingFee(market.collateralToken, fees.resolverFee);
 
@@ -561,14 +556,12 @@ contract ParimutuelFacet {
     ) internal view returns (EntryFeeBreakdown memory fees) {
         LibEveMarket.ParimutuelFeeConfig storage feeConfig = market.parimutuelFeeConfig;
         if (
-            uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.resolverFeeBps
-                    + feeConfig.evRiskFeeBps
-                > FEE_BPS_DENOMINATOR
+            uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.resolverFeeBps > FEE_BPS_DENOMINATOR
         ) {
             revert Errors.FeeSplitExceedsDenominator(feeConfig.creatorFeeBps, feeConfig.protocolFeeBps);
         }
-        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.vaultFeeBps
-            + feeConfig.resolverFeeBps + feeConfig.evRiskFeeBps;
+        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.seniorPoolFeeBps
+            + feeConfig.resolverFeeBps;
         if (splitTotal != FEE_BPS_DENOMINATOR) {
             revert Errors.InvalidFeeSplit(splitTotal);
         }
@@ -581,9 +574,7 @@ contract ParimutuelFacet {
         fees.creatorFee = uint128((uint256(fees.totalFee) * feeConfig.creatorFeeBps) / FEE_BPS_DENOMINATOR);
         fees.protocolFee = uint128((uint256(fees.totalFee) * feeConfig.protocolFeeBps) / FEE_BPS_DENOMINATOR);
         fees.resolverFee = uint128((uint256(fees.totalFee) * feeConfig.resolverFeeBps) / FEE_BPS_DENOMINATOR);
-        fees.evRiskFee = uint128((uint256(fees.totalFee) * feeConfig.evRiskFeeBps) / FEE_BPS_DENOMINATOR);
-        uint128 rawSeniorPoolFee = fees.totalFee - fees.creatorFee - fees.protocolFee - fees.resolverFee
-            - fees.evRiskFee;
+        uint128 rawSeniorPoolFee = fees.totalFee - fees.creatorFee - fees.protocolFee - fees.resolverFee;
         fees.netShares = amount - fees.totalFee;
 
         if (!config.permissionlessCreationEnabled) {
@@ -592,14 +583,9 @@ contract ParimutuelFacet {
         }
 
         LibFeeRouting.SeniorPoolFeeRoute memory route =
-            LibFeeRouting.previewSeniorPoolFeeRoute(config.seniorCapitalPool, market.collateralToken, rawSeniorPoolFee);
+            LibFeeRouting.previewSeniorPoolFeeRoute(market.collateralToken, rawSeniorPoolFee);
         fees.seniorPoolFee = uint128(route.seniorPoolAmount);
         fees.protocolFee += uint128(route.treasuryAmount);
-
-        LibFeeRouting.EvRiskFeeRoute memory evRiskRoute =
-            LibFeeRouting.previewEvRiskFeeRoute(config.evRiskStakingRewards, fees.evRiskFee);
-        fees.evRiskFee = uint128(evRiskRoute.evRiskAmount);
-        fees.protocolFee += uint128(evRiskRoute.treasuryAmount);
     }
 
     function _remainingClaimableShares(LibParimutuel.Pool storage pool, bytes32 marketId)

@@ -223,9 +223,8 @@ library LibCLOBBook {
             makerFeeBps: feeConfig.makerFeeBps,
             creatorFeeBps: feeConfig.creatorFeeBps,
             protocolFeeBps: feeConfig.protocolFeeBps,
-            vaultFeeBps: feeConfig.vaultFeeBps,
-            resolverFeeBps: feeConfig.resolverFeeBps,
-            evRiskFeeBps: feeConfig.evRiskFeeBps
+            seniorPoolFeeBps: feeConfig.seniorPoolFeeBps,
+            resolverFeeBps: feeConfig.resolverFeeBps
         });
     }
 
@@ -239,9 +238,8 @@ library LibCLOBBook {
             makerFeeBps: feeConfig.makerFeeBps,
             creatorFeeBps: 0,
             protocolFeeBps: feeConfig.protocolFeeBps,
-            vaultFeeBps: feeConfig.vaultFeeBps,
-            resolverFeeBps: feeConfig.resolverFeeBps,
-            evRiskFeeBps: feeConfig.evRiskFeeBps
+            seniorPoolFeeBps: feeConfig.seniorPoolFeeBps,
+            resolverFeeBps: feeConfig.resolverFeeBps
         });
     }
 
@@ -269,9 +267,8 @@ library LibCLOBBook {
             makerFeeBps: book.feeConfig.makerFeeBps,
             creatorFeeBps: book.feeConfig.creatorFeeBps,
             protocolFeeBps: book.feeConfig.protocolFeeBps,
-            vaultFeeBps: book.feeConfig.vaultFeeBps,
+            seniorPoolFeeBps: book.feeConfig.seniorPoolFeeBps,
             resolverFeeBps: book.feeConfig.resolverFeeBps,
-            evRiskFeeBps: book.feeConfig.evRiskFeeBps,
             pricingMode: uint8(book.pricingMode),
             lifecycle: uint8(book.lifecycle),
             tickPresetId: book.tickPresetId,

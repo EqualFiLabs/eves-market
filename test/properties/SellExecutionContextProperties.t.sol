@@ -5,7 +5,7 @@ import {IERC1155} from "../../lib/openzeppelin-contracts/contracts/token/ERC1155
 
 import {BookFacet} from "../../src/facets/BookFacet.sol";
 import {BookOrderFacet} from "../../src/facets/BookOrderFacet.sol";
-import {BookTradeFacet} from "../../src/facets/BookTradeFacet.sol";
+import {BookSellFacet} from "../../src/facets/BookSellFacet.sol";
 import {CurveInventoryFacet} from "../../src/facets/CurveInventoryFacet.sol";
 import {CurveViewFacet} from "../../src/facets/CurveViewFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
@@ -50,7 +50,7 @@ contract SellExecutionContextProperties is TestBase {
         vm.startPrank(owner);
         diamond.registerFacet(address(new BookFacet()), _bookSelectors());
         diamond.registerFacet(address(new BookOrderFacet()), _bookOrderSelectors());
-        diamond.registerFacet(address(new BookTradeFacet()), _bookTradeSelectors());
+        diamond.registerFacet(address(new BookSellFacet()), _bookSellSelectors());
         diamond.registerFacet(address(new CurveInventoryFacet()), _curveInventorySelectors());
         diamond.registerFacet(address(new CurveViewFacet()), _curveViewSelectors());
         diamond.registerFacet(address(new SellExecutionContextHarnessFacet()), _contextHarnessSelectors());
@@ -203,7 +203,7 @@ contract SellExecutionContextProperties is TestBase {
         selectors[0] = IBookOrderFacet.postBookCurve.selector;
     }
 
-    function _bookTradeSelectors() internal pure returns (bytes4[] memory selectors) {
+    function _bookSellSelectors() internal pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](2);
         selectors[0] = IBookTradeFacet.sellBookBest.selector;
         selectors[1] = IBookTradeFacet.sellBookBestFor.selector;

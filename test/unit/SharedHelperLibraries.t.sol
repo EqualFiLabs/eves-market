@@ -10,35 +10,7 @@ import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibFeeRouting} from "../../src/libraries/LibFeeRouting.sol";
 import {LibMarketAccess} from "../../src/libraries/LibMarketAccess.sol";
 import {LibSafeCast} from "../../src/libraries/LibSafeCast.sol";
-
-contract SeniorCapitalPoolMock {
-    address internal poolAsset;
-    uint256 internal supply;
-    bool internal shouldRevert;
-
-    function setAsset(address asset_) external {
-        poolAsset = asset_;
-    }
-
-    function setTotalSupply(uint256 supply_) external {
-        supply = supply_;
-    }
-
-    function setShouldRevert(bool enabled) external {
-        shouldRevert = enabled;
-    }
-
-    function asset() external view returns (address asset_) {
-        if (shouldRevert) {
-            revert("pool unavailable");
-        }
-        asset_ = poolAsset;
-    }
-
-    function totalSupply() external view returns (uint256) {
-        return supply;
-    }
-}
+import {LibSeniorCapital} from "../../src/libraries/LibSeniorCapital.sol";
 
 contract SharedHelperHarness {
     function seedBook(bytes32 bookId, bytes32 marketId) external {
@@ -47,12 +19,9 @@ contract SharedHelperHarness {
         book.marketId = marketId;
     }
 
-    function seedMarket(
-        bytes32 marketId,
-        LibEveMarket.MarketState state_,
-        uint64 tradingStartTime,
-        uint64 expiryTime
-    ) external {
+    function seedMarket(bytes32 marketId, LibEveMarket.MarketState state_, uint64 tradingStartTime, uint64 expiryTime)
+        external
+    {
         LibEveMarket.Market storage market = LibEveMarket.store().markets[marketId];
         market.marketId = marketId;
         market.state = state_;
@@ -74,15 +43,7 @@ contract SharedHelperHarness {
 
     function storeIndexedCurve(bytes32 bookId, uint256 curveId, address maker, uint128 volume) external {
         LibCurveStorage.storeCurve(
-            LibEveMarket.store().curves[curveId],
-            bookId,
-            maker,
-            true,
-            LibEveMarket.CurveSide.ASK,
-            volume,
-            0,
-            1,
-            curveId
+            LibEveMarket.store().curves[curveId], bookId, maker, true, LibEveMarket.CurveSide.ASK, volume, 0, 1, curveId
         );
     }
 
@@ -141,11 +102,7 @@ contract SharedHelperHarness {
         profile.enabled = enabled;
     }
 
-    function requireEnabledProfile(uint8 profileId)
-        external
-        view
-        returns (address collateralToken, bool enabled)
-    {
+    function requireEnabledProfile(uint8 profileId) external view returns (address collateralToken, bool enabled) {
         LibEveMarket.CollateralProfile storage profile =
             LibCollateralProfile.requireEnabled(LibEveMarket.store(), profileId);
         collateralToken = profile.collateralToken;
@@ -156,21 +113,24 @@ contract SharedHelperHarness {
         return LibSafeCast.toUint128(value);
     }
 
-    function canRouteSeniorPoolFee(address seniorCapitalPool, address token) external view returns (bool) {
-        return LibFeeRouting.canRouteSeniorPoolFee(seniorCapitalPool, token);
+    function setSeniorRoutingState(address marginAsset, uint256 storedUnits) external {
+        LibEveMarket.store().marginAsset = marginAsset;
+        LibSeniorCapital.s().totalStored = storedUnits;
+    }
+
+    function canRouteSeniorPoolFee(address token) external view returns (bool) {
+        return LibFeeRouting.canRouteSeniorPoolFee(token);
     }
 }
 
 contract SharedHelperLibrariesTest is Test {
     SharedHelperHarness internal harness;
-    SeniorCapitalPoolMock internal seniorPool;
 
     address internal token = makeAddr("token");
 
     function setUp() public {
         vm.warp(30 days);
         harness = new SharedHelperHarness();
-        seniorPool = new SeniorCapitalPoolMock();
     }
 
     function test_SafeCastAllowsUint128Max() public view {
@@ -204,22 +164,18 @@ contract SharedHelperLibrariesTest is Test {
     }
 
     function test_FeeRoutingReturnsSeniorPoolAssetEligibility() public {
-        seniorPool.setAsset(token);
-        seniorPool.setTotalSupply(1);
+        harness.setSeniorRoutingState(token, 1);
 
-        assertTrue(harness.canRouteSeniorPoolFee(address(seniorPool), token));
-        assertFalse(harness.canRouteSeniorPoolFee(address(seniorPool), makeAddr("inactive")));
+        assertTrue(harness.canRouteSeniorPoolFee(token));
+        assertFalse(harness.canRouteSeniorPoolFee(makeAddr("inactive")));
     }
 
-    function test_FeeRoutingFailsClosedWhenSeniorPoolMissingEmptyOrReverts() public {
-        assertFalse(harness.canRouteSeniorPoolFee(address(0), token));
-
-        seniorPool.setAsset(token);
-        assertFalse(harness.canRouteSeniorPoolFee(address(seniorPool), token));
-
-        seniorPool.setTotalSupply(1);
-        seniorPool.setShouldRevert(true);
-        assertFalse(harness.canRouteSeniorPoolFee(address(seniorPool), token));
+    function test_FeeRoutingRequiresConfiguredAssetAndActivePrincipal() public {
+        assertFalse(harness.canRouteSeniorPoolFee(token));
+        harness.setSeniorRoutingState(token, 0);
+        assertFalse(harness.canRouteSeniorPoolFee(token));
+        harness.setSeniorRoutingState(address(0), 1);
+        assertFalse(harness.canRouteSeniorPoolFee(token));
     }
 
     function test_CurveStorageIndexedPathStoresAndIndexesCurve() public {
@@ -288,10 +244,7 @@ contract SharedHelperLibrariesTest is Test {
     function test_MarketAccessRequiresExistingMarket() public {
         bytes32 marketId = keccak256("existing-market");
         harness.seedMarket(
-            marketId,
-            LibEveMarket.MarketState.Trading,
-            uint64(block.timestamp),
-            uint64(block.timestamp + 1 days)
+            marketId, LibEveMarket.MarketState.Trading, uint64(block.timestamp), uint64(block.timestamp + 1 days)
         );
 
         assertEq(harness.requireExistingMarket(marketId), marketId);

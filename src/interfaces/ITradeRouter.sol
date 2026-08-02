@@ -10,6 +10,23 @@ interface ITradeRouter {
     error ResidualRouterBalance(address token, uint256 expectedBalance, uint256 actualBalance);
     error SellProceedsInsufficient(uint128 collateralValue, uint128 collateralUsed);
     error MarketCollateralMismatch(address marketCollateral, address routerCollateral);
+    error MaxUsdcExceeded(uint256 required, uint256 maximum);
+    error StaticsDollarRailUnavailable();
+    error ExactFillRequired(uint128 unfilledCollateral);
+    error NonExactRouterTransfer();
+    error RouterExecutionUnauthorized(address caller);
+
+    struct BuyWithUSDCParams {
+        CurveCLOBTypes.FillBestParams order;
+        uint256 maxUsdcIn;
+    }
+
+    struct PermitSignature {
+        uint256 deadline;
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
 
     struct SellBestParams {
         bytes32 marketId;
@@ -30,44 +47,14 @@ interface ITradeRouter {
         uint128 unfilledShares;
     }
 
-    event TradeExecutedWithEveUSDC(
+    event StaticsDollarMintedAndBoughtWithUSDC(
         address indexed buyer,
         bytes32 indexed marketId,
-        bool isYesSide,
-        uint128 collateralUsed,
+        uint256 staticsDollarMinted,
+        uint256 usdcPrincipal,
+        uint256 usdcFee,
         uint128 sharesOut,
-        uint128 feePaid,
         uint128 unfilledCollateral
-    );
-
-    event TradeExecutedWithUSDC(
-        address indexed buyer,
-        bytes32 indexed marketId,
-        bool isYesSide,
-        uint128 usdcSpent,
-        uint128 usdcRefunded,
-        uint128 sharesOut,
-        uint128 feePaid
-    );
-
-    event PositionSoldForEveUSDC(
-        address indexed seller,
-        bytes32 indexed marketId,
-        bool isYesSide,
-        uint128 sharesSold,
-        uint128 collateralOut,
-        uint128 feePaid,
-        uint128 unfilledShares
-    );
-
-    event PositionSoldForUSDC(
-        address indexed seller,
-        bytes32 indexed marketId,
-        bool isYesSide,
-        uint128 sharesSold,
-        uint128 usdcOut,
-        uint128 feePaid,
-        uint128 unfilledShares
     );
 
     event TradeExecutedWithCollateral(
@@ -92,19 +79,11 @@ interface ITradeRouter {
         uint128 unfilledShares
     );
 
-    event InventorySplitWithUSDC(
-        address indexed splitter,
-        bytes32 indexed marketId,
-        address indexed receiver,
-        uint128 usdcAmount,
-        uint128 sharesMinted
-    );
-
-    function buyWithEveUSDC(CurveCLOBTypes.FillBestParams calldata params)
+    function mintAndBuyWithUSDC(BuyWithUSDCParams calldata params)
         external
         returns (CurveCLOBTypes.FillBestResult memory result);
 
-    function buyWithUSDC(CurveCLOBTypes.FillBestParams calldata params)
+    function mintAndBuyWithUSDCPermit(BuyWithUSDCParams calldata params, PermitSignature calldata permitSignature)
         external
         returns (CurveCLOBTypes.FillBestResult memory result);
 
@@ -112,15 +91,18 @@ interface ITradeRouter {
         external
         returns (CurveCLOBTypes.FillBestResult memory result);
 
-    function sellWithEveUSDC(SellBestParams calldata params) external returns (SellBestResult memory result);
+    function buyWithCollateralWithPermit(
+        CurveCLOBTypes.FillBestParams calldata params,
+        PermitSignature calldata permitSignature
+    ) external returns (CurveCLOBTypes.FillBestResult memory result);
 
-    function sellWithUSDC(SellBestParams calldata params) external returns (SellBestResult memory result);
+    function buyWithCollateralExact(CurveCLOBTypes.FillBestParams calldata params)
+        external
+        returns (CurveCLOBTypes.FillBestResult memory result);
 
     function sellWithCollateral(SellBestParams calldata params) external returns (SellBestResult memory result);
 
     function previewSellBest(SellBestParams calldata params) external view returns (SellBestResult memory result);
 
-    function splitWithUSDC(bytes32 marketId, uint128 usdcAmount, address receiver)
-        external
-        returns (uint128 sharesMinted);
+    function executeExactRouterTransfer(address token, address receiver, uint256 amount) external;
 }

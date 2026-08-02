@@ -5,6 +5,9 @@ Resolver capacity is now modeled as an active epoch size, not a permanent pool c
 - Registered resolver identities are not capped by active epoch size.
 - Candidates opt into the next epoch by staking, keeping resolver role enabled, and submitting a randomness commitment.
 - Candidate reveals are mixed with epoch metadata, chain context, and delayed block entropy to produce the epoch seed.
+- Seed finalization is a permissionless two-call flow after the reveal deadline: the first call schedules a future reference block and a later call consumes its block hash.
+- If the scheduled hash leaves the EVM's 256-block lookup window before it is consumed, any caller can schedule a fresh reference block; a missed keeper call cannot brick the epoch.
+- The score-submission window starts only when the seed is actually finalized, so entropy rescheduling does not consume candidate scoring time.
 - Candidate score is `uint256(keccak256(abi.encode(epochSeed, epochId, identityId)))`.
 - Anyone may submit candidate scores after seed finalization.
 - The contract keeps only the lowest `activeEpochSize` submitted scores.
@@ -34,3 +37,7 @@ Active jurors can contribute randomness for the next epoch through
 `commitResolverEpochRandomness` and `revealResolverEpochRandomness`. Missed active-juror
 epoch randomness duties are slashable at seed finalization. Candidate entropy is also
 accepted so the current active set is not the only source of next-epoch randomness.
+
+Keepers should watch `ResolverEpochSeedReferenceBlockSet`, wait until a later block,
+then call `finalizeResolverEpochSeed` again. If the reference expires, the same call
+emits a replacement reference and the keeper repeats the process.

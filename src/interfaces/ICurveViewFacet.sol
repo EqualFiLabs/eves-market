@@ -16,15 +16,4 @@ interface ICurveViewFacet {
         external
         view
         returns (uint128 sharesOut, uint128 fee, uint128 averagePrice, uint128 unfilledCollateral);
-
-    function getMarketTopOfBook(bytes32 marketId)
-        external
-        view
-        returns (
-            uint128 bestYesPrice,
-            uint128 bestNoPrice,
-            uint128 midpointPrice,
-            uint128 lastTradePrice,
-            uint128 displayPrice
-        );
 }

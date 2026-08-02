@@ -1,7 +1,12 @@
 # eveUSD — Design Document
 ## Collateral-Backed Junior / Senior Stablecoin
 
-**Version:** 1.2
+> **Archived design:** This document describes the predecessor stablecoin and
+> junior-share model. It is not an active Eve deployment specification. The
+> canonical protocol is Statics, and Eve's current integration is defined in
+> [`docs/launch-collateral-direction-change.md`](./docs/launch-collateral-direction-change.md).
+
+**Version:** 1.3
 **Module:** eveUSD — Options-Style Senior/Junior Tranche
 
 ---
@@ -35,9 +40,9 @@
 **eveUSD** is a collateral-backed, options-style stablecoin. A user deposits volatile collateral (canonically WETH) into the `EveUSDPool` and receives two tokens minted against the same deposit:
 
 - **`eveUSD`** — an 18-decimal ERC-20 **senior** claim. It is the stable leg, minted at par against the deposit at the pool's configured collateral ratio.
-- **`EvRisk`** — an ERC-1155 **junior** risk share, with one token ID per *risk series*. It is the volatile leg that absorbs collateral price movement and carries recovery / recapitalization exposure.
+- **`EtRisk`** — an ERC-1155 **junior** risk share, with one token ID per *risk series*. It is the volatile leg that absorbs collateral price movement and carries recovery / recapitalization exposure.
 
-Every deposit mints an equal amount of `eveUSD` and `EvRisk` for the active series — a **pair**. Holding both legs of a pair is equivalent to holding the underlying collateral; recombining a full pair returns the proportional collateral. The split behaves like a collateralized option structure: senior holders get downside protection funded by junior holders, and when collateral falls through a recovery trigger the impaired series is frozen and rolled into a fresh series so new deposits are never diluted by legacy risk.
+Every deposit mints an equal amount of `eveUSD` and `EtRisk` for the active series — a **pair**. Holding both legs of a pair is equivalent to holding the underlying collateral; recombining a full pair returns the proportional collateral. The split behaves like a collateralized option structure: senior holders get downside protection funded by junior holders, and when collateral falls through a price band the impaired series is frozen and rolled into a fresh series so new deposits are never diluted by legacy risk.
 
 > This is a clean-break ERC-1155 series model: an impaired series can never claim junior equity created by a later series.
 
@@ -47,17 +52,18 @@ Every deposit mints an equal amount of `eveUSD` and `EvRisk` for the active seri
 
 | Feature | Description |
 |---|---|
-| **Two-token split** | Each deposit mints equal `eveUSD` (senior) + `EvRisk` (junior series share) |
+| **Two-token split** | Each deposit mints equal `eveUSD` (senior) + `EtRisk` (junior series share) |
 | **Senior par claim** | `eveUSD` is minted at par against the deposit at the pool collateral ratio |
-| **Junior volatility leg** | `EvRisk` absorbs collateral price movement and recovery exposure |
-| **Series model** | One `EvRisk` ID per risk series; impaired series roll cleanly into successors |
+| **Junior volatility leg** | `EtRisk` absorbs collateral price movement and recovery exposure |
+| **Series model** | One `EtRisk` ID per risk series; impaired series roll cleanly into successors |
 | **Collateral profiles** | Multiple collateral tokens (WETH and others ≤ 18 decimals) each with independent config |
 | **Overcollateralized** | Collateral ratio bounded to `10_001`–`30_000` bps (100.01%–300%) |
-| **Recovery trigger** | Price-driven trigger freezes an impaired series and recapitalizes into a new one |
+| **Price band** | Price-driven trigger freezes an impaired series and recapitalizes into a new one |
 | **Insurance reserve** | Optional per-profile reserve that backstops senior shortfalls at finalization |
 | **Oracle-priced** | Chainlink-style USD price adapter (`priceWad`) with staleness, bounds, sequencer checks |
-| **Standalone** | Operates outside the Eves Market Diamond; current direct integration is via `EvRiskStakingRewards` |
-| **Restricted mint/burn** | Only the pool can mint/burn `eveUSD` and `EvRisk` |
+| **Standalone** | Operates outside the Eves Market Diamond; current direct integration is via `EtRiskStakingRewards` |
+| **Timelocked pool authority** | One active pool can mint; retired pools keep burn-only authority for exits after pool replacement |
+| **Exit-only retirement** | A profile can block new deposits while preserving recombination exits |
 | **Lockable config** | Owner controls are bounded and can be permanently frozen via `lockConfig()` |
 
 ### System Participants
@@ -66,7 +72,7 @@ Every deposit mints an equal amount of `eveUSD` and `EvRisk` for the active seri
 |---|---|
 | **Depositor** | Deposits collateral, receives a senior + junior pair |
 | **Senior Holder** | Holds `eveUSD` — a par-denominated senior claim on pooled collateral |
-| **Junior Holder** | Holds `EvRisk` series shares — absorbs price volatility and recovery exposure |
+| **Junior Holder** | Holds `EtRisk` series shares — absorbs price volatility and recovery exposure |
 | **Recombiner** | Burns a full pair to withdraw proportional collateral |
 | **Recovery Caller** | Permissionlessly starts / cancels / finalizes recovery based on oracle price |
 | **Operator** | Sweeps straggler junior holders from a retired series into its successor |
@@ -80,20 +86,20 @@ Every deposit mints an equal amount of `eveUSD` and `EvRisk` for the active seri
 
 The pool follows a deposit → hold → redeem lifecycle, with a recovery lifecycle layered on top of the junior leg:
 
-1. **Deposit** — A depositor sends collateral to the pool. The pool reads the collateral's USD price, computes how many pairs the net collateral buys at the series' fixed per-pair cost, and mints equal `eveUSD` and `EvRisk` of the active series.
+1. **Deposit** — A depositor sends collateral to the pool. The pool reads the collateral's USD price, computes how many pairs the net collateral buys at the series' fixed per-pair cost, and mints equal `eveUSD` and `EtRisk` of the active series.
 
-2. **Hold** — `eveUSD` behaves as a stable senior claim; `EvRisk` behaves as the volatile junior leg. As the collateral price moves, the junior equity (collateral value minus senior liabilities) expands or contracts. The senior claim is insulated until junior equity is exhausted.
+2. **Hold** — `eveUSD` behaves as a stable senior claim; `EtRisk` behaves as the volatile junior leg. As the collateral price moves, the junior equity (collateral value minus senior liabilities) expands or contracts. The senior claim is insulated until junior equity is exhausted.
 
-3. **Recombine** — Any holder of a full pair (equal `eveUSD` + `EvRisk` of the same series) can burn both legs and withdraw the proportional collateral, less a recombination fee.
+3. **Recombine** — Any holder of a full pair (equal `eveUSD` + `EtRisk` of the same series) can burn both legs and withdraw the proportional collateral, less a recombination fee.
 
-4. **Recover** — If the collateral price falls to a series' recovery trigger, anyone can start recovery. After a timelock (if the price is still impaired) the series is finalized: it is frozen, an insurance draw covers any senior shortfall, and a fresh series is opened at the current price. Junior holders migrate their residual value into the new series.
+4. **Recover** — If the collateral price falls to a series' price band, anyone can start recovery. After a timelock (if the price is still impaired) the series is finalized: it is frozen, an insurance draw covers any senior shortfall, and a fresh series is opened at the current price. Junior holders migrate their residual value into the new series.
 
 ### Why Split Senior and Junior
 
 Splitting a volatile deposit into a stable senior claim and a volatile junior share lets each holder choose their exposure:
 
 - **Senior (`eveUSD`)** wants price stability. It is overcollateralized and protected by junior equity, so moderate collateral drawdowns do not impair it.
-- **Junior (`EvRisk`)** wants leveraged upside and accepts downside. It captures collateral appreciation above the senior claim and absorbs depreciation first.
+- **Junior (`EtRisk`)** wants leveraged upside and accepts downside. It captures collateral appreciation above the senior claim and absorbs depreciation first.
 
 The recovery mechanism ensures that when junior equity is nearly exhausted, the system recapitalizes cleanly rather than letting the senior claim silently break.
 
@@ -109,7 +115,7 @@ eve-predict/src/
 ├── EveRiskShares.sol              # Junior risk shares (ERC-1155 per series, pool-minted)
 ├── EveUSDPool.sol                 # Core accounting: profiles, deposit, recombine, recovery, insurance
 ├── EveUSDRouter.sol               # ETH/WETH-native deposit + recombine with slippage & residual guards
-├── EvRiskStakingRewards.sol       # Optional fee distributor for staked active-series EvRisk
+├── EtRiskStakingRewards.sol       # Optional fee distributor for staked active-series EtRisk
 ├── ChainlinkETHUSDOracle.sol      # USD price adapter (priceWad) with safety checks
 ├── interfaces/
 │   ├── IEveUSD.sol                # Senior token interface (restricted mint/burn, pool view)
@@ -123,11 +129,11 @@ eve-predict/src/
     └── MockETHUSDOracle.sol       # Settable price oracle for tests
 ```
 
-`EveUSD.pool()` and `EveRiskShares.pool()` must both point at the pool; the pool validates these links at construction (`InvalidTokenPool` otherwise), and the router re-validates the full wiring.
+`EveUSD.pool()` and `EveRiskShares.pool()` return the active minting pool. The pool validates these links at construction (`InvalidTokenPool` otherwise), and the router re-validates the full wiring.
 
 ### Standalone by Design
 
-eveUSD operates entirely outside the Eves Market Diamond. It has its own owner, its own storage, and its own token contracts. In the current codebase, prediction markets still default to `eveUSDC` as their trading collateral; the direct eveUSD-side integration that exists today is `EvRiskStakingRewards`, which can receive configured market fees and distribute them to staked active-series `EvRisk`. Nothing in the pool depends on Diamond internals.
+eveUSD operates entirely outside the Eves Market Diamond. It has its own owner, its own storage, and its own token contracts. In the current codebase, prediction markets still default to `eveUSDC` as their trading collateral; the direct eveUSD-side integration that exists today is `EtRiskStakingRewards`, which can receive configured market fees and distribute them to staked active-series `EtRisk`. Nothing in the pool depends on Diamond internals.
 
 Markets could also register `eveUSD` as a collateral profile through the broader market-collateral system, but that is optional configuration rather than the default deployment path.
 
@@ -141,42 +147,50 @@ Markets could also register `eveUSD` as a collateral profile through the broader
 
 ```solidity
 contract EveUSD is ERC20, IEveUSD {           // name "eveUSD", symbol "eveUSD"
-    address public immutable pool;
+    address public pool;
+    mapping(address => bool) public burnOnlyPool;
     function decimals() public pure returns (uint8);      // 18
-    function mint(address to, uint256 amount) external;   // pool-only, reverts NotMinter otherwise
-    function burn(address from, uint256 amount) external; // pool-only, reverts NotBurner otherwise
+    function queuePoolChange(address newPool) external;   // owner-only, timelocked
+    function executePoolChange() external;                // old pool becomes burn-only
+    function mint(address to, uint256 amount) external;   // active-pool-only
+    function burn(address from, uint256 amount) external; // active or burn-only pool
 }
 ```
 
 - 18 decimals.
-- `mint` / `burn` are restricted to the immutable `pool` address; there is no other supply control.
+- `mint` is restricted to the active `pool`; `burn` is allowed for the active pool and burn-only retired pools.
+- Pool replacement is owner-controlled through a visible delay; executing a replacement marks the previous pool burn-only so old series can wind down.
 - No blacklist, no pause, no arbitrary seizure, no owner withdrawal. Transfers are unrestricted ERC-20.
 
-### EvRisk (junior)
+### EtRisk (junior)
 
 `EveRiskShares` is an ERC-1155 where **each token ID is a risk series**:
 
 ```solidity
-contract EveRiskShares is ERC1155, IEveRiskShares {   // name "EvRisk", symbol "EVRISK"
-    address public immutable pool;
-    function mint(address to, uint256 id, uint256 amount) external;       // pool-only
-    function burn(address from, uint256 id, uint256 amount) external;     // pool-only
-    function batchMint(address to, uint256[] ids, uint256[] amounts) external;  // pool-only
-    function batchBurn(address from, uint256[] ids, uint256[] amounts) external; // pool-only
+contract EveRiskShares is ERC1155, IEveRiskShares {   // name "EtRisk", symbol "ETRISK"
+    address public pool;
+    mapping(address => bool) public burnOnlyPool;
+    function queuePoolChange(address newPool) external;   // owner-only, timelocked
+    function executePoolChange() external;                // old pool becomes burn-only
+    function mint(address to, uint256 id, uint256 amount) external;       // active-pool-only
+    function burn(address from, uint256 id, uint256 amount) external;     // active or burn-only pool
+    function batchMint(address to, uint256[] ids, uint256[] amounts) external;  // active-pool-only
+    function batchBurn(address from, uint256[] ids, uint256[] amounts) external; // active or burn-only pool
 }
 ```
 
-- `mint` / `burn` / `batchMint` / `batchBurn` are gated to the pool (`NotPool` otherwise).
+- `mint` / `batchMint` are gated to the active pool (`NotPool` otherwise).
+- `burn` / `batchBurn` are gated to the active pool or burn-only retired pools.
 - Transfers are unrestricted ERC-1155, so junior shares are freely tradeable per series.
 - The series ID returned by a deposit is the ERC-1155 token ID a junior holder owns.
 
-### EvRisk Staking Rewards
+### EtRisk Staking Rewards
 
-`EvRiskStakingRewards` is an optional companion distributor that bridges market-fee routing back to the active junior series:
+`EtRiskStakingRewards` is an optional companion distributor that bridges market-fee routing back to the active junior series:
 
 ```solidity
-contract EvRiskStakingRewards is ERC1155Holder {
-    address public immutable evRisk;
+contract EtRiskStakingRewards is ERC1155Holder {
+    address public immutable etRisk;
     address public immutable eveUSDPool;
     uint256 public immutable primaryProfileId;
 
@@ -188,7 +202,7 @@ contract EvRiskStakingRewards is ERC1155Holder {
 ```
 
 - Only the current active series for `primaryProfileId` can be newly staked.
-- Rewards are distributed pro rata by staked `EvRisk` balance, per token and per series.
+- Rewards are distributed pro rata by staked `EtRisk` balance, per token and per series.
 - If the current series is not actually `Active`, or no one is staked, incoming rewards are routed to treasury instead of accruing.
 - The distributor is separate from the pool's accounting; it reads the pool only to discover and validate the active series.
 
@@ -198,7 +212,7 @@ contract EvRiskStakingRewards is ERC1155Holder {
 
 The pool supports multiple collateral tokens through **collateral profiles**. Profile `1` (`firstCollateralProfileId`) is created in the constructor — canonically the WETH profile. The owner can register additional profiles for other collateral tokens (any ERC-20 with ≤ 18 decimals).
 
-Each profile carries its own oracle, collateral ratio, recovery trigger, fee rates, insurance parameters, active series pointer, and accounting totals.
+Each profile carries its own oracle, collateral ratio, price band, fee rates, insurance parameters, active series pointer, and accounting totals.
 
 ```solidity
 struct StableCollateralProfile {
@@ -206,12 +220,13 @@ struct StableCollateralProfile {
     address oracle;
     uint8   decimals;              // collateral token decimals, ≤ 18
     uint16  collateralRatioBps;    // next-series mint ratio, 10_001–30_000
-    uint16  recoveryTriggerBps;    // next-series trigger, 1–9_999 (fraction of series start price)
+    uint16  priceBandBps;          // symmetric price band, 10_001–30_000 and ≤ collateralRatioBps
     uint16  mintFeeBps;            // ≤ 1_000 (10%)
     uint16  recombinationFeeBps;   // ≤ 1_000 (10%)
     uint16  insuranceTargetBps;    // ≤ 10_000
     uint16  insuranceFeeBps;       // ≤ 10_000
     bool    enabled;
+    bool    exitOnly;              // blocks new deposits and successor creation
     uint256 activeSeriesId;
     uint256 accountedCollateral;   // pair collateral tracked for the profile (excludes insurance reserve)
     uint256 insuranceReserve;
@@ -223,10 +238,11 @@ Registration and configuration:
 
 ```solidity
 (uint256 profileId, uint256 seriesId) = pool.createCollateralProfile(
-    collateralToken, oracle, collateralRatioBps, recoveryTriggerBps,
+    collateralToken, oracle, collateralRatioBps, priceBandBps,
     mintFeeBps, recombinationFeeBps, enabled
 );
-pool.setCollateralProfileConfig(profileId, newCollateralRatioBps, newRecoveryTriggerBps, enabled);
+pool.setCollateralProfileConfig(profileId, newCollateralRatioBps, newPriceBandBps, enabled);
+pool.setCollateralProfileExitOnly(profileId, true);
 pool.setCollateralProfileFeeBps(profileId, newMintFeeBps, newRecombinationFeeBps);
 pool.setCollateralProfileInsuranceBps(profileId, newInsuranceTargetBps, newInsuranceFeeBps);
 pool.setCollateralProfileOracle(profileId, newOracle);
@@ -245,13 +261,13 @@ struct RiskSeries {
     uint256 profileId;
     address collateralToken;
     uint256 seniorOutstanding;        // eveUSD minted for this series
-    uint256 riskSharesOutstanding;    // EvRisk currently held by users
-    uint256 returnedSharesSupply;     // EvRisk returned by holders opting into migration
+    uint256 riskSharesOutstanding;    // EtRisk currently held by users
+    uint256 returnedSharesSupply;     // EtRisk returned by holders opting into migration
     uint256 accountedCollateral;      // pair collateral backing this series
     uint256 startPriceWad;            // oracle price at series creation
     uint256 collateralPerPairWad;     // fixed collateral cost of one pair
     uint256 collateralRatioBps;
-    uint256 recoveryTriggerBps;
+    uint256 priceBandBps;
     uint256 startedAt;
     uint256 recoveryStartedAt;
     uint256 recoveryEndsAt;
@@ -294,7 +310,7 @@ seniorLiabilities    = eveUSD.totalSupply()                  // global
 collateralRatioBps   = collateralValueWad × 10_000 / liabilities
 ```
 
-Because the per-pair cost is fixed for the life of a series, the *senior* claim stays at par while the *junior* residual (collateral value minus the senior reserve) breathes with the collateral price. When the price rises, junior equity grows; when it falls, junior equity shrinks first, protecting senior holders until the recovery trigger.
+Because the per-pair cost is fixed for the life of a series, the *senior* claim stays at par while the *junior* residual (collateral value minus the senior reserve) breathes with the collateral price. When the price rises, junior equity grows; when it falls, junior equity shrinks first, protecting senior holders until the price band.
 
 ---
 
@@ -307,10 +323,10 @@ Because the per-pair cost is fixed for the life of a series, the *senior* claim 
 
 Flow:
 
-1. Preview the deposit (`previewDeposit`) to compute fee, insurance contribution, pairs minted, and the post-deposit collateral ratio. The active series must be `Active` and the price must be above the recovery trigger (`RecoveryRequired` otherwise).
+1. Preview the deposit (`previewDeposit`) to compute fee, insurance contribution, pairs minted, and the post-deposit collateral ratio. The active series must be `Active` and the price must be above the price band (`RecoveryRequired` otherwise).
 2. Pull `collateralAmount` exactly (balance-delta checked; `InvalidCollateralAmount` on mismatch — safe against fee-on-transfer surprises).
 3. Deduct the mint fee (sent to `feeRecipient`) and any insurance contribution.
-4. Mint equal `eveUSD` to `eveUSDReceiver` and `EvRisk(seriesId)` to `shareReceiver`.
+4. Mint equal `eveUSD` to `eveUSDReceiver` and `EtRisk(seriesId)` to `shareReceiver`.
 
 Senior and junior receivers can differ, so a depositor can route the stable leg and the volatile leg to different addresses in one call.
 
@@ -335,12 +351,13 @@ Because recombination is pro-rata on the series' collateral, it is the determini
 
 ## Recovery Lifecycle
 
-Recovery protects the senior claim when a series' collateral price falls to its trigger. The trigger price is `startPriceWad × recoveryTriggerBps / 10_000`.
+Recovery protects the senior claim when a series' collateral price falls through the lower edge of its configured band. The downside trigger is `startPriceWad × 10_000 / priceBandBps`; appreciation rollover opens a fresh active series when price reaches `startPriceWad × priceBandBps / 10_000`.
 
 ```
 Active
-  ├─ depositCollateral → mint eveUSD + EvRisk(seriesId)
+  ├─ depositCollateral → mint eveUSD + EtRisk(seriesId)
   ├─ recombine         → burn pair, return proportional collateral
+  ├─ setCollateralProfileExitOnly(true) → no new deposits, recombination still available
   └─ startRecovery (price ≤ trigger) → RecoveryPending
 
 RecoveryPending
@@ -357,7 +374,7 @@ OperatorRecoverable (old series)
 
 ```solidity
 pool.startRecovery(seriesId);                                       // price ≤ trigger, permissionless
-pool.returnRiskShares(seriesId, shares);                            // opt into migration (burns EvRisk into a claim)
+pool.returnRiskShares(seriesId, shares);                            // opt into migration (burns EtRisk into a claim)
 uint256 shares = pool.reclaimReturnedRiskShares(seriesId, receiver);// opt back out (while Active/RecoveryPending)
 pool.cancelRecovery(seriesId);                                      // price restored above trigger
 uint256 newSeriesId = pool.finalizeRecovery(seriesId);             // after timelock, still impaired
@@ -390,7 +407,7 @@ Migration entry points:
 (uint256 sharesMinted, uint256 eveUSDMinted, uint256 collateralOut) =
     pool.claimRecoveredRiskShares(oldSeriesId, receiver, mode);
 
-// Operator sweeps stragglers who still hold old-series EvRisk (MorePairs semantics)
+// Operator sweeps stragglers who still hold old-series EtRisk (MorePairs semantics)
 (uint256 newSeriesId, uint256 sharesMinted, uint256 eveUSDMinted) =
     pool.recoverExpiredRisk(holder, oldSeriesId, shares);
 ```
@@ -448,7 +465,7 @@ interface IUsdOracle {
 
 ## Router
 
-`EveUSDRouter` wraps the pool for ETH-native UX and enforces slippage bounds plus strict residual-balance snapshots. It implements `IERC1155Receiver` so it can hold `EvRisk` mid-transaction, and it rejects recombination previews that do not point at its immutable `wethProfileId`.
+`EveUSDRouter` wraps the pool for ETH-native UX and enforces slippage bounds plus strict residual-balance snapshots. It implements `IERC1155Receiver` so it can hold `EtRisk` mid-transaction, and it rejects recombination previews that do not point at its immutable `wethProfileId`.
 
 ```solidity
 (uint256 seriesId, uint256 eveUSDMinted, uint256 sharesMinted) =
@@ -461,7 +478,7 @@ uint256 ethOut  = router.recombineToETH(seriesId, eveUSDAmount, maxSharesIn, rec
 
 - `depositETH` wraps native ETH to WETH, approves the pool for the exact amount, deposits, then re-zeroes the approval.
 - Deposit and recombine calls enforce `minEveUSD` / `minShares` / `minWETHOut` / `minETHOut` (`OutputBelowMinimum`) and a `maxSharesIn` ceiling on recombination (`SharesAboveMaximum`).
-- The router asserts that its own WETH, `eveUSD`, per-series `EvRisk`, and native balances return to their pre-call snapshot after every operation (`ResidualRouterBalance` and related errors), guaranteeing it never traps or leaks funds.
+- The router asserts that its own WETH, `eveUSD`, per-series `EtRisk`, and native balances return to their pre-call snapshot after every operation (`ResidualRouterBalance` and related errors), guaranteeing it never traps or leaks funds.
 - The router binds to a single WETH collateral profile at construction and re-validates the entire pool/token wiring, so it cannot be pointed at a mismatched deployment.
 
 ---
@@ -473,7 +490,7 @@ All owner controls are bounded by constants and revert outside their range. They
 | Parameter | Bounds |
 |---|---|
 | `collateralRatioBps` (per profile, next series) | `10_001` – `30_000` |
-| `recoveryTriggerBps` (per profile, next series) | `1` – `9_999` |
+| `priceBandBps` (per profile, next series) | `10_001` – `30_000`, and `≤ collateralRatioBps` |
 | `recoveryTimelock` (global) | `1 day` – `30 days` (default `7 days`) |
 | `mintFeeBps` / `recombinationFeeBps` (per profile) | ≤ `1_000` (10%) |
 | `insuranceTargetBps` / `insuranceFeeBps` (per profile) | ≤ `10_000` |
@@ -481,7 +498,11 @@ All owner controls are bounded by constants and revert outside their range. They
 
 Owner functions: `createCollateralProfile`, `setCollateralProfileConfig`, `setCollateralProfileFeeBps`, `setCollateralProfileInsuranceBps`, `setCollateralProfileOracle`, `setRecoveryTimelock`, `setFeeRecipient`, `transferOwnership`, `lockConfig`. Fees are taken in the collateral token and sent to `feeRecipient`.
 
-**Excluded by design** — the owner cannot arbitrarily withdraw collateral, seize user tokens, or mint out-of-ratio `eveUSD`. The only mint/burn authority for the tokens is the pool, exercised through the bounded deposit/recombine/recovery paths.
+`setCollateralProfileExitOnly` is the clean retirement path. It blocks new deposits for the profile and prevents recovery finalization from opening a successor series, but existing matching pairs can still recombine.
+
+Token pool replacement is controlled on the token contracts, not inside the pool. `queuePoolChange` starts the timelock, `cancelPoolChange` clears it, and `executePoolChange` installs the new active pool while making the previous pool burn-only.
+
+**Excluded by design** — the owner cannot arbitrarily withdraw collateral, seize user tokens, or mint out-of-ratio `eveUSD`. The active pool is the only mint authority; retired pools can only burn so old liabilities can exit after a pool replacement.
 
 ---
 
@@ -543,8 +564,8 @@ MAX_FEE_BPS              = 1_000;
 MAX_INSURANCE_BPS        = 10_000;
 MIN_COLLATERAL_RATIO_BPS = 10_001;
 MAX_COLLATERAL_RATIO_BPS = 30_000;
-MIN_RECOVERY_TRIGGER_BPS = 1;
-MAX_RECOVERY_TRIGGER_BPS = 9_999;
+MIN_PRICE_BAND_BPS = 1;
+MAX_PRICE_BAND_BPS = 9_999;
 MIN_RECOVERY_TIMELOCK    = 1 days;
 MAX_RECOVERY_TIMELOCK    = 30 days;
 ```
@@ -582,7 +603,8 @@ event ExpiredRiskRecovered(address indexed operator, address indexed holder, uin
 
 ```solidity
 event CollateralProfileCreated(uint256 indexed profileId, address indexed collateralToken, address indexed oracle, uint8 decimals, uint256 activeSeriesId);
-event CollateralProfileConfigured(uint256 indexed profileId, uint256 collateralRatioBps, uint256 recoveryTriggerBps, bool enabled);
+event CollateralProfileConfigured(uint256 indexed profileId, uint256 collateralRatioBps, uint256 priceBandBps, bool enabled);
+event CollateralProfileExitOnlySet(uint256 indexed profileId, bool exitOnly);
 event CollateralProfileOracleSet(uint256 indexed profileId, address indexed oracle);
 event CollateralProfileFeeBpsSet(uint256 indexed profileId, uint256 mintFeeBps, uint256 recombinationFeeBps);
 event CollateralProfileInsuranceBpsSet(uint256 indexed profileId, uint256 targetBps, uint256 feeBps);
@@ -615,7 +637,7 @@ event RecombinedToETH(...);         // same shape, native ETH out
 The pool and router entry points are `nonReentrant`. External token transfers (collateral pulls, fee payouts, redemptions) sit behind the guard, and state is updated before minting/burning.
 
 ### Restricted Mint/Burn
-Only the pool can mint or burn `eveUSD` and `EvRisk`. The pool validates at construction that both tokens point back at it (`InvalidTokenPool`), and the router re-validates the whole wiring, so a misconfigured deployment fails fast.
+Only the active pool can mint `eveUSD` and `EtRisk`. The active pool and burn-only retired pools can burn, which preserves old recombination/exit paths after a timelocked pool replacement without allowing retired pools to create new supply. The pool validates at construction that both tokens point back at it (`InvalidTokenPool`), and the router re-validates the whole wiring, so a misconfigured deployment fails fast.
 
 ### Oracle Discipline
 Every price-sensitive path reads the live oracle. Stale, non-positive, out-of-bounds, or sequencer-down prices revert, blocking minting and recovery transitions rather than acting on bad data. Series pin their price at creation, so in-flight deposits price consistently.
@@ -633,7 +655,7 @@ Recombination is strictly pro-rata on a series' accounted collateral, and junior
 All owner parameters are range-checked constants, and the owner has no power to withdraw collateral, seize tokens, or mint out of ratio. `lockConfig()` can permanently freeze all configuration.
 
 ### Router Residual Guards
-The router snapshots and asserts restoration of its WETH, `eveUSD`, per-series `EvRisk`, and native balances around every call, guaranteeing it neither traps nor leaks user funds.
+The router snapshots and asserts restoration of its WETH, `eveUSD`, per-series `EtRisk`, and native balances around every call, guaranteeing it neither traps nor leaks user funds.
 
 ---
 

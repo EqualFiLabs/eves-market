@@ -22,22 +22,20 @@ import {LibMultiOutcome} from "../../src/libraries/LibMultiOutcome.sol";
 import {ParlayTypes} from "../../src/types/ParlayTypes.sol";
 import {EvesPositionManager} from "../../src/tokens/EvesPositionManager.sol";
 import {ParlayTicketToken} from "../../src/tokens/ParlayTicketToken.sol";
-import {EveETH} from "../../src/tokens/EveETH.sol";
 
-import {CanonicalWETH9} from "../../src/mocks/CanonicalWETH9.sol";
 import {SettlementFeeFixture} from "../helpers/DiamondFixtures.sol";
+import {MockEveToken as ProfileCollateral} from "../helpers/MockEveToken.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 
 contract ParlayCollateralTest is SettlementFeeFixture {
-    uint8 internal constant EVE_ETH_PROFILE_ID = 1;
-    uint128 internal constant EVE_ETH_PAYOUT_UNIT = 0.0005 ether;
-    uint128 internal constant EVE_ETH_FLAT_FEE = 0.0002 ether;
+    uint8 internal constant ALT_PROFILE_ID = 1;
+    uint128 internal constant ALT_PROFILE_PAYOUT_UNIT = 0.0005 ether;
+    uint128 internal constant ALT_PROFILE_FLAT_FEE = 0.0002 ether;
     uint128 internal constant PREMIUM_PER_UNIT = 0.0001 ether;
     uint128 internal constant MAX_PAYOUT_PER_UNIT = 0.001 ether;
 
     address internal feeRecipient;
-    CanonicalWETH9 internal weth;
-    EveETH internal eveETH;
+    ProfileCollateral internal profileCollateral;
     EvesPositionManager internal outcomePositions;
     ParlayTicketToken internal ticketToken;
 
@@ -45,8 +43,7 @@ contract ParlayCollateralTest is SettlementFeeFixture {
         super.setUp();
 
         feeRecipient = makeAddr("parlay-profile-fee-recipient");
-        weth = new CanonicalWETH9();
-        eveETH = new EveETH(address(weth));
+        profileCollateral = new ProfileCollateral();
         outcomePositions = new EvesPositionManager(address(diamond), "");
         ticketToken = new ParlayTicketToken(address(diamond), "uri://parlay-profile/{id}");
 
@@ -63,136 +60,140 @@ contract ParlayCollateralTest is SettlementFeeFixture {
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setEvesPositionManager(address(outcomePositions));
         OwnershipFacet(address(diamond))
-            .setCollateralProfile(EVE_ETH_PROFILE_ID, address(eveETH), address(weth), EVE_ETH_PAYOUT_UNIT, 0, true);
-        OwnershipFacet(address(diamond)).setCollateralProfileParlayUnderwritingFee(EVE_ETH_PROFILE_ID, EVE_ETH_FLAT_FEE);
+            .setCollateralProfile(
+                ALT_PROFILE_ID, address(profileCollateral), address(0), ALT_PROFILE_PAYOUT_UNIT, 0, true
+            );
+        OwnershipFacet(address(diamond)).setCollateralProfileParlayUnderwritingFee(ALT_PROFILE_ID, ALT_PROFILE_FLAT_FEE);
         IParlayFacet(address(diamond)).setParlayConfig(address(ticketToken), feeRecipient, 3e6, 0, 10_000);
         vm.stopPrank();
     }
 
-    function test_EveETHOfferEscrowsFillsAndClaimsProfileCollateral() public {
-        (bytes32 firstMarketId, uint64 firstExpiry) = _createEveETHMarket("Will eveETH parlay leg one win?");
-        (bytes32 secondMarketId, uint64 secondExpiry) = _createEveETHMarket("Will eveETH parlay leg two win?");
+    function test_ProfileCollateralOfferEscrowsFillsAndClaimsProfileCollateral() public {
+        (bytes32 firstMarketId, uint64 firstExpiry) =
+            _createProfileCollateralMarket("Will profileCollateral parlay leg one win?");
+        (bytes32 secondMarketId, uint64 secondExpiry) =
+            _createProfileCollateralMarket("Will profileCollateral parlay leg two win?");
         ParlayTypes.ParlayLeg[] memory legs = _buildSortedLegs(firstMarketId, secondMarketId);
         ParlayTypes.PayoutTier[] memory tiers = _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT);
 
-        _fundEveETH(maker, MAX_PAYOUT_PER_UNIT);
-        _fundEveETH(taker, PREMIUM_PER_UNIT + EVE_ETH_FLAT_FEE);
+        _fundProfileCollateral(maker, MAX_PAYOUT_PER_UNIT);
+        _fundProfileCollateral(taker, PREMIUM_PER_UNIT + ALT_PROFILE_FLAT_FEE);
 
         vm.prank(maker);
         uint256 offerId = IParlayFacet(address(diamond))
             .postParlayOfferWithCollateralProfile(
-                EVE_ETH_PROFILE_ID, _quoteOfferPost(legs, tiers, "ipfs://eveeth-offer", 1)
+                ALT_PROFILE_ID, _quoteOfferPost(legs, tiers, "ipfs://profile-collateral-offer", 1)
             );
 
         ParlayTypes.ParlayOfferView memory offer = IParlayFacet(address(diamond)).getParlayOffer(offerId);
-        assertEq(offer.collateralProfileId, EVE_ETH_PROFILE_ID);
-        assertEq(offer.collateralToken, address(eveETH));
-        assertEq(offer.payoutUnit, EVE_ETH_PAYOUT_UNIT);
-        assertEq(offer.underwritingFeePerUnit, EVE_ETH_FLAT_FEE);
+        assertEq(offer.collateralProfileId, ALT_PROFILE_ID);
+        assertEq(offer.collateralToken, address(profileCollateral));
+        assertEq(offer.payoutUnit, ALT_PROFILE_PAYOUT_UNIT);
+        assertEq(offer.underwritingFeePerUnit, ALT_PROFILE_FLAT_FEE);
         assertEq(offer.escrowRemaining, MAX_PAYOUT_PER_UNIT);
 
-        uint256 makerBalanceBeforeFill = eveETH.balanceOf(maker);
+        uint256 makerBalanceBeforeFill = profileCollateral.balanceOf(maker);
         vm.prank(taker);
         uint256 ticketId = IParlayFacet(address(diamond)).fillParlayOffer(offerId, 1, taker);
 
-        assertEq(eveETH.balanceOf(maker), makerBalanceBeforeFill + PREMIUM_PER_UNIT);
-        assertEq(eveETH.balanceOf(feeRecipient), EVE_ETH_FLAT_FEE);
+        assertEq(profileCollateral.balanceOf(maker), makerBalanceBeforeFill + PREMIUM_PER_UNIT);
+        assertEq(profileCollateral.balanceOf(feeRecipient), ALT_PROFILE_FLAT_FEE);
         assertEq(IERC1155(address(ticketToken)).balanceOf(taker, ticketId), 1);
 
         ParlayTypes.ParlayTicketBucketView memory bucket =
             IParlayFacet(address(diamond)).getParlayTicketBucket(ticketId);
-        assertEq(bucket.collateralProfileId, EVE_ETH_PROFILE_ID);
-        assertEq(bucket.collateralToken, address(eveETH));
-        assertEq(bucket.payoutUnit, EVE_ETH_PAYOUT_UNIT);
+        assertEq(bucket.collateralProfileId, ALT_PROFILE_ID);
+        assertEq(bucket.collateralToken, address(profileCollateral));
+        assertEq(bucket.payoutUnit, ALT_PROFILE_PAYOUT_UNIT);
         assertEq(bucket.escrowRemaining, MAX_PAYOUT_PER_UNIT);
 
         _finalizeCreatorResolution(firstMarketId, firstExpiry, uint8(LibEveMarket.MarketOutcome.Yes));
         _finalizeCreatorResolution(secondMarketId, secondExpiry, uint8(LibEveMarket.MarketOutcome.Yes));
 
-        uint256 takerBalanceBeforeClaim = eveETH.balanceOf(taker);
+        uint256 takerBalanceBeforeClaim = profileCollateral.balanceOf(taker);
         assertEq(IParlayFacet(address(diamond)).finalizeParlayTicketBucket(ticketId), MAX_PAYOUT_PER_UNIT);
 
         vm.prank(taker);
         uint256 payout = IParlayFacet(address(diamond)).claimParlayTicket(ticketId, 1, taker);
 
         assertEq(payout, MAX_PAYOUT_PER_UNIT);
-        assertEq(eveETH.balanceOf(taker), takerBalanceBeforeClaim + MAX_PAYOUT_PER_UNIT);
+        assertEq(profileCollateral.balanceOf(taker), takerBalanceBeforeClaim + MAX_PAYOUT_PER_UNIT);
     }
 
-    function test_EveETHOfferCancelRefundsProfileCollateral() public {
-        (bytes32 firstMarketId,) = _createEveETHMarket("Will eveETH cancel leg one win?");
-        (bytes32 secondMarketId,) = _createEveETHMarket("Will eveETH cancel leg two win?");
+    function test_ProfileCollateralOfferCancelRefundsProfileCollateral() public {
+        (bytes32 firstMarketId,) = _createProfileCollateralMarket("Will profileCollateral cancel leg one win?");
+        (bytes32 secondMarketId,) = _createProfileCollateralMarket("Will profileCollateral cancel leg two win?");
 
-        _fundEveETH(maker, MAX_PAYOUT_PER_UNIT * 2);
+        _fundProfileCollateral(maker, MAX_PAYOUT_PER_UNIT * 2);
 
         vm.prank(maker);
         uint256 offerId = IParlayFacet(address(diamond))
             .postParlayOfferWithCollateralProfile(
-                EVE_ETH_PROFILE_ID,
+                ALT_PROFILE_ID,
                 _quoteOfferPost(
                     _buildSortedLegs(firstMarketId, secondMarketId),
                     _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT),
-                    "ipfs://eveeth-cancel",
+                    "ipfs://profile-collateral-cancel",
                     2
                 )
             );
 
-        uint256 makerBalanceBeforeCancel = eveETH.balanceOf(maker);
+        uint256 makerBalanceBeforeCancel = profileCollateral.balanceOf(maker);
         vm.prank(maker);
         uint256 refunded = IParlayFacet(address(diamond)).cancelParlayOffer(offerId);
 
         assertEq(refunded, MAX_PAYOUT_PER_UNIT * 2);
-        assertEq(eveETH.balanceOf(maker), makerBalanceBeforeCancel + refunded);
+        assertEq(profileCollateral.balanceOf(maker), makerBalanceBeforeCancel + refunded);
     }
 
-    function test_EveETHRequestCancelRefundsPremiumAndProfileFee() public {
-        (bytes32 firstMarketId,) = _createEveETHMarket("Will eveETH request leg one win?");
-        (bytes32 secondMarketId,) = _createEveETHMarket("Will eveETH request leg two win?");
+    function test_ProfileCollateralRequestCancelRefundsPremiumAndProfileFee() public {
+        (bytes32 firstMarketId,) = _createProfileCollateralMarket("Will profileCollateral request leg one win?");
+        (bytes32 secondMarketId,) = _createProfileCollateralMarket("Will profileCollateral request leg two win?");
 
-        _fundEveETH(taker, (PREMIUM_PER_UNIT + EVE_ETH_FLAT_FEE) * 2);
+        _fundProfileCollateral(taker, (PREMIUM_PER_UNIT + ALT_PROFILE_FLAT_FEE) * 2);
 
         vm.prank(taker);
         uint256 requestId = IParlayFacet(address(diamond))
             .postParlayRequestWithCollateralProfile(
-                EVE_ETH_PROFILE_ID,
+                ALT_PROFILE_ID,
                 _quoteRequestPost(
                     _buildSortedLegs(firstMarketId, secondMarketId),
                     _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT),
-                    "ipfs://eveeth-request",
+                    "ipfs://profile-collateral-request",
                     2
                 )
             );
 
         ParlayTypes.ParlayRequestView memory request = IParlayFacet(address(diamond)).getParlayRequest(requestId);
-        assertEq(request.collateralProfileId, EVE_ETH_PROFILE_ID);
-        assertEq(request.collateralToken, address(eveETH));
-        assertEq(request.payoutUnit, EVE_ETH_PAYOUT_UNIT);
-        assertEq(request.underwritingFeePerUnit, EVE_ETH_FLAT_FEE);
+        assertEq(request.collateralProfileId, ALT_PROFILE_ID);
+        assertEq(request.collateralToken, address(profileCollateral));
+        assertEq(request.payoutUnit, ALT_PROFILE_PAYOUT_UNIT);
+        assertEq(request.underwritingFeePerUnit, ALT_PROFILE_FLAT_FEE);
 
-        uint256 takerBalanceBeforeCancel = eveETH.balanceOf(taker);
+        uint256 takerBalanceBeforeCancel = profileCollateral.balanceOf(taker);
         vm.prank(taker);
         (uint256 premiumReturned, uint256 feeReturned) = IParlayFacet(address(diamond)).cancelParlayRequest(requestId);
 
         assertEq(premiumReturned, PREMIUM_PER_UNIT * 2);
-        assertEq(feeReturned, EVE_ETH_FLAT_FEE * 2);
-        assertEq(eveETH.balanceOf(taker), takerBalanceBeforeCancel + premiumReturned + feeReturned);
+        assertEq(feeReturned, ALT_PROFILE_FLAT_FEE * 2);
+        assertEq(profileCollateral.balanceOf(taker), takerBalanceBeforeCancel + premiumReturned + feeReturned);
     }
 
     function test_RevertWhen_ProfileParlayPostingUsesDisabledCollateral() public {
-        (bytes32 firstMarketId,) = _createEveETHMarket("Will disabled profile leg one win?");
-        (bytes32 secondMarketId,) = _createEveETHMarket("Will disabled profile leg two win?");
+        (bytes32 firstMarketId,) = _createProfileCollateralMarket("Will disabled profile leg one win?");
+        (bytes32 secondMarketId,) = _createProfileCollateralMarket("Will disabled profile leg two win?");
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setCollateralProfileEnabled(EVE_ETH_PROFILE_ID, false);
+        OwnershipFacet(address(diamond)).setCollateralProfileEnabled(ALT_PROFILE_ID, false);
 
-        _fundEveETH(maker, MAX_PAYOUT_PER_UNIT);
-        uint256 makerBalanceBefore = eveETH.balanceOf(maker);
+        _fundProfileCollateral(maker, MAX_PAYOUT_PER_UNIT);
+        uint256 makerBalanceBefore = profileCollateral.balanceOf(maker);
 
         vm.prank(maker);
-        vm.expectRevert(abi.encodeWithSelector(Errors.CollateralProfileDisabled.selector, EVE_ETH_PROFILE_ID));
+        vm.expectRevert(abi.encodeWithSelector(Errors.CollateralProfileDisabled.selector, ALT_PROFILE_ID));
         IParlayFacet(address(diamond))
             .postParlayOfferWithCollateralProfile(
-                EVE_ETH_PROFILE_ID,
+                ALT_PROFILE_ID,
                 _quoteOfferPost(
                     _buildSortedLegs(firstMarketId, secondMarketId),
                     _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT),
@@ -201,22 +202,23 @@ contract ParlayCollateralTest is SettlementFeeFixture {
                 )
             );
 
-        assertEq(eveETH.balanceOf(maker), makerBalanceBefore);
+        assertEq(profileCollateral.balanceOf(maker), makerBalanceBefore);
     }
 
     function test_ProfileParlayAcceptsMixedCollateralLegs() public {
         (bytes32 defaultMarketId,, uint64 defaultExpiry) =
-            _createTradingMarket("Will mixed parlay eveUSDC leg win?", "parlay", 7 days);
-        (bytes32 eveETHMarketId, uint64 eveETHExpiry) = _createEveETHMarket("Will mixed parlay eveETH leg win?");
-        ParlayTypes.ParlayLeg[] memory legs = _buildSortedLegs(defaultMarketId, eveETHMarketId);
+            _createTradingMarket("Will mixed parlay collateral leg win?", "parlay", 7 days);
+        (bytes32 profileCollateralMarketId, uint64 profileCollateralExpiry) =
+            _createProfileCollateralMarket("Will mixed parlay profileCollateral leg win?");
+        ParlayTypes.ParlayLeg[] memory legs = _buildSortedLegs(defaultMarketId, profileCollateralMarketId);
 
-        _fundEveETH(maker, MAX_PAYOUT_PER_UNIT);
-        _fundEveETH(taker, PREMIUM_PER_UNIT + EVE_ETH_FLAT_FEE);
+        _fundProfileCollateral(maker, MAX_PAYOUT_PER_UNIT);
+        _fundProfileCollateral(taker, PREMIUM_PER_UNIT + ALT_PROFILE_FLAT_FEE);
 
         vm.prank(maker);
         uint256 offerId = IParlayFacet(address(diamond))
             .postParlayOfferWithCollateralProfile(
-                EVE_ETH_PROFILE_ID,
+                ALT_PROFILE_ID,
                 _quoteOfferPost(legs, _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT), "ipfs://mixed-collateral", 1)
             );
 
@@ -224,43 +226,49 @@ contract ParlayCollateralTest is SettlementFeeFixture {
         uint256 ticketId = IParlayFacet(address(diamond)).fillParlayOffer(offerId, 1, taker);
 
         _finalizeCreatorResolution(defaultMarketId, defaultExpiry, uint8(LibEveMarket.MarketOutcome.Yes));
-        _finalizeCreatorResolution(eveETHMarketId, eveETHExpiry, uint8(LibEveMarket.MarketOutcome.Yes));
+        _finalizeCreatorResolution(
+            profileCollateralMarketId, profileCollateralExpiry, uint8(LibEveMarket.MarketOutcome.Yes)
+        );
         assertEq(IParlayFacet(address(diamond)).finalizeParlayTicketBucket(ticketId), MAX_PAYOUT_PER_UNIT);
     }
 
-    function test_EveETHMakerBudgetConsumesAndRefundsProfileCollateral() public {
-        (bytes32 firstMarketId, uint64 firstExpiry) = _createEveETHMarket("Will eveETH budget leg one win?");
-        (bytes32 secondMarketId, uint64 secondExpiry) = _createEveETHMarket("Will eveETH budget leg two win?");
+    function test_ProfileCollateralMakerBudgetConsumesAndRefundsProfileCollateral() public {
+        (bytes32 firstMarketId, uint64 firstExpiry) =
+            _createProfileCollateralMarket("Will profileCollateral budget leg one win?");
+        (bytes32 secondMarketId, uint64 secondExpiry) =
+            _createProfileCollateralMarket("Will profileCollateral budget leg two win?");
         ParlayTypes.ParlayLeg[] memory legs = _buildSortedLegs(firstMarketId, secondMarketId);
 
-        _fundEveETH(maker, MAX_PAYOUT_PER_UNIT * 3);
-        _fundEveETH(taker, (PREMIUM_PER_UNIT + EVE_ETH_FLAT_FEE) * 2);
+        _fundProfileCollateral(maker, MAX_PAYOUT_PER_UNIT * 3);
+        _fundProfileCollateral(taker, (PREMIUM_PER_UNIT + ALT_PROFILE_FLAT_FEE) * 2);
 
         vm.startPrank(maker);
         uint256 budgetId = IParlayFacet(address(diamond))
             .createParlayBudgetWithCollateralProfile(
-                EVE_ETH_PROFILE_ID, ParlayTypes.BudgetMode.MakerPayout, MAX_PAYOUT_PER_UNIT * 2
+                ALT_PROFILE_ID, ParlayTypes.BudgetMode.MakerPayout, MAX_PAYOUT_PER_UNIT * 2
             );
         IParlayFacet(address(diamond)).fundParlayBudget(budgetId, MAX_PAYOUT_PER_UNIT);
         uint256 offerId = IParlayFacet(address(diamond))
             .postParlayOfferFromBudgetWithCollateralProfile(
                 budgetId,
-                EVE_ETH_PROFILE_ID,
-                _budgetOfferPost(legs, _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT), "ipfs://eveeth-maker-budget", 2)
+                ALT_PROFILE_ID,
+                _budgetOfferPost(
+                    legs, _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT), "ipfs://profile-collateral-maker-budget", 2
+                )
             );
         vm.stopPrank();
 
         ParlayTypes.SharedBudgetView memory budget = IParlayFacet(address(diamond)).getParlayBudget(budgetId);
-        assertEq(budget.collateralProfileId, EVE_ETH_PROFILE_ID);
-        assertEq(budget.collateralToken, address(eveETH));
-        assertEq(budget.payoutUnit, EVE_ETH_PAYOUT_UNIT);
+        assertEq(budget.collateralProfileId, ALT_PROFILE_ID);
+        assertEq(budget.collateralToken, address(profileCollateral));
+        assertEq(budget.payoutUnit, ALT_PROFILE_PAYOUT_UNIT);
         assertEq(budget.deposited, MAX_PAYOUT_PER_UNIT * 3);
         assertEq(budget.available, MAX_PAYOUT_PER_UNIT * 3);
 
         ParlayTypes.ParlayOfferView memory offer = IParlayFacet(address(diamond)).getParlayOffer(offerId);
         assertEq(offer.budgetId, budgetId);
-        assertEq(offer.collateralProfileId, EVE_ETH_PROFILE_ID);
-        assertEq(offer.collateralToken, address(eveETH));
+        assertEq(offer.collateralProfileId, ALT_PROFILE_ID);
+        assertEq(offer.collateralToken, address(profileCollateral));
         assertEq(offer.escrowRemaining, 0);
 
         vm.prank(taker);
@@ -269,67 +277,69 @@ contract ParlayCollateralTest is SettlementFeeFixture {
         budget = IParlayFacet(address(diamond)).getParlayBudget(budgetId);
         assertEq(budget.consumed, MAX_PAYOUT_PER_UNIT * 2);
         assertEq(budget.available, MAX_PAYOUT_PER_UNIT);
-        assertEq(eveETH.balanceOf(feeRecipient), EVE_ETH_FLAT_FEE * 2);
+        assertEq(profileCollateral.balanceOf(feeRecipient), ALT_PROFILE_FLAT_FEE * 2);
 
-        uint256 makerBeforeCancel = eveETH.balanceOf(maker);
+        uint256 makerBeforeCancel = profileCollateral.balanceOf(maker);
         vm.prank(maker);
         assertEq(IParlayFacet(address(diamond)).cancelParlayBudget(budgetId), MAX_PAYOUT_PER_UNIT);
-        assertEq(eveETH.balanceOf(maker), makerBeforeCancel + MAX_PAYOUT_PER_UNIT);
+        assertEq(profileCollateral.balanceOf(maker), makerBeforeCancel + MAX_PAYOUT_PER_UNIT);
 
         _finalizeCreatorResolution(firstMarketId, firstExpiry, uint8(LibEveMarket.MarketOutcome.Yes));
         _finalizeCreatorResolution(secondMarketId, secondExpiry, uint8(LibEveMarket.MarketOutcome.Yes));
         assertEq(IParlayFacet(address(diamond)).finalizeParlayTicketBucket(ticketId), MAX_PAYOUT_PER_UNIT);
 
-        uint256 takerBeforeClaim = eveETH.balanceOf(taker);
+        uint256 takerBeforeClaim = profileCollateral.balanceOf(taker);
         vm.prank(taker);
         assertEq(IParlayFacet(address(diamond)).claimParlayTicket(ticketId, 2, taker), MAX_PAYOUT_PER_UNIT * 2);
-        assertEq(eveETH.balanceOf(taker), takerBeforeClaim + MAX_PAYOUT_PER_UNIT * 2);
+        assertEq(profileCollateral.balanceOf(taker), takerBeforeClaim + MAX_PAYOUT_PER_UNIT * 2);
     }
 
-    function test_EveETHTakerBudgetConsumesPremiumAndFeeCollateral() public {
-        (bytes32 firstMarketId, uint64 firstExpiry) = _createEveETHMarket("Will eveETH taker budget leg one win?");
-        (bytes32 secondMarketId, uint64 secondExpiry) = _createEveETHMarket("Will eveETH taker budget leg two win?");
+    function test_ProfileCollateralTakerBudgetConsumesPremiumAndFeeCollateral() public {
+        (bytes32 firstMarketId, uint64 firstExpiry) =
+            _createProfileCollateralMarket("Will profileCollateral taker budget leg one win?");
+        (bytes32 secondMarketId, uint64 secondExpiry) =
+            _createProfileCollateralMarket("Will profileCollateral taker budget leg two win?");
         ParlayTypes.ParlayLeg[] memory legs = _buildSortedLegs(firstMarketId, secondMarketId);
-        uint256 unitSpend = uint256(PREMIUM_PER_UNIT) + EVE_ETH_FLAT_FEE;
+        uint256 unitSpend = uint256(PREMIUM_PER_UNIT) + ALT_PROFILE_FLAT_FEE;
 
-        _fundEveETH(taker, unitSpend * 3);
-        _fundEveETH(maker, MAX_PAYOUT_PER_UNIT * 2);
+        _fundProfileCollateral(taker, unitSpend * 3);
+        _fundProfileCollateral(maker, MAX_PAYOUT_PER_UNIT * 2);
 
         vm.startPrank(taker);
         uint256 budgetId = IParlayFacet(address(diamond))
-            .createParlayBudgetWithCollateralProfile(
-                EVE_ETH_PROFILE_ID, ParlayTypes.BudgetMode.TakerSpend, unitSpend * 3
-            );
+            .createParlayBudgetWithCollateralProfile(ALT_PROFILE_ID, ParlayTypes.BudgetMode.TakerSpend, unitSpend * 3);
         uint256 requestId = IParlayFacet(address(diamond))
             .postParlayRequestFromBudgetWithCollateralProfile(
                 budgetId,
-                EVE_ETH_PROFILE_ID,
-                _budgetRequestPost(legs, _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT), "ipfs://eveeth-taker-budget", 3)
+                ALT_PROFILE_ID,
+                _budgetRequestPost(
+                    legs, _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT), "ipfs://profile-collateral-taker-budget", 3
+                )
             );
         vm.stopPrank();
 
         ParlayTypes.ParlayRequestView memory request = IParlayFacet(address(diamond)).getParlayRequest(requestId);
         assertEq(request.budgetId, budgetId);
-        assertEq(request.collateralProfileId, EVE_ETH_PROFILE_ID);
-        assertEq(request.collateralToken, address(eveETH));
+        assertEq(request.collateralProfileId, ALT_PROFILE_ID);
+        assertEq(request.collateralToken, address(profileCollateral));
         assertEq(request.premiumEscrowRemaining, 0);
         assertEq(request.feeEscrowRemaining, 0);
 
-        uint256 makerBeforeFill = eveETH.balanceOf(maker);
+        uint256 makerBeforeFill = profileCollateral.balanceOf(maker);
         vm.prank(maker);
         uint256 ticketId = IParlayFacet(address(diamond)).fillParlayRequest(requestId, 2, taker);
 
-        assertEq(eveETH.balanceOf(maker), makerBeforeFill - MAX_PAYOUT_PER_UNIT * 2 + PREMIUM_PER_UNIT * 2);
-        assertEq(eveETH.balanceOf(feeRecipient), EVE_ETH_FLAT_FEE * 2);
+        assertEq(profileCollateral.balanceOf(maker), makerBeforeFill - MAX_PAYOUT_PER_UNIT * 2 + PREMIUM_PER_UNIT * 2);
+        assertEq(profileCollateral.balanceOf(feeRecipient), ALT_PROFILE_FLAT_FEE * 2);
 
         ParlayTypes.SharedBudgetView memory budget = IParlayFacet(address(diamond)).getParlayBudget(budgetId);
         assertEq(budget.consumed, unitSpend * 2);
         assertEq(budget.available, unitSpend);
 
-        uint256 takerBeforeCancel = eveETH.balanceOf(taker);
+        uint256 takerBeforeCancel = profileCollateral.balanceOf(taker);
         vm.prank(taker);
         assertEq(IParlayFacet(address(diamond)).cancelParlayBudget(budgetId), unitSpend);
-        assertEq(eveETH.balanceOf(taker), takerBeforeCancel + unitSpend);
+        assertEq(profileCollateral.balanceOf(taker), takerBeforeCancel + unitSpend);
 
         _finalizeCreatorResolution(firstMarketId, firstExpiry, uint8(LibEveMarket.MarketOutcome.Yes));
         _finalizeCreatorResolution(secondMarketId, secondExpiry, uint8(LibEveMarket.MarketOutcome.Yes));
@@ -337,8 +347,8 @@ contract ParlayCollateralTest is SettlementFeeFixture {
     }
 
     function test_RevertWhen_BudgetQuoteProfileDiffers() public {
-        (bytes32 firstMarketId,) = _createEveETHMarket("Will profile mismatch leg one win?");
-        (bytes32 secondMarketId,) = _createEveETHMarket("Will profile mismatch leg two win?");
+        (bytes32 firstMarketId,) = _createProfileCollateralMarket("Will profile mismatch leg one win?");
+        (bytes32 secondMarketId,) = _createProfileCollateralMarket("Will profile mismatch leg two win?");
         ParlayTypes.ParlayLeg[] memory legs = _buildSortedLegs(firstMarketId, secondMarketId);
 
         vm.startPrank(maker);
@@ -348,27 +358,27 @@ contract ParlayCollateralTest is SettlementFeeFixture {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                Errors.ParlayBudgetCollateralProfileMismatch.selector, defaultBudgetId, uint8(0), EVE_ETH_PROFILE_ID
+                Errors.ParlayBudgetCollateralProfileMismatch.selector, defaultBudgetId, uint8(0), ALT_PROFILE_ID
             )
         );
         IParlayFacet(address(diamond))
             .postParlayOfferFromBudgetWithCollateralProfile(
                 defaultBudgetId,
-                EVE_ETH_PROFILE_ID,
+                ALT_PROFILE_ID,
                 _budgetOfferPost(legs, _allOrNothingTiers(2, MAX_PAYOUT_PER_UNIT), "ipfs://profile-mismatch", 1)
             );
         vm.stopPrank();
 
-        _fundEveETH(maker, MAX_PAYOUT_PER_UNIT);
+        _fundProfileCollateral(maker, MAX_PAYOUT_PER_UNIT);
 
         vm.startPrank(maker);
         uint256 profileBudgetId = IParlayFacet(address(diamond))
             .createParlayBudgetWithCollateralProfile(
-                EVE_ETH_PROFILE_ID, ParlayTypes.BudgetMode.MakerPayout, MAX_PAYOUT_PER_UNIT
+                ALT_PROFILE_ID, ParlayTypes.BudgetMode.MakerPayout, MAX_PAYOUT_PER_UNIT
             );
         vm.expectRevert(
             abi.encodeWithSelector(
-                Errors.ParlayBudgetCollateralProfileMismatch.selector, profileBudgetId, EVE_ETH_PROFILE_ID, uint8(0)
+                Errors.ParlayBudgetCollateralProfileMismatch.selector, profileBudgetId, ALT_PROFILE_ID, uint8(0)
             )
         );
         IParlayFacet(address(diamond))
@@ -381,14 +391,14 @@ contract ParlayCollateralTest is SettlementFeeFixture {
 
     function test_RevertWhen_BudgetCreationUsesDisabledProfileCollateral() public {
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setCollateralProfileEnabled(EVE_ETH_PROFILE_ID, false);
+        OwnershipFacet(address(diamond)).setCollateralProfileEnabled(ALT_PROFILE_ID, false);
 
-        _fundEveETH(maker, MAX_PAYOUT_PER_UNIT);
+        _fundProfileCollateral(maker, MAX_PAYOUT_PER_UNIT);
         vm.prank(maker);
-        vm.expectRevert(abi.encodeWithSelector(Errors.CollateralProfileDisabled.selector, EVE_ETH_PROFILE_ID));
+        vm.expectRevert(abi.encodeWithSelector(Errors.CollateralProfileDisabled.selector, ALT_PROFILE_ID));
         IParlayFacet(address(diamond))
             .createParlayBudgetWithCollateralProfile(
-                EVE_ETH_PROFILE_ID, ParlayTypes.BudgetMode.MakerPayout, MAX_PAYOUT_PER_UNIT
+                ALT_PROFILE_ID, ParlayTypes.BudgetMode.MakerPayout, MAX_PAYOUT_PER_UNIT
             );
     }
 
@@ -467,7 +477,10 @@ contract ParlayCollateralTest is SettlementFeeFixture {
             );
     }
 
-    function _createEveETHMarket(string memory question) internal returns (bytes32 marketId, uint64 expiryTime) {
+    function _createProfileCollateralMarket(string memory question)
+        internal
+        returns (bytes32 marketId, uint64 expiryTime)
+    {
         uint64 tradingStartTime = uint64(block.timestamp);
         expiryTime = tradingStartTime + 7 days;
 
@@ -477,7 +490,7 @@ contract ParlayCollateralTest is SettlementFeeFixture {
         vm.prank(creator);
         marketId = IMarketFactoryFacet(address(diamond))
             .createMarketWithCollateralProfile(
-                EVE_ETH_PROFILE_ID, question, "parlay", DEFAULT_RESOLUTION_SOURCE, tradingStartTime, expiryTime, 0, true
+                ALT_PROFILE_ID, question, "parlay", DEFAULT_RESOLUTION_SOURCE, tradingStartTime, expiryTime, 0, true
             );
     }
 
@@ -662,14 +675,10 @@ contract ParlayCollateralTest is SettlementFeeFixture {
         });
     }
 
-    function _fundEveETH(address account, uint256 amount) internal {
-        vm.deal(account, amount);
-        vm.startPrank(account);
-        weth.deposit{value: amount}();
-        weth.approve(address(eveETH), amount);
-        eveETH.wrap(amount, account);
-        eveETH.approve(address(diamond), type(uint256).max);
-        vm.stopPrank();
+    function _fundProfileCollateral(address account, uint256 amount) internal {
+        profileCollateral.mint(account, amount);
+        vm.prank(account);
+        profileCollateral.approve(address(diamond), type(uint256).max);
     }
 
     function _deadline() internal view returns (uint64) {
@@ -715,13 +724,12 @@ contract ParlayCollateralTest is SettlementFeeFixture {
     }
 
     function _multiOutcomeViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](5);
         selectors[0] = IMultiOutcomeOrderbookFacet.getMultiOutcomeMarket.selector;
         selectors[1] = IMultiOutcomeOrderbookFacet.getMultiOutcomeOutcomes.selector;
         selectors[2] = IMultiOutcomeOrderbookFacet.getOutcomePositionId.selector;
         selectors[3] = IMultiOutcomeOrderbookFacet.getMultiOutcomeBooks.selector;
-        selectors[4] = IMultiOutcomeOrderbookFacet.getMultiOutcomeTopOfBook.selector;
-        selectors[5] = IMultiOutcomeOrderbookFacet.getMultiOutcomeDisplay.selector;
+        selectors[4] = IMultiOutcomeOrderbookFacet.getMultiOutcomeDisplay.selector;
     }
 
     function _comboMarketSelectors() internal pure returns (bytes4[] memory selectors) {

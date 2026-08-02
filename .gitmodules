@@ -1,3 +1,15 @@
+[submodule "lib/openzeppelin-contracts"]
+	path = lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "conditional-tokens"]
+	path = conditional-tokens
+	url = https://github.com/gnosis/conditional-tokens-contracts.git
+[submodule "lib/openzeppelin-solidity"]
+	path = lib/openzeppelin-solidity
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts.git
+[submodule "lib/statics"]
+	path = lib/statics
+	url = https://github.com/EqualFiLabs/statics.git
 [submodule "lib/forge-std"]
 	path = lib/forge-std
 	url = https://github.com/foundry-rs/forge-std.git

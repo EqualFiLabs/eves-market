@@ -190,6 +190,7 @@ library Events {
     );
     event CurveCancelled(uint256 indexed curveId);
     event CurveExpired(uint256 indexed curveId);
+    event BookCurvesPruned(bytes32 indexed bookId, address indexed caller, uint256 pruned);
     event AdapterCurveMetadataSet(
         uint256 indexed curveId,
         bytes32 indexed bucketId,
@@ -357,6 +358,7 @@ library Events {
     event RandomnessCommitted(bytes32 indexed disputeId, uint8 indexed round, uint256 indexed identityId);
     event RandomnessRevealed(bytes32 indexed disputeId, uint8 indexed round, uint256 indexed identityId);
     event RandomnessFailure(bytes32 indexed disputeId, uint8 indexed round, uint8 mode, uint256 validRevealCount);
+    event RandomnessSeedReferenceBlockSet(bytes32 indexed disputeId, uint8 indexed round, uint64 referenceBlock);
     event CommitteeSelected(
         bytes32 indexed disputeId, uint8 indexed round, uint16 committeeSize, bytes32 seed, uint256[] identityIds
     );
@@ -374,7 +376,7 @@ library Events {
         address indexed ticketToken,
         address indexed feeRecipient,
         uint128 underwritingFee,
-        uint16 vaultFeeBps,
+        uint16 seniorPoolFeeBps,
         uint16 feeRecipientBps
     );
     event ParlayTemplateCreated(
@@ -426,7 +428,7 @@ library Events {
         uint256 indexed sourceId,
         uint8 indexed sourceType,
         uint256 feeAmount,
-        uint256 vaultAmount,
+        uint256 seniorPoolAmount,
         uint256 feeRecipientAmount
     );
     event ParlayOfferCancelled(
@@ -514,6 +516,36 @@ library Events {
         uint128 amountIn,
         uint128 collateralOut
     );
+    event NativeNegRiskConditionPrepared(
+        bytes32 indexed marketId,
+        bytes32 indexed conditionId,
+        uint8 indexed excludedOutcome,
+        uint256 yesPositionId,
+        uint256 noPositionId
+    );
+    event NativeNegRiskSplit(
+        bytes32 indexed marketId,
+        uint8 indexed excludedOutcome,
+        address indexed account,
+        address yesReceiver,
+        address noReceiver,
+        uint128 amount
+    );
+    event NativeNegRiskMerged(
+        bytes32 indexed marketId,
+        uint8 indexed excludedOutcome,
+        address indexed account,
+        address receiver,
+        uint128 amount
+    );
+    event NativeNegRiskRedeemed(
+        bytes32 indexed marketId,
+        uint8 indexed excludedOutcome,
+        address indexed account,
+        uint8 outcomeIndex,
+        uint128 amountIn,
+        uint128 collateralOut
+    );
     event ComboConditionPrepared(
         bytes32 indexed conditionId,
         bytes32 indexed legsHash,
@@ -532,53 +564,7 @@ library Events {
     event ComboUnwrapped(
         address indexed account, uint256 indexed comboPositionId, uint256 indexed underlyingPositionId, uint128 amount
     );
-    event ComboCompressed(
-        address indexed account,
-        uint256 indexed oldPositionId,
-        uint256 indexed newPositionId,
-        uint128 amountIn,
-        uint128 positionAmountOut,
-        uint128 collateralOut
-    );
     event ComboRedeemed(address indexed account, uint256 indexed positionId, uint128 amountIn, uint128 collateralOut);
-    event ComboSplitOnCondition(
-        address indexed account,
-        uint256 indexed parentYesPositionId,
-        bytes32 indexed binaryConditionId,
-        uint256 childYesPositionId,
-        uint256 childNoPositionId,
-        uint128 amount
-    );
-    event ComboMergedOnCondition(
-        address indexed account,
-        uint256 indexed parentYesPositionId,
-        bytes32 indexed binaryConditionId,
-        uint256 childYesPositionId,
-        uint256 childNoPositionId,
-        uint128 amount
-    );
-    event ComboNoLegExtracted(
-        address indexed account,
-        uint256 indexed fullNoPositionId,
-        uint256 indexed extractedLeg,
-        uint256 reducedNoPositionId,
-        uint256 residualYesPositionId,
-        uint128 amount
-    );
-    event ComboNoLegInjected(
-        address indexed account,
-        uint256 indexed fullNoPositionId,
-        uint256 indexed injectedLeg,
-        uint256 reducedNoPositionId,
-        uint256 residualYesPositionId,
-        uint128 amount
-    );
-    event ComboNoConvertedToYesBasket(
-        address indexed account, uint256 indexed fullNoPositionId, uint128 amount, uint256[] basketPositionIds
-    );
-    event ComboNoMergedFromYesBasket(
-        address indexed account, uint256 indexed fullNoPositionId, address indexed receiver, uint128 amount
-    );
     event ComboMarketCreated(
         bytes32 indexed marketId,
         bytes32 indexed conditionId,

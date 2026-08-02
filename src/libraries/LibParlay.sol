@@ -15,7 +15,7 @@ library LibParlay {
         address ticketToken;
         address feeRecipient;
         uint128 underwritingFee;
-        uint16 vaultFeeBps;
+        uint16 seniorPoolFeeBps;
         uint16 feeRecipientBps;
     }
 

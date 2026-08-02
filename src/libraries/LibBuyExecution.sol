@@ -5,6 +5,8 @@ import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IER
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {CurveCLOBTypes} from "../types/CurveCLOBTypes.sol";
+import {MLOPredictionTypes} from "../types/MLOPredictionTypes.sol";
+import {IMLOPredictionAdapterFacet} from "../interfaces/IMLOPredictionAdapterFacet.sol";
 import {Errors} from "./Errors.sol";
 import {Events} from "./Events.sol";
 import {LibBookAccess} from "./LibBookAccess.sol";
@@ -13,10 +15,12 @@ import {LibBookPricing} from "./LibBookPricing.sol";
 import {LibCLOBBook} from "./LibCLOBBook.sol";
 import {LibCTF} from "./LibCTF.sol";
 import {LibCurveEscrow} from "./LibCurveEscrow.sol";
+import {LibCurveIndex} from "./LibCurveIndex.sol";
 import {LibCurveMath} from "./LibCurveMath.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
 import {LibMarkOracle} from "./LibMarkOracle.sol";
 import {LibMarketAccess} from "./LibMarketAccess.sol";
+import {LibMLORecovery} from "./LibMLORecovery.sol";
 import {LibProductAdapter} from "./LibProductAdapter.sol";
 
 library LibBuyExecution {
@@ -47,6 +51,7 @@ library LibBuyExecution {
         bytes32 marketId;
         bool isYesSide;
         address payer;
+        address taker;
         address receiver;
     }
 
@@ -82,6 +87,7 @@ library LibBuyExecution {
                 marketId: book.marketId,
                 isYesSide: curve.isYesSide,
                 payer: payer,
+                taker: payer,
                 receiver: receiver
             }),
             quote
@@ -90,6 +96,13 @@ library LibBuyExecution {
     }
 
     function fillBest(CurveCLOBTypes.FillBestParams memory params, FillMode mode)
+        internal
+        returns (CurveCLOBTypes.FillBestResult memory result)
+    {
+        return fillBest(params, mode, params.payer);
+    }
+
+    function fillBest(CurveCLOBTypes.FillBestParams memory params, FillMode mode, address taker)
         internal
         returns (CurveCLOBTypes.FillBestResult memory result)
     {
@@ -107,11 +120,19 @@ library LibBuyExecution {
                 payer: params.payer,
                 receiver: params.receiver
             }),
-            mode
+            mode,
+            taker
         );
     }
 
     function fillBookBest(CurveCLOBTypes.FillBookParams memory params, FillMode mode)
+        internal
+        returns (CurveCLOBTypes.FillBestResult memory result)
+    {
+        return fillBookBest(params, mode, params.payer);
+    }
+
+    function fillBookBest(CurveCLOBTypes.FillBookParams memory params, FillMode mode, address taker)
         internal
         returns (CurveCLOBTypes.FillBestResult memory result)
     {
@@ -132,8 +153,10 @@ library LibBuyExecution {
             marketId: book.marketId,
             isYesSide: book.isYesSide,
             payer: params.payer,
+            taker: taker,
             receiver: params.receiver
         });
+        LibMLORecovery.maintainCurves(state, params.curveIds);
 
         RouteTotals memory totals;
         totals.remainingCollateral = params.maxQuoteIn;
@@ -168,8 +191,12 @@ library LibBuyExecution {
             ) {
                 continue;
             }
+            if (
+                !LibProductAdapter.isEscrowBackedCurve(state, curveIds[index])
+                    && !state.adapterCurveMetadata[curveIds[index]].active
+            ) continue;
 
-            Quote memory quote = quoteCurve(state, curve, remainingQuote);
+            Quote memory quote = quoteCurve(state, curveIds[index], curve, remainingQuote);
             if (quote.sharesOut == 0) {
                 continue;
             }
@@ -250,6 +277,9 @@ library LibBuyExecution {
             ) {
                 continue;
             }
+            if (!LibProductAdapter.isEscrowBackedCurve(state, curveId) && !state.adapterCurveMetadata[curveId].active) {
+                continue;
+            }
             uint128 price = LibCurveMath.currentPrice(state, curve);
             if (!found || price < bestPrice || (price == bestPrice && curveId < bestCurveId)) {
                 bestIndex = index;
@@ -294,7 +324,7 @@ library LibBuyExecution {
             revert Errors.CurveExpired(curveId);
         }
 
-        quote = quoteCurve(state, curve, collateralIn);
+        quote = quoteCurve(state, curveId, curve, collateralIn);
     }
 
     function executeFill(
@@ -305,6 +335,28 @@ library LibBuyExecution {
     ) internal returns (Quote memory executedQuote) {
         LibEveMarket.StoredCurve storage curve = state.curves[curveId];
         LibEveMarket.Book storage book = state.books[curve.bookId];
+        if (!LibProductAdapter.isEscrowBackedCurve(state, curveId)) {
+            MLOPredictionTypes.MLOAskFillResult memory mloResult = IMLOPredictionAdapterFacet(address(this))
+                .executeMLOAskFromRoute(
+                    MLOPredictionTypes.MLOAskFillRequest({
+                        curveId: curveId,
+                        collateralIn: quote.collateralUsed,
+                        minSharesOut: quote.sharesOut,
+                        expectedGeneration: curve.generation,
+                        expectedCommitment: LibCurveMath.curveCommitment(curve.packed),
+                        fundingSource: request.payer,
+                        taker: request.taker,
+                        receiver: request.receiver,
+                        fundingIsEscrowed: request.payer == address(this)
+                    })
+                );
+            return Quote({
+                sharesOut: mloResult.fill.sharesOut,
+                fee: mloResult.fill.feePaid,
+                price: LibCurveMath.currentPrice(state, curve),
+                collateralUsed: mloResult.fill.collateralUsed
+            });
+        }
         LibProductAdapter.requireEscrowBackedCurve(state, curveId);
         if (
             book.assetType == LibEveMarket.BookAssetType.ERC20
@@ -317,7 +369,7 @@ library LibBuyExecution {
         LibBookAccounting.FeeShares memory fees = LibBookAccounting.feeSharesForBook(state, book, quote.fee);
         IERC20 quoteToken = IERC20(book.quoteToken);
 
-        curve.remainingVolume -= quote.sharesOut;
+        LibCurveIndex.decreaseAskRemaining(state, curveId, quote.sharesOut);
         LibBookAccounting.recordBookAndMarketFill(
             state, book, curve.maker, quote.price, quote.collateralUsed, quote.fee, fees
         );
@@ -356,11 +408,14 @@ library LibBuyExecution {
         if (curve.bookId != request.bookId) {
             revert Errors.CurveBookMismatch(request.bookId, curve.bookId);
         }
-        if (request.marketId != bytes32(0) && curve.isYesSide != request.isYesSide) {
+        if (
+            request.marketId != bytes32(0) && !state.multiOutcomeMarkets[request.marketId].exists
+                && curve.isYesSide != request.isYesSide
+        ) {
             revert Errors.CurveSideMismatch(request.isYesSide, curve.isYesSide);
         }
-        if (curve.maker == request.payer) {
-            revert Errors.SelfFillNotAllowed(curveId, curve.maker, request.payer);
+        if (curve.maker == request.taker) {
+            revert Errors.SelfFillNotAllowed(curveId, curve.maker, request.taker);
         }
 
         if (quote.sharesOut == 0) {
@@ -392,7 +447,7 @@ library LibBuyExecution {
             LibCurveEscrow.transferExactERC20From(book.quoteToken, request.payer, address(this), quote.collateralUsed);
         }
 
-        curve.remainingVolume -= quote.sharesOut;
+        LibCurveIndex.decreaseAskRemaining(state, curveId, quote.sharesOut);
         uint128 actualBaseOut = LibCurveEscrow.transferBaseFromEscrow(book, request.receiver, quote.sharesOut);
         uint128 grossCost = LibBookPricing.grossCostFor(book, actualBaseOut, quote.price);
         uint128 fee = LibCurveMath.feeFor(grossCost, book.feeConfig.entryFeeBps);
@@ -457,11 +512,18 @@ library LibBuyExecution {
 
     function quoteCurve(
         LibEveMarket.EveMarketStorage storage state,
+        uint256 curveId,
         LibEveMarket.StoredCurve storage curve,
         uint128 collateralIn
     ) internal view returns (Quote memory quote) {
         (quote.sharesOut, quote.fee, quote.price, quote.collateralUsed) =
             LibCurveMath.quoteAsk(state, curve, collateralIn);
+        if (quote.sharesOut != 0 && !LibProductAdapter.isEscrowBackedCurve(state, curveId)) {
+            LibEveMarket.Book storage book = state.books[curve.bookId];
+            uint128 grossCost = LibBookPricing.grossCostForUp(book, quote.sharesOut, quote.price);
+            quote.fee = LibCurveMath.feeFor(grossCost, book.feeConfig.entryFeeBps);
+            quote.collateralUsed = grossCost + quote.fee;
+        }
     }
 
     function bookAssetIdsMatch(LibEveMarket.Book storage book) internal view returns (bool) {
@@ -472,6 +534,16 @@ library LibBuyExecution {
         LibEveMarket.Market storage market = LibEveMarket.store().markets[book.marketId];
         if (market.marketId == bytes32(0) || market.positionTokenType != LibEveMarket.PositionTokenType.CTF) {
             return true;
+        }
+
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibEveMarket.MultiOutcomeMarket storage multi = state.multiOutcomeMarkets[book.marketId];
+        if (multi.exists) {
+            LibEveMarket.PositionMetadata storage metadata = state.positionMetadata[book.baseToken][book.baseTokenId];
+            return book.baseToken == market.positionToken && metadata.exists && metadata.marketId == book.marketId
+                && metadata.outcome < multi.outcomeCount
+                && state.multiOutcomePositionIds[book.marketId][metadata.outcome] == book.baseTokenId
+                && state.multiOutcomeBookIds[book.marketId][metadata.outcome] == book.bookId;
         }
 
         (uint256 yesPositionId, uint256 noPositionId) =

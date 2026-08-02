@@ -36,18 +36,11 @@ library LibFeeConfigAdmin {
         uint16 makerFeeBps,
         uint16 creatorFeeBps,
         uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
+        uint16 seniorPoolFeeBps,
+        uint16 resolverFeeBps
     ) internal {
         setBookFeeSplit(
-            config.orderbookFeeConfig,
-            makerFeeBps,
-            creatorFeeBps,
-            protocolFeeBps,
-            vaultFeeBps,
-            resolverFeeBps,
-            evRiskFeeBps
+            config.orderbookFeeConfig, makerFeeBps, creatorFeeBps, protocolFeeBps, seniorPoolFeeBps, resolverFeeBps
         );
     }
 
@@ -55,16 +48,14 @@ library LibFeeConfigAdmin {
         LibEveMarket.MarketConfig storage config,
         uint16 makerFeeBps,
         uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
+        uint16 seniorPoolFeeBps,
+        uint16 resolverFeeBps
     ) internal {
-        enforceFiveWayFeeSplit(makerFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
+        _enforceFeeSplit(uint256(makerFeeBps) + protocolFeeBps + seniorPoolFeeBps + resolverFeeBps);
         config.spotFeeConfig.makerFeeBps = makerFeeBps;
         config.spotFeeConfig.protocolFeeBps = protocolFeeBps;
-        config.spotFeeConfig.vaultFeeBps = vaultFeeBps;
+        config.spotFeeConfig.seniorPoolFeeBps = seniorPoolFeeBps;
         config.spotFeeConfig.resolverFeeBps = resolverFeeBps;
-        config.spotFeeConfig.evRiskFeeBps = evRiskFeeBps;
     }
 
     function setComboFeeSplit(
@@ -72,33 +63,29 @@ library LibFeeConfigAdmin {
         uint16 makerFeeBps,
         uint16 creatorFeeBps,
         uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
+        uint16 seniorPoolFeeBps,
+        uint16 resolverFeeBps
     ) internal {
-        enforceSixWayFeeSplit(makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
+        _enforceFeeSplit(uint256(makerFeeBps) + creatorFeeBps + protocolFeeBps + seniorPoolFeeBps + resolverFeeBps);
         config.comboFeeConfig.makerFeeBps = makerFeeBps;
         config.comboFeeConfig.creatorFeeBps = creatorFeeBps;
         config.comboFeeConfig.protocolFeeBps = protocolFeeBps;
-        config.comboFeeConfig.vaultFeeBps = vaultFeeBps;
+        config.comboFeeConfig.seniorPoolFeeBps = seniorPoolFeeBps;
         config.comboFeeConfig.resolverFeeBps = resolverFeeBps;
-        config.comboFeeConfig.evRiskFeeBps = evRiskFeeBps;
     }
 
     function setParimutuelFeeSplit(
         LibEveMarket.MarketConfig storage config,
         uint16 creatorFeeBps,
         uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
+        uint16 seniorPoolFeeBps,
+        uint16 resolverFeeBps
     ) internal {
-        enforceFiveWayFeeSplit(creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
+        _enforceFeeSplit(uint256(creatorFeeBps) + protocolFeeBps + seniorPoolFeeBps + resolverFeeBps);
         config.parimutuelFeeConfig.creatorFeeBps = creatorFeeBps;
         config.parimutuelFeeConfig.protocolFeeBps = protocolFeeBps;
-        config.parimutuelFeeConfig.vaultFeeBps = vaultFeeBps;
+        config.parimutuelFeeConfig.seniorPoolFeeBps = seniorPoolFeeBps;
         config.parimutuelFeeConfig.resolverFeeBps = resolverFeeBps;
-        config.parimutuelFeeConfig.evRiskFeeBps = evRiskFeeBps;
     }
 
     function setEntryFeeBps(LibEveMarket.BookFeeConfig storage feeConfig, uint16 newEntryFeeBps)
@@ -115,60 +102,18 @@ library LibFeeConfigAdmin {
         uint16 makerFeeBps,
         uint16 creatorFeeBps,
         uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
+        uint16 seniorPoolFeeBps,
+        uint16 resolverFeeBps
     ) internal {
-        enforceSixWayFeeSplit(makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
+        _enforceFeeSplit(uint256(makerFeeBps) + creatorFeeBps + protocolFeeBps + seniorPoolFeeBps + resolverFeeBps);
         feeConfig.makerFeeBps = makerFeeBps;
         feeConfig.creatorFeeBps = creatorFeeBps;
         feeConfig.protocolFeeBps = protocolFeeBps;
-        feeConfig.vaultFeeBps = vaultFeeBps;
+        feeConfig.seniorPoolFeeBps = seniorPoolFeeBps;
         feeConfig.resolverFeeBps = resolverFeeBps;
-        feeConfig.evRiskFeeBps = evRiskFeeBps;
     }
 
-    function enforceFourWayFeeSplit(uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps)
-        internal
-        pure
-    {
-        uint256 totalBps = uint256(makerFeeBps) + creatorFeeBps + protocolFeeBps + vaultFeeBps;
-        if (totalBps != 10_000) {
-            revert Errors.InvalidFeeSplit(totalBps);
-        }
-    }
-
-    function enforceThreeWayFeeSplit(uint16 firstFeeBps, uint16 secondFeeBps, uint16 thirdFeeBps) internal pure {
-        uint256 totalBps = uint256(firstFeeBps) + secondFeeBps + thirdFeeBps;
-        if (totalBps != 10_000) {
-            revert Errors.InvalidFeeSplit(totalBps);
-        }
-    }
-
-    function enforceFiveWayFeeSplit(
-        uint16 firstFeeBps,
-        uint16 secondFeeBps,
-        uint16 thirdFeeBps,
-        uint16 fourthFeeBps,
-        uint16 fifthFeeBps
-    ) internal pure {
-        uint256 totalBps =
-            uint256(firstFeeBps) + secondFeeBps + thirdFeeBps + fourthFeeBps + fifthFeeBps;
-        if (totalBps != 10_000) {
-            revert Errors.InvalidFeeSplit(totalBps);
-        }
-    }
-
-    function enforceSixWayFeeSplit(
-        uint16 firstFeeBps,
-        uint16 secondFeeBps,
-        uint16 thirdFeeBps,
-        uint16 fourthFeeBps,
-        uint16 fifthFeeBps,
-        uint16 sixthFeeBps
-    ) internal pure {
-        uint256 totalBps =
-            uint256(firstFeeBps) + secondFeeBps + thirdFeeBps + fourthFeeBps + fifthFeeBps + sixthFeeBps;
+    function _enforceFeeSplit(uint256 totalBps) private pure {
         if (totalBps != 10_000) {
             revert Errors.InvalidFeeSplit(totalBps);
         }

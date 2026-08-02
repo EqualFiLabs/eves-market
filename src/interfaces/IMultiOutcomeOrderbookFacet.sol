@@ -50,6 +50,13 @@ interface IMultiOutcomeOrderbookFacet is MarketFactoryTypes {
         bool exists;
     }
 
+    struct OutcomeCTFPositionView {
+        bytes32 questionId;
+        bytes32 conditionId;
+        uint256 yesPositionId;
+        uint256 noPositionId;
+    }
+
     function createMultiOutcomeMarket(CreateMultiOutcomeMarketParams calldata params)
         external
         returns (bytes32 marketId);
@@ -70,17 +77,12 @@ interface IMultiOutcomeOrderbookFacet is MarketFactoryTypes {
 
     function getOutcomePositionId(bytes32 marketId, uint8 outcome) external view returns (uint256 positionId);
 
-    function getMultiOutcomeBooks(bytes32 marketId) external view returns (bytes32[] memory bookIds);
-
-    function getMultiOutcomeTopOfBook(bytes32 marketId)
+    function getOutcomeCTFPositions(bytes32 marketId, uint8 outcome)
         external
         view
-        returns (
-            uint128[] memory bestAskPrices,
-            uint128[] memory bestBidPrices,
-            uint128[] memory midpointPrices,
-            uint128[] memory lastTradePrices
-        );
+        returns (OutcomeCTFPositionView memory positions);
+
+    function getMultiOutcomeBooks(bytes32 marketId) external view returns (bytes32[] memory bookIds);
 
     function splitOutcomeSet(bytes32 marketId, uint128 amount, address receiver)
         external

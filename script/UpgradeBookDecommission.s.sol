@@ -6,22 +6,15 @@ import {Script} from "../lib/forge-std/src/Script.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {BookFacet} from "../src/facets/BookFacet.sol";
 import {BookTradeFacet} from "../src/facets/BookTradeFacet.sol";
-import {BookViewFacet} from "../src/facets/BookViewFacet.sol";
+import {BookSellFacet} from "../src/facets/BookSellFacet.sol";
 import {IBookAdminFacet} from "../src/interfaces/IBookAdminFacet.sol";
-import {IBookOrderFacet} from "../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../src/interfaces/IBookTradeFacet.sol";
-import {IBookViewFacet} from "../src/interfaces/IBookViewFacet.sol";
-import {ICurveInventoryFacet} from "../src/interfaces/ICurveInventoryFacet.sol";
-import {ICurveLifecycleFacet} from "../src/interfaces/ICurveLifecycleFacet.sol";
-import {ICurveTradeFacet} from "../src/interfaces/ICurveTradeFacet.sol";
-import {ICurveViewFacet} from "../src/interfaces/ICurveViewFacet.sol";
-import {CurveCLOBTypes} from "../src/types/CurveCLOBTypes.sol";
 
 contract UpgradeBookDecommission is Script {
     struct UpgradeDeployment {
         address bookFacet;
         address bookTradeFacet;
-        address bookViewFacet;
+        address bookSellFacet;
     }
 
     function run() external returns (UpgradeDeployment memory deployment) {
@@ -31,7 +24,7 @@ contract UpgradeBookDecommission is Script {
         vm.startBroadcast(privateKey);
         deployment.bookFacet = address(new BookFacet());
         deployment.bookTradeFacet = address(new BookTradeFacet());
-        deployment.bookViewFacet = address(new BookViewFacet());
+        deployment.bookSellFacet = address(new BookSellFacet());
 
         DiamondCutFacet.FacetCut[] memory cuts = _buildCuts(diamond, deployment);
         DiamondCutFacet(diamond).diamondCut(cuts, address(0), "");
@@ -45,10 +38,8 @@ contract UpgradeBookDecommission is Script {
         _assertSelector(diamond, IBookAdminFacet.finalizeBookDecommission.selector, deployment.bookFacet);
         _assertSelector(diamond, IBookTradeFacet.fillBookBest.selector, deployment.bookTradeFacet);
         _assertSelector(diamond, IBookTradeFacet.fillBookBestFor.selector, deployment.bookTradeFacet);
-        _assertSelector(diamond, IBookTradeFacet.sellBookBest.selector, deployment.bookTradeFacet);
-        _assertSelector(diamond, IBookTradeFacet.sellBookBestFor.selector, deployment.bookTradeFacet);
-        _assertSelector(diamond, IBookViewFacet.previewBookExecution.selector, deployment.bookViewFacet);
-        _assertSelector(diamond, IBookViewFacet.getBookTopOfBook.selector, deployment.bookViewFacet);
+        _assertSelector(diamond, IBookTradeFacet.sellBookBest.selector, deployment.bookSellFacet);
+        _assertSelector(diamond, IBookTradeFacet.sellBookBestFor.selector, deployment.bookSellFacet);
     }
 
     function _buildCuts(address diamond, UpgradeDeployment memory deployment)
@@ -73,9 +64,9 @@ contract UpgradeBookDecommission is Script {
             functionSelectors: _bookTradeSelectors()
         });
         cuts[3] = DiamondCutFacet.FacetCut({
-            facetAddress: deployment.bookViewFacet,
+            facetAddress: deployment.bookSellFacet,
             action: DiamondCutFacet.FacetCutAction.Replace,
-            functionSelectors: _bookViewSelectors()
+            functionSelectors: _bookSellSelectors()
         });
     }
 
@@ -106,17 +97,15 @@ contract UpgradeBookDecommission is Script {
     }
 
     function _bookTradeSelectors() private pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](2);
         selectors[0] = IBookTradeFacet.fillBookBest.selector;
         selectors[1] = IBookTradeFacet.fillBookBestFor.selector;
-        selectors[2] = IBookTradeFacet.sellBookBest.selector;
-        selectors[3] = IBookTradeFacet.sellBookBestFor.selector;
     }
 
-    function _bookViewSelectors() private pure returns (bytes4[] memory selectors) {
+    function _bookSellSelectors() private pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](2);
-        selectors[0] = IBookViewFacet.previewBookExecution.selector;
-        selectors[1] = IBookViewFacet.getBookTopOfBook.selector;
+        selectors[0] = IBookTradeFacet.sellBookBest.selector;
+        selectors[1] = IBookTradeFacet.sellBookBestFor.selector;
     }
 
     function _assertSelector(address diamond, bytes4 selector, address expectedFacet) private view {

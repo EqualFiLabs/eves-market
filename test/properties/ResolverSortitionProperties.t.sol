@@ -10,6 +10,8 @@ import {LibMarketCreation} from "src/libraries/LibMarketCreation.sol";
 import {LibResolverJury} from "src/libraries/LibResolverJury.sol";
 import {ResolverJuryFacet} from "src/facets/ResolverJuryFacet.sol";
 import {ResolverRegistryFacet} from "src/facets/ResolverRegistryFacet.sol";
+import {ResolverRegistryReputationFacet} from "src/facets/ResolverRegistryReputationFacet.sol";
+import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {IEvesPositionManager} from "src/interfaces/IEvesPositionManager.sol";
 import {IResolverJuryFacet} from "src/interfaces/IResolverJuryFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
@@ -18,12 +20,18 @@ import {MockEveToken} from "test/helpers/MockEveToken.sol";
 import {MockUSDC} from "test/helpers/MockUSDC.sol";
 import {ResolutionFixture, StateProbeFacet} from "test/helpers/DiamondFixtures.sol";
 
-contract ResolverSortitionPropertyHarness is ResolverJuryFacet, ResolverRegistryFacet {
+contract ResolverSortitionPropertyHarness is
+    ResolverJuryFacet,
+    ResolverRegistryFacet,
+    ResolverRegistryViewFacet,
+    ResolverRegistryReputationFacet
+{
     function configure(address eveIdentity, address mintFeeToken, address eveToken, uint256 threshold) external {
         LibResolverJury.store().eveIdentity = eveIdentity;
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
         config.eveToken = eveToken;
         config.bondToken = eveToken;
+        config.eveTreasury = msg.sender;
         config.resolverJuryConfig.identityMintFeeToken = mintFeeToken;
         config.resolverJuryConfig.identityMintFee = 1e6;
         config.resolverJuryConfig.resolverSeatStake = 100e18;

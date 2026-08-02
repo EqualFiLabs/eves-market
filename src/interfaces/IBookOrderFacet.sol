@@ -31,4 +31,6 @@ interface IBookOrderFacet {
         uint256 newPacked,
         uint32 expectedGeneration
     ) external;
+
+    function pruneBookCurves(bytes32 bookId, uint256[] calldata curveIds) external returns (uint256 pruned);
 }

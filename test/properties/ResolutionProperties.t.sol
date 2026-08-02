@@ -29,8 +29,8 @@ contract ResolutionPropertiesTest is ResolutionFixture {
         assertEq(proposer, creator);
         assertEq(proposedOutcome, outcome);
         assertEq(escalationLevel, 0);
-        assertEq(proposedAt, uint64(block.timestamp));
-        assertEq(disputeDeadline, uint64(block.timestamp + 2 hours));
+        assertEq(proposedAt, uint64(vm.getBlockTimestamp()));
+        assertEq(disputeDeadline, uint64(vm.getBlockTimestamp() + 2 hours));
         assertEq(storedOutcome, 0);
         assertEq(state, uint8(LibEveMarket.MarketState.Disputed));
     }
@@ -65,7 +65,7 @@ contract ResolutionPropertiesTest is ResolutionFixture {
         assertEq(escalationLevel, 2);
         assertEq(bondAmount, 0.5 ether);
         assertEq(state, uint8(LibEveMarket.MarketState.Disputed));
-        assertEq(disputeDeadline, uint64(block.timestamp + 2 hours));
+        assertEq(disputeDeadline, uint64(vm.getBlockTimestamp() + 2 hours));
         assertEq(snapshotBlock, 0);
         assertEq(disputeView.marketId, marketId);
         assertEq(disputeView.state, uint8(LibResolverJury.DisputeState.CommitteeSelectionPending));

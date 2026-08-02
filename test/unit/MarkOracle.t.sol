@@ -4,13 +4,15 @@ pragma solidity ^0.8.28;
 import {BookFacet} from "../../src/facets/BookFacet.sol";
 import {BookOrderFacet} from "../../src/facets/BookOrderFacet.sol";
 import {BookTradeFacet} from "../../src/facets/BookTradeFacet.sol";
+import {BookSellFacet} from "../../src/facets/BookSellFacet.sol";
 import {BookViewFacet} from "../../src/facets/BookViewFacet.sol";
 import {CurveCLOBFacet} from "../../src/facets/CurveCLOBFacet.sol";
 import {CurveInventoryFacet} from "../../src/facets/CurveInventoryFacet.sol";
 import {CurveLifecycleFacet} from "../../src/facets/CurveLifecycleFacet.sol";
 import {CurveViewFacet} from "../../src/facets/CurveViewFacet.sol";
 import {MarkOracleFacet} from "../../src/facets/MarkOracleFacet.sol";
-import {TradeRouterSellFacet} from "../../src/facets/TradeRouterSellFacet.sol";
+import {CollateralTradeRouterSellFacet} from "../../src/facets/CollateralTradeRouterSellFacet.sol";
+import {CollateralTradeRouterPreviewFacet} from "../../src/facets/CollateralTradeRouterPreviewFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
@@ -47,12 +49,14 @@ contract MarkOracleTest is TestBase {
         diamond.registerFacet(address(new BookFacet()), _bookSelectors());
         diamond.registerFacet(address(new BookOrderFacet()), _bookOrderSelectors());
         diamond.registerFacet(address(new BookTradeFacet()), _bookTradeSelectors());
+        diamond.registerFacet(address(new BookSellFacet()), _bookSellSelectors());
         diamond.registerFacet(address(new BookViewFacet()), _bookViewSelectors());
         diamond.registerFacet(address(new CurveInventoryFacet()), _curveInventorySelectors());
         diamond.registerFacet(address(new CurveLifecycleFacet()), _curveLifecycleSelectors());
         diamond.registerFacet(address(new CurveCLOBFacet()), _curveTradeSelectors());
         diamond.registerFacet(address(new CurveViewFacet()), _curveViewSelectors());
-        diamond.registerFacet(address(new TradeRouterSellFacet()), _tradeRouterSellSelectors());
+        diamond.registerFacet(address(new CollateralTradeRouterSellFacet()), _tradeRouterSellSelectors());
+        diamond.registerFacet(address(new CollateralTradeRouterPreviewFacet()), _tradeRouterPreviewSelectors());
         diamond.registerFacet(address(new MarkOracleFacet()), _markOracleSelectors());
         vm.stopPrank();
     }
@@ -173,11 +177,13 @@ contract MarkOracleTest is TestBase {
 
         vm.startPrank(taker);
         usdc.approve(address(diamond), 80e6);
+        uint256 startBlock = vm.getBlockNumber();
+        uint256 startTime = vm.getBlockTimestamp();
         for (uint256 index; index < 35; ++index) {
             (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
             ICurveTradeFacet(address(diamond)).fillCurve(curveId, 2e6, 1e6, generation, commitment);
-            vm.roll(block.number + 1);
-            vm.warp(block.timestamp + 1);
+            vm.roll(startBlock + index + 1);
+            vm.warp(startTime + index + 1);
         }
         vm.stopPrank();
 
@@ -429,15 +435,21 @@ contract MarkOracleTest is TestBase {
     }
 
     function _bookTradeSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](1);
+        selectors[0] = IBookTradeFacet.fillBookBest.selector;
+    }
+
+    function _bookSellSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
         selectors[0] = IBookTradeFacet.sellBookBest.selector;
-        selectors[1] = IBookTradeFacet.fillBookBest.selector;
     }
 
     function _bookViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](4);
         selectors[0] = IBookViewFacet.previewBookExecution.selector;
-        selectors[1] = IBookViewFacet.getBookTopOfBook.selector;
+        selectors[1] = IBookViewFacet.getBookCurveIdsPage.selector;
+        selectors[2] = IBookViewFacet.getActiveBookCurveIdsPage.selector;
+        selectors[3] = IBookViewFacet.getBookTopOfBookPage.selector;
     }
 
     function _curveInventorySelectors() internal pure returns (bytes4[] memory selectors) {
@@ -468,11 +480,14 @@ contract MarkOracleTest is TestBase {
     }
 
     function _tradeRouterSellSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
-        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[1] = ITradeRouter.sellWithUSDC.selector;
-        selectors[2] = ITradeRouter.previewSellBest.selector;
-        selectors[3] = ITradeRouter.sellWithCollateral.selector;
+        selectors = new bytes4[](1);
+        selectors[0] = ITradeRouter.sellWithCollateral.selector;
+    }
+
+    function _tradeRouterPreviewSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = ITradeRouter.previewSellBest.selector;
+        selectors[1] = ITradeRouter.executeExactRouterTransfer.selector;
     }
 
     function _markOracleSelectors() internal pure returns (bytes4[] memory selectors) {

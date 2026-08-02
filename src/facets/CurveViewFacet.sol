@@ -29,18 +29,4 @@ contract CurveViewFacet is CurveCLOBTypes {
     {
         return LibCLOBView.previewMarketExecution(LibEveMarket.store(), marketId, isYesSide, collateralIn, curveIds);
     }
-
-    function getMarketTopOfBook(bytes32 marketId)
-        external
-        view
-        returns (
-            uint128 bestYesPrice,
-            uint128 bestNoPrice,
-            uint128 midpointPrice,
-            uint128 lastTradePrice,
-            uint128 displayPrice
-        )
-    {
-        return LibCLOBView.marketTopOfBook(LibEveMarket.store(), marketId);
-    }
 }

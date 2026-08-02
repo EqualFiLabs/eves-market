@@ -11,6 +11,7 @@ import {IERC1155} from "../../lib/openzeppelin-contracts/contracts/token/ERC1155
 import {BookFacet} from "../../src/facets/BookFacet.sol";
 import {BookOrderFacet} from "../../src/facets/BookOrderFacet.sol";
 import {BookTradeFacet} from "../../src/facets/BookTradeFacet.sol";
+import {BookSellFacet} from "../../src/facets/BookSellFacet.sol";
 import {CurveInventoryFacet} from "../../src/facets/CurveInventoryFacet.sol";
 import {CurveLifecycleFacet} from "../../src/facets/CurveLifecycleFacet.sol";
 import {CurveViewFacet} from "../../src/facets/CurveViewFacet.sol";
@@ -99,6 +100,7 @@ contract DelayedOrderInvariantHandler is TestBase {
         diamond.registerFacet(address(new BookFacet()), _bookSelectors());
         diamond.registerFacet(address(new BookOrderFacet()), _bookOrderSelectors());
         diamond.registerFacet(address(new BookTradeFacet()), _bookTradeSelectors());
+        diamond.registerFacet(address(new BookSellFacet()), _bookSellSelectors());
         diamond.registerFacet(address(new CurveInventoryFacet()), _curveInventorySelectors());
         diamond.registerFacet(address(new CurveLifecycleFacet()), _curveLifecycleSelectors());
         diamond.registerFacet(address(new CurveViewFacet()), _curveViewSelectors());
@@ -470,9 +472,13 @@ contract DelayedOrderInvariantHandler is TestBase {
     }
 
     function _bookTradeSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](1);
         selectors[0] = IBookTradeFacet.fillBookBestFor.selector;
-        selectors[1] = IBookTradeFacet.sellBookBestFor.selector;
+    }
+
+    function _bookSellSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = IBookTradeFacet.sellBookBestFor.selector;
     }
 
     function _curveInventorySelectors() internal pure returns (bytes4[] memory selectors) {

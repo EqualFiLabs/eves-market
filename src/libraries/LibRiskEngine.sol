@@ -2,9 +2,11 @@
 pragma solidity ^0.8.28;
 
 import {IMarginAccountFacet} from "../interfaces/IMarginAccountFacet.sol";
+import {IMLOPredictionAdapterFacet} from "../interfaces/IMLOPredictionAdapterFacet.sol";
 import {Math} from "../../lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
 import {LibMarkOracle} from "./LibMarkOracle.sol";
+import {LibMLOScenarioRisk} from "./LibMLOScenarioRisk.sol";
 import {MarginTypes} from "../types/MarginTypes.sol";
 import {MarkOracleTypes} from "../types/MarkOracleTypes.sol";
 
@@ -12,6 +14,38 @@ library LibRiskEngine {
     uint16 internal constant MAX_BPS = 10_000;
     uint16 internal constant DEFAULT_MARGIN_BPS = 10_000;
     uint256 internal constant WAD = 1e18;
+
+    function synchronizeMLOState(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId)
+        internal
+        returns (MarginTypes.BucketState newState)
+    {
+        MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        if (bucket.kind != MarginTypes.BucketKind.MLO) {
+            revert IMLOPredictionAdapterFacet.MLORecoveryNotEligible(
+                bucketId, uint8(MarginTypes.BucketHealthStatus.Healthy)
+            );
+        }
+        accrueConfiguredFunding(state, bucketId, bucket);
+        MarginTypes.BucketState previous = bucket.state;
+        if (previous == MarginTypes.BucketState.Recovering || previous == MarginTypes.BucketState.Closed) {
+            return previous;
+        }
+        MarginTypes.BucketHealth memory health = bucketHealth(state, bucketId);
+        if (health.status == MarginTypes.BucketHealthStatus.BelowMaintenance) {
+            newState = MarginTypes.BucketState.Recovering;
+        } else if (health.status == MarginTypes.BucketHealthStatus.BelowInitial) {
+            newState = MarginTypes.BucketState.ReduceOnly;
+        } else if (previous == MarginTypes.BucketState.ReduceOnly || previous == MarginTypes.BucketState.Warning) {
+            newState = MarginTypes.BucketState.Healthy;
+        } else {
+            return previous;
+        }
+        if (newState == previous) return previous;
+        bucket.state = newState;
+        emit IMLOPredictionAdapterFacet.MLOBucketStateSynchronized(
+            bucketId, uint8(previous), uint8(newState), uint8(health.status)
+        );
+    }
 
     function bucketRisk(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId)
         internal
@@ -25,6 +59,7 @@ library LibRiskEngine {
             positionRisk: bucket.positionRisk,
             vaultDebt: bucket.vaultDebt,
             fundingLiability: bucket.fundingLiability,
+            fundingBadDebt: bucket.fundingBadDebt,
             realizedProfits: bucket.realizedProfits,
             realizedLosses: bucket.realizedLosses,
             unrealizedProfits: bucket.unrealizedProfits,
@@ -32,11 +67,26 @@ library LibRiskEngine {
             recoveryProfits: bucket.recoveryProfits,
             recoveryLosses: bucket.recoveryLosses,
             badDebt: bucket.badDebt,
-            lockedRisk: lockedRisk(bucket)
+            lockedRisk: lockedRisk(state, bucketId)
         });
     }
 
-    function lockedRisk(MarginTypes.MarginBucket storage bucket) internal view returns (uint256 locked) {
+    function lockedRisk(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId)
+        internal
+        view
+        returns (uint256 locked)
+    {
+        MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        if (isScenarioManaged(state, bucketId)) {
+            MarginTypes.RiskParams memory params = riskParamsForBucket(state, bucket);
+            locked = LibMLOScenarioRisk.requiredMargin(
+                state,
+                bucketId,
+                bucket.fundingLiability + pendingConfiguredFunding(state, bucket),
+                params.initialMarginBps
+            );
+            return locked + bucket.unrealizedLosses + bucket.recoveryLosses + bucket.badDebt;
+        }
         locked = bucket.openOrderRisk + bucket.pendingFillRisk + bucket.positionRisk + bucket.vaultDebt
             + bucket.fundingLiability + bucket.unrealizedLosses + bucket.recoveryLosses + bucket.badDebt;
     }
@@ -69,17 +119,28 @@ library LibRiskEngine {
         returns (MarginTypes.BucketHealth memory health)
     {
         MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
-        health = healthForBucket(state, bucket);
+        health = healthForBucket(state, bucketId, bucket);
     }
 
-    function healthForBucket(LibEveMarket.EveMarketStorage storage state, MarginTypes.MarginBucket storage bucket)
-        internal
-        view
-        returns (MarginTypes.BucketHealth memory health)
-    {
-        uint256 equity = marginEquityWithPendingFunding(state, bucket);
-        uint256 exposure_ = exposure(bucket);
+    function healthForBucket(
+        LibEveMarket.EveMarketStorage storage state,
+        bytes32 bucketId,
+        MarginTypes.MarginBucket storage bucket
+    ) internal view returns (MarginTypes.BucketHealth memory health) {
         MarginTypes.RiskParams memory params = riskParamsForBucket(state, bucket);
+        uint256 equity;
+        uint256 exposure_;
+        if (isScenarioManaged(state, bucketId)) {
+            uint256 funding = bucket.fundingLiability + pendingConfiguredFunding(state, bucket);
+            int256 maximum = LibMLOScenarioRisk.maximumEffectiveLoss(state, bucketId, funding);
+            exposure_ = maximum > 0 ? uint256(maximum) : 0;
+            equity = bucket.marginAllocated > bucket.unrealizedLosses + bucket.recoveryLosses + bucket.badDebt
+                ? bucket.marginAllocated - bucket.unrealizedLosses - bucket.recoveryLosses - bucket.badDebt
+                : 0;
+        } else {
+            equity = marginEquityWithPendingFunding(state, bucket);
+            exposure_ = exposure(bucket);
+        }
         uint256 initialRequirement = _requirement(exposure_, params.initialMarginBps);
         uint256 maintenanceRequirement = _requirement(exposure_, params.maintenanceMarginBps);
 
@@ -115,7 +176,7 @@ library LibRiskEngine {
         view
         returns (MarginTypes.RiskParams memory params)
     {
-        params = state.marginRiskDomainParams[bucket.riskDomainId];
+        params = state.marginRiskDomainParams[bucket.riskDomainId][uint8(bucket.kind)];
         if (params.initialMarginBps != 0 || params.maintenanceMarginBps != 0) {
             return params;
         }
@@ -123,7 +184,8 @@ library LibRiskEngine {
         params = state.marginDefaultRiskParams[uint8(bucket.kind)];
         if (params.initialMarginBps == 0 && params.maintenanceMarginBps == 0) {
             params = MarginTypes.RiskParams({
-                initialMarginBps: DEFAULT_MARGIN_BPS, maintenanceMarginBps: DEFAULT_MARGIN_BPS
+                initialMarginBps: DEFAULT_MARGIN_BPS,
+                maintenanceMarginBps: bucket.kind == MarginTypes.BucketKind.MLO ? 9_000 : DEFAULT_MARGIN_BPS
             });
         }
     }
@@ -160,10 +222,10 @@ library LibRiskEngine {
             return false;
         }
 
-        return healthForBucket(state, bucket).status == MarginTypes.BucketHealthStatus.Healthy;
+        return healthForBucket(state, bucketId, bucket).status == MarginTypes.BucketHealthStatus.Healthy;
     }
 
-    function canIncreaseRiskForBook(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId, bytes32 bookId)
+    function canIncreaseRiskForBook(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId, bytes32)
         internal
         view
         returns (bool)
@@ -177,7 +239,7 @@ library LibRiskEngine {
         if (config.kind == MarginTypes.RiskDomainOracleKind.None) {
             return true;
         }
-        if (config.kind == MarginTypes.RiskDomainOracleKind.BookMark && config.oracleKey == bookId) {
+        if (config.kind == MarginTypes.RiskDomainOracleKind.BookMark) {
             return _oracleAllowsRiskIncrease(state, bucket.riskDomainId, config);
         }
 
@@ -229,11 +291,47 @@ library LibRiskEngine {
         requireRiskDomain(riskDomainId);
         validateFundingConfig(mode, ratePerSecondWad);
 
-        state.marginRiskDomainFundingConfigs[riskDomainId] = MarginTypes.FundingConfig({
-            mode: mode, lastConfiguredAt: uint64(block.timestamp), ratePerSecondWad: ratePerSecondWad
-        });
+        MarginTypes.FundingConfig storage config = state.marginRiskDomainFundingConfigs[riskDomainId];
+        _checkpointFundingConfig(config);
+        config.mode = mode;
+        config.ratePerSecondWad = ratePerSecondWad;
+        config.initialized = true;
 
         emit IMarginAccountFacet.RiskDomainFundingConfigSet(riskDomainId, mode, ratePerSecondWad);
+    }
+
+    function configureDefaultFunding(
+        LibEveMarket.EveMarketStorage storage state,
+        MarginTypes.BucketKind kind,
+        MarginTypes.FundingMode mode,
+        uint128 ratePerSecondWad
+    ) internal {
+        validateFundingConfig(mode, ratePerSecondWad);
+        state.marginDefaultFundingConfigs[uint8(kind)] = MarginTypes.FundingConfig({
+            mode: mode,
+            initialized: true,
+            lastUpdatedAt: uint64(block.timestamp),
+            ratePerSecondWad: ratePerSecondWad,
+            cumulativeIndexWad: 0
+        });
+        emit IMarginAccountFacet.DefaultFundingConfigSet(kind, mode, ratePerSecondWad);
+    }
+
+    function initializeRiskDomainFunding(
+        LibEveMarket.EveMarketStorage storage state,
+        bytes32 riskDomainId,
+        MarginTypes.BucketKind kind
+    ) internal returns (uint256 currentIndexWad) {
+        MarginTypes.FundingConfig storage config = state.marginRiskDomainFundingConfigs[riskDomainId];
+        if (!config.initialized) {
+            MarginTypes.FundingConfig storage defaultConfig = state.marginDefaultFundingConfigs[uint8(kind)];
+            config.mode = defaultConfig.mode;
+            config.ratePerSecondWad = defaultConfig.ratePerSecondWad;
+            config.initialized = true;
+            config.lastUpdatedAt = uint64(block.timestamp);
+            emit IMarginAccountFacet.RiskDomainFundingConfigSet(riskDomainId, config.mode, config.ratePerSecondWad);
+        }
+        currentIndexWad = _checkpointFundingConfig(config);
     }
 
     function configureDefaultRiskParams(
@@ -243,6 +341,7 @@ library LibRiskEngine {
         uint16 maintenanceMarginBps
     ) internal {
         validateRiskParams(initialMarginBps, maintenanceMarginBps);
+        validateMLOInitialMargin(kind, initialMarginBps);
         state.marginDefaultRiskParams[uint8(kind)] =
             MarginTypes.RiskParams({initialMarginBps: initialMarginBps, maintenanceMarginBps: maintenanceMarginBps});
 
@@ -252,22 +351,28 @@ library LibRiskEngine {
     function configureRiskDomainRiskParams(
         LibEveMarket.EveMarketStorage storage state,
         bytes32 riskDomainId,
+        MarginTypes.BucketKind kind,
         uint16 initialMarginBps,
         uint16 maintenanceMarginBps
     ) internal {
         requireRiskDomain(riskDomainId);
         validateRiskParams(initialMarginBps, maintenanceMarginBps);
-        state.marginRiskDomainParams[riskDomainId] =
+        validateMLOInitialMargin(kind, initialMarginBps);
+        state.marginRiskDomainParams[riskDomainId][uint8(kind)] =
             MarginTypes.RiskParams({initialMarginBps: initialMarginBps, maintenanceMarginBps: maintenanceMarginBps});
 
-        emit IMarginAccountFacet.RiskDomainRiskParamsSet(riskDomainId, initialMarginBps, maintenanceMarginBps);
+        emit IMarginAccountFacet.RiskDomainRiskParamsSet(riskDomainId, kind, initialMarginBps, maintenanceMarginBps);
     }
 
-    function clearRiskDomainRiskParams(LibEveMarket.EveMarketStorage storage state, bytes32 riskDomainId) internal {
+    function clearRiskDomainRiskParams(
+        LibEveMarket.EveMarketStorage storage state,
+        bytes32 riskDomainId,
+        MarginTypes.BucketKind kind
+    ) internal {
         requireRiskDomain(riskDomainId);
-        delete state.marginRiskDomainParams[riskDomainId];
+        delete state.marginRiskDomainParams[riskDomainId][uint8(kind)];
 
-        emit IMarginAccountFacet.RiskDomainRiskParamsCleared(riskDomainId);
+        emit IMarginAccountFacet.RiskDomainRiskParamsCleared(riskDomainId, kind);
     }
 
     function increaseOpenOrderRisk(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId, uint256 assets)
@@ -275,6 +380,7 @@ library LibRiskEngine {
     {
         requireAmount(assets);
         MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        rejectScenarioMutation(state, bucketId);
         accrueConfiguredFunding(state, bucketId, bucket);
         enforceCanIncreaseRisk(state, bucketId, bucket);
         enforceInitialMarginAfter(state, bucketId, bucket, assets, 0);
@@ -293,6 +399,7 @@ library LibRiskEngine {
     ) internal {
         requireAmount(assets);
         MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        rejectScenarioMutation(state, bucketId);
         accrueConfiguredFunding(state, bucketId, bucket);
         enforceCanIncreaseRiskForBook(state, bucketId, bucket, bookId);
         enforceInitialMarginAfter(state, bucketId, bucket, assets, 0);
@@ -308,6 +415,7 @@ library LibRiskEngine {
     {
         requireAmount(assets);
         MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        rejectScenarioMutation(state, bucketId);
         if (assets > bucket.openOrderRisk) {
             revert IMarginAccountFacet.InsufficientOpenOrderRisk(bucketId, assets, bucket.openOrderRisk);
         }
@@ -323,6 +431,7 @@ library LibRiskEngine {
     {
         requireAmount(assets);
         MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        rejectScenarioMutation(state, bucketId);
         if (assets > bucket.openOrderRisk) {
             revert IMarginAccountFacet.InsufficientOpenOrderRisk(bucketId, assets, bucket.openOrderRisk);
         }
@@ -340,6 +449,7 @@ library LibRiskEngine {
     {
         requireAmount(assets);
         MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        rejectScenarioMutation(state, bucketId);
         if (assets > bucket.positionRisk) {
             revert IMarginAccountFacet.InsufficientPositionRisk(bucketId, assets, bucket.positionRisk);
         }
@@ -353,6 +463,7 @@ library LibRiskEngine {
     function recordDebt(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId, uint256 assets) internal {
         requireAmount(assets);
         MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        rejectScenarioMutation(state, bucketId);
         accrueConfiguredFunding(state, bucketId, bucket);
         enforceCanIncreaseRisk(state, bucketId, bucket);
         enforceInitialMarginAfter(state, bucketId, bucket, assets, 0);
@@ -381,29 +492,44 @@ library LibRiskEngine {
 
         bucket.vaultDebt -= assets;
 
+        if (bucket.vaultDebt == 0 && bucket.fundingRemainderWad != 0) {
+            bucket.fundingRemainderWad = 0;
+            bucket.fundingLiability += 1;
+            bucket.fundingAccrued += 1;
+            emit IMarginAccountFacet.BucketFundingAccrued(bucketId, 1);
+        }
+
         emit IMarginAccountFacet.BucketDebtRepaid(bucketId, assets);
     }
 
-    function accrueFunding(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId, uint256 assets) internal {
+    function recordFundingPayment(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId, uint256 assets)
+        internal
+    {
         requireAmount(assets);
         MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
-        accrueConfiguredFunding(state, bucketId, bucket);
-        bucket.fundingLiability += assets;
-
-        emit IMarginAccountFacet.BucketFundingAccrued(bucketId, assets);
-    }
-
-    function settleFunding(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId, uint256 assets) internal {
-        requireAmount(assets);
-        MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
-        accrueConfiguredFunding(state, bucketId, bucket);
         if (assets > bucket.fundingLiability) {
             revert IMarginAccountFacet.InsufficientFundingLiability(bucketId, assets, bucket.fundingLiability);
         }
 
         bucket.fundingLiability -= assets;
+        bucket.fundingPaid += assets;
+        state.marginAccounts[bucket.operator].fundingPaid += assets;
 
         emit IMarginAccountFacet.BucketFundingSettled(bucketId, assets);
+    }
+
+    function writeOffFunding(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId)
+        internal
+        returns (uint256 writtenOff)
+    {
+        MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        accrueConfiguredFunding(state, bucketId, bucket);
+        writtenOff = bucket.fundingLiability;
+        if (writtenOff == 0) return 0;
+        bucket.fundingLiability = 0;
+        bucket.fundingBadDebt += writtenOff;
+        state.marginAccounts[bucket.operator].fundingBadDebt += writtenOff;
+        emit IMarginAccountFacet.BucketFundingWrittenOff(bucketId, writtenOff);
     }
 
     function accrueConfiguredFunding(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId)
@@ -419,19 +545,17 @@ library LibRiskEngine {
         bytes32 bucketId,
         MarginTypes.MarginBucket storage bucket
     ) internal returns (uint256 accrued) {
-        accrued = pendingConfiguredFunding(state, bucket);
-        MarginTypes.FundingConfig memory config = state.marginRiskDomainFundingConfigs[bucket.riskDomainId];
-        if (config.mode == MarginTypes.FundingMode.None) {
-            bucket.lastFundingAccruedAt = uint64(block.timestamp);
-            return 0;
-        }
-
-        bucket.lastFundingAccruedAt = uint64(block.timestamp);
+        MarginTypes.FundingConfig storage config = state.marginRiskDomainFundingConfigs[bucket.riskDomainId];
+        uint256 currentIndexWad = _checkpointFundingConfig(config);
+        (accrued, bucket.fundingRemainderWad) =
+            _fundingDelta(bucket.vaultDebt, currentIndexWad - bucket.fundingIndexWad, bucket.fundingRemainderWad);
+        bucket.fundingIndexWad = currentIndexWad;
         if (accrued == 0) {
             return 0;
         }
 
         bucket.fundingLiability += accrued;
+        bucket.fundingAccrued += accrued;
         emit IMarginAccountFacet.BucketFundingAccrued(bucketId, accrued);
     }
 
@@ -439,22 +563,50 @@ library LibRiskEngine {
         LibEveMarket.EveMarketStorage storage state,
         MarginTypes.MarginBucket storage bucket
     ) internal view returns (uint256 pending) {
-        MarginTypes.FundingConfig memory config = state.marginRiskDomainFundingConfigs[bucket.riskDomainId];
-        if (config.mode == MarginTypes.FundingMode.None || bucket.vaultDebt == 0) {
+        MarginTypes.FundingConfig storage config = state.marginRiskDomainFundingConfigs[bucket.riskDomainId];
+        if (!config.initialized || bucket.vaultDebt == 0) {
             return 0;
         }
+        uint256 currentIndexWad = _currentFundingIndex(config);
+        (pending,) =
+            _fundingDelta(bucket.vaultDebt, currentIndexWad - bucket.fundingIndexWad, bucket.fundingRemainderWad);
+    }
 
-        uint256 accrualStart = bucket.lastFundingAccruedAt;
-        if (accrualStart < config.lastConfiguredAt) {
-            accrualStart = config.lastConfiguredAt;
+    function _checkpointFundingConfig(MarginTypes.FundingConfig storage config)
+        private
+        returns (uint256 currentIndexWad)
+    {
+        if (!config.initialized) {
+            config.lastUpdatedAt = uint64(block.timestamp);
+            return config.cumulativeIndexWad;
         }
+        currentIndexWad = _currentFundingIndex(config);
+        config.cumulativeIndexWad = currentIndexWad;
+        config.lastUpdatedAt = uint64(block.timestamp);
+    }
 
-        if (block.timestamp <= accrualStart) {
-            return 0;
+    function _currentFundingIndex(MarginTypes.FundingConfig storage config)
+        private
+        view
+        returns (uint256 currentIndexWad)
+    {
+        currentIndexWad = config.cumulativeIndexWad;
+        if (config.mode == MarginTypes.FundingMode.None || block.timestamp <= config.lastUpdatedAt) {
+            return currentIndexWad;
         }
+        currentIndexWad += uint256(config.ratePerSecondWad) * (block.timestamp - config.lastUpdatedAt);
+    }
 
-        uint256 elapsed = block.timestamp - accrualStart;
-        pending = Math.mulDiv(bucket.vaultDebt, uint256(config.ratePerSecondWad) * elapsed, WAD, Math.Rounding.Ceil);
+    function _fundingDelta(uint256 debt, uint256 deltaIndexWad, uint256 previousRemainderWad)
+        private
+        pure
+        returns (uint256 wholeAssets, uint256 remainderWad)
+    {
+        if (debt == 0 || deltaIndexWad == 0) return (0, previousRemainderWad);
+        wholeAssets = Math.mulDiv(debt, deltaIndexWad, WAD);
+        uint256 fractions = mulmod(debt, deltaIndexWad, WAD) + previousRemainderWad;
+        wholeAssets += fractions / WAD;
+        remainderWad = fractions % WAD;
     }
 
     function recordUnrealizedPnl(
@@ -505,7 +657,7 @@ library LibRiskEngine {
         LibEveMarket.EveMarketStorage storage state,
         bytes32 bucketId,
         MarginTypes.MarginBucket storage bucket,
-        bytes32 bookId
+        bytes32
     ) internal view {
         enforceCanIncreaseRisk(state, bucketId, bucket);
 
@@ -513,7 +665,7 @@ library LibRiskEngine {
         if (config.kind == MarginTypes.RiskDomainOracleKind.None) {
             return;
         }
-        if (config.kind == MarginTypes.RiskDomainOracleKind.BookMark && config.oracleKey == bookId) {
+        if (config.kind == MarginTypes.RiskDomainOracleKind.BookMark) {
             MarkOracleTypes.RiskMark memory mark = LibMarkOracle.riskMarkForBook(
                 state, config.oracleKey, state.marginRiskDomainMarkConfigs[bucket.riskDomainId]
             );
@@ -532,6 +684,22 @@ library LibRiskEngine {
         uint256 exposureIncrease,
         uint256 marginDecrease
     ) internal view {
+        if (isScenarioManaged(state, bucketId)) {
+            uint256 scenarioLiabilities =
+                bucket.unrealizedLosses + bucket.recoveryLosses + bucket.badDebt;
+            uint256 scenarioEquityBefore =
+                bucket.marginAllocated > scenarioLiabilities ? bucket.marginAllocated - scenarioLiabilities : 0;
+            uint256 scenarioEquityAfter =
+                scenarioEquityBefore > marginDecrease ? scenarioEquityBefore - marginDecrease : 0;
+            uint256 funding = bucket.fundingLiability + pendingConfiguredFunding(state, bucket);
+            uint256 scenarioRequired = LibMLOScenarioRisk.requiredMargin(
+                state, bucketId, funding, riskParamsForBucket(state, bucket).initialMarginBps
+            );
+            if (scenarioEquityAfter < scenarioRequired) {
+                revert IMarginAccountFacet.BucketBelowInitialMargin(bucketId, scenarioEquityAfter, scenarioRequired);
+            }
+            return;
+        }
         uint256 liabilities = liabilityDrag(bucket);
         uint256 equityBefore = bucket.marginAllocated > liabilities ? bucket.marginAllocated - liabilities : 0;
         uint256 equityAfter = equityBefore > marginDecrease ? equityBefore - marginDecrease : 0;
@@ -546,6 +714,12 @@ library LibRiskEngine {
     function validateRiskParams(uint16 initialMarginBps, uint16 maintenanceMarginBps) internal pure {
         if (maintenanceMarginBps == 0 || initialMarginBps < maintenanceMarginBps || initialMarginBps > MAX_BPS) {
             revert IMarginAccountFacet.InvalidMarginRiskParams(initialMarginBps, maintenanceMarginBps);
+        }
+    }
+
+    function validateMLOInitialMargin(MarginTypes.BucketKind kind, uint16 initialMarginBps) internal pure {
+        if (kind == MarginTypes.BucketKind.MLO && initialMarginBps != MAX_BPS) {
+            revert IMarginAccountFacet.MLOInitialMarginMustBeFull(initialMarginBps);
         }
     }
 
@@ -587,6 +761,41 @@ library LibRiskEngine {
     function requireAmount(uint256 assets) internal pure {
         if (assets == 0) {
             revert IMarginAccountFacet.ZeroAmount();
+        }
+    }
+
+    function enforceScenarioInitialMarginAfter(
+        LibEveMarket.EveMarketStorage storage state,
+        bytes32 bucketId,
+        uint256 marginDecrease
+    ) internal view {
+        MarginTypes.MarginBucket storage bucket = requireBucket(state, bucketId);
+        if (!isScenarioManaged(state, bucketId)) return;
+        uint256 liabilities = bucket.unrealizedLosses + bucket.recoveryLosses + bucket.badDebt;
+        uint256 equityBefore = bucket.marginAllocated > liabilities ? bucket.marginAllocated - liabilities : 0;
+        uint256 equityAfter = equityBefore > marginDecrease ? equityBefore - marginDecrease : 0;
+        uint256 required = LibMLOScenarioRisk.requiredMargin(
+            state,
+            bucketId,
+            bucket.fundingLiability + pendingConfiguredFunding(state, bucket),
+            riskParamsForBucket(state, bucket).initialMarginBps
+        );
+        if (equityAfter < required) {
+            revert IMarginAccountFacet.BucketBelowInitialMargin(bucketId, equityAfter, required);
+        }
+    }
+
+    function isScenarioManaged(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId)
+        internal
+        view
+        returns (bool)
+    {
+        return state.mloScenarioExposures[bucketId].initialized;
+    }
+
+    function rejectScenarioMutation(LibEveMarket.EveMarketStorage storage state, bytes32 bucketId) internal view {
+        if (isScenarioManaged(state, bucketId)) {
+            revert IMarginAccountFacet.ScenarioManagedBucket(bucketId);
         }
     }
 

@@ -307,7 +307,7 @@ contract MarketViewsTest is SettlementFeeFixture {
         assertEq(info.orderbookMakerFeeBps, 8_500);
         assertEq(info.orderbookCreatorFeeBps, 500);
         assertEq(info.orderbookProtocolFeeBps, 1_000);
-        assertEq(info.orderbookVaultFeeBps, 0);
+        assertEq(info.orderbookSeniorPoolFeeBps, 0);
         _assertMarketInfoCreationBond(info, marketId);
     }
 
@@ -332,9 +332,8 @@ contract MarketViewsTest is SettlementFeeFixture {
         assertEq(config.collateralToken, address(collateralToken));
         assertEq(config.eveToken, address(eveToken));
         assertEq(config.eveTreasury, treasury);
-        assertEq(config.seniorCapitalPool, address(0));
         assertEq(config.orderbookFeeConfig.entryFeeBps, StateProbeFacet(address(diamond)).orderbookEntryFeeBps());
-        assertEq(config.orderbookFeeConfig.vaultFeeBps, 0);
+        assertEq(config.orderbookFeeConfig.seniorPoolFeeBps, 0);
         assertEq(config.marketCreationFee, StateProbeFacet(address(diamond)).marketCreationFee());
         assertEq(config.marketCreationBond, StateProbeFacet(address(diamond)).marketCreationBond());
         assertEq(config.bondToken, address(eveToken));

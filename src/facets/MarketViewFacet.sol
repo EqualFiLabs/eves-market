@@ -111,42 +111,36 @@ contract MarketViewFacet is MarketFactoryTypes {
             collateralToken: marketConfig.collateralToken,
             eveToken: marketConfig.eveToken,
             eveTreasury: marketConfig.eveTreasury,
-            seniorCapitalPool: marketConfig.seniorCapitalPool,
-            evRiskStakingRewards: marketConfig.evRiskStakingRewards,
             parimutuelShareToken: marketConfig.parimutuelShareToken,
             orderbookFeeConfig: BookFeeConfigView({
                 entryFeeBps: marketConfig.orderbookFeeConfig.entryFeeBps,
                 makerFeeBps: marketConfig.orderbookFeeConfig.makerFeeBps,
                 creatorFeeBps: marketConfig.orderbookFeeConfig.creatorFeeBps,
                 protocolFeeBps: marketConfig.orderbookFeeConfig.protocolFeeBps,
-                vaultFeeBps: marketConfig.orderbookFeeConfig.vaultFeeBps,
-                resolverFeeBps: marketConfig.orderbookFeeConfig.resolverFeeBps,
-                evRiskFeeBps: marketConfig.orderbookFeeConfig.evRiskFeeBps
+                seniorPoolFeeBps: marketConfig.orderbookFeeConfig.seniorPoolFeeBps,
+                resolverFeeBps: marketConfig.orderbookFeeConfig.resolverFeeBps
             }),
             spotFeeConfig: SpotFeeConfigView({
                 tradeFeeBps: marketConfig.spotFeeConfig.tradeFeeBps,
                 makerFeeBps: marketConfig.spotFeeConfig.makerFeeBps,
                 protocolFeeBps: marketConfig.spotFeeConfig.protocolFeeBps,
-                vaultFeeBps: marketConfig.spotFeeConfig.vaultFeeBps,
-                resolverFeeBps: marketConfig.spotFeeConfig.resolverFeeBps,
-                evRiskFeeBps: marketConfig.spotFeeConfig.evRiskFeeBps
+                seniorPoolFeeBps: marketConfig.spotFeeConfig.seniorPoolFeeBps,
+                resolverFeeBps: marketConfig.spotFeeConfig.resolverFeeBps
             }),
             comboFeeConfig: ComboFeeConfigView({
                 tradeFeeBps: marketConfig.comboFeeConfig.tradeFeeBps,
                 makerFeeBps: marketConfig.comboFeeConfig.makerFeeBps,
                 creatorFeeBps: marketConfig.comboFeeConfig.creatorFeeBps,
                 protocolFeeBps: marketConfig.comboFeeConfig.protocolFeeBps,
-                vaultFeeBps: marketConfig.comboFeeConfig.vaultFeeBps,
-                resolverFeeBps: marketConfig.comboFeeConfig.resolverFeeBps,
-                evRiskFeeBps: marketConfig.comboFeeConfig.evRiskFeeBps
+                seniorPoolFeeBps: marketConfig.comboFeeConfig.seniorPoolFeeBps,
+                resolverFeeBps: marketConfig.comboFeeConfig.resolverFeeBps
             }),
             parimutuelFeeConfig: ParimutuelFeeConfigView({
                 entryFeeBps: marketConfig.parimutuelFeeConfig.entryFeeBps,
                 creatorFeeBps: marketConfig.parimutuelFeeConfig.creatorFeeBps,
                 protocolFeeBps: marketConfig.parimutuelFeeConfig.protocolFeeBps,
-                vaultFeeBps: marketConfig.parimutuelFeeConfig.vaultFeeBps,
-                resolverFeeBps: marketConfig.parimutuelFeeConfig.resolverFeeBps,
-                evRiskFeeBps: marketConfig.parimutuelFeeConfig.evRiskFeeBps
+                seniorPoolFeeBps: marketConfig.parimutuelFeeConfig.seniorPoolFeeBps,
+                resolverFeeBps: marketConfig.parimutuelFeeConfig.resolverFeeBps
             }),
             parimutuelMinEntry: marketConfig.parimutuelMinEntry,
             parimutuelCreationSeedAmount: marketConfig.parimutuelCreationSeedAmount,
@@ -173,7 +167,11 @@ contract MarketViewFacet is MarketFactoryTypes {
             delayedOrderProcessingMode: uint8(marketConfig.delayedOrderProcessingMode),
             maxDelayedOrderRouteLength: marketConfig.maxDelayedOrderRouteLength,
             minDelayedOrderQuoteWad: marketConfig.minDelayedOrderQuoteWad,
-            minDelayedOrderBaseWad: marketConfig.minDelayedOrderBaseWad
+            minDelayedOrderBaseWad: marketConfig.minDelayedOrderBaseWad,
+            staticsDollarCore: marketConfig.staticsDollarCore,
+            staticsDiamond: marketConfig.staticsDiamond,
+            usdcToken: marketConfig.usdcToken,
+            peggedProfileId: marketConfig.peggedProfileId
         });
     }
 

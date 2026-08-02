@@ -22,7 +22,6 @@ contract ParimutuelViewFacet {
         uint128 protocolFee;
         uint128 seniorPoolFee;
         uint128 resolverFee;
-        uint128 evRiskFee;
         uint128 netShares;
     }
 
@@ -49,9 +48,8 @@ contract ParimutuelViewFacet {
             uint128 totalFee,
             uint128 creatorFee,
             uint128 protocolFee,
-            uint128 vaultFee,
+            uint128 seniorPoolFee,
             uint128 resolverFee,
-            uint128 evRiskFee,
             uint128 netShares
         )
     {
@@ -61,9 +59,8 @@ contract ParimutuelViewFacet {
         totalFee = fees.totalFee;
         creatorFee = fees.creatorFee;
         protocolFee = fees.protocolFee;
-        vaultFee = fees.seniorPoolFee;
+        seniorPoolFee = fees.seniorPoolFee;
         resolverFee = fees.resolverFee;
-        evRiskFee = fees.evRiskFee;
         netShares = fees.netShares;
     }
 
@@ -94,9 +91,8 @@ contract ParimutuelViewFacet {
             totalFee: fees.totalFee,
             creatorFee: fees.creatorFee,
             protocolFee: fees.protocolFee,
-            vaultFee: fees.seniorPoolFee,
+            seniorPoolFee: fees.seniorPoolFee,
             resolverFee: fees.resolverFee,
-            evRiskFee: fees.evRiskFee,
             netCollateral: fees.netShares,
             sharesMinted: sharesMinted,
             multiplierBps: multiplierBps,
@@ -199,14 +195,12 @@ contract ParimutuelViewFacet {
     ) private view returns (EntryFeeBreakdown memory fees) {
         LibEveMarket.ParimutuelFeeConfig storage feeConfig = market.parimutuelFeeConfig;
         if (
-            uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.resolverFeeBps
-                    + feeConfig.evRiskFeeBps
-                > FEE_BPS_DENOMINATOR
+            uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.resolverFeeBps > FEE_BPS_DENOMINATOR
         ) {
             revert Errors.FeeSplitExceedsDenominator(feeConfig.creatorFeeBps, feeConfig.protocolFeeBps);
         }
-        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.vaultFeeBps
-            + feeConfig.resolverFeeBps + feeConfig.evRiskFeeBps;
+        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.seniorPoolFeeBps
+            + feeConfig.resolverFeeBps;
         if (splitTotal != FEE_BPS_DENOMINATOR) {
             revert Errors.InvalidFeeSplit(splitTotal);
         }
@@ -219,9 +213,7 @@ contract ParimutuelViewFacet {
         fees.creatorFee = uint128((uint256(fees.totalFee) * feeConfig.creatorFeeBps) / FEE_BPS_DENOMINATOR);
         fees.protocolFee = uint128((uint256(fees.totalFee) * feeConfig.protocolFeeBps) / FEE_BPS_DENOMINATOR);
         fees.resolverFee = uint128((uint256(fees.totalFee) * feeConfig.resolverFeeBps) / FEE_BPS_DENOMINATOR);
-        fees.evRiskFee = uint128((uint256(fees.totalFee) * feeConfig.evRiskFeeBps) / FEE_BPS_DENOMINATOR);
-        uint128 rawSeniorPoolFee = fees.totalFee - fees.creatorFee - fees.protocolFee - fees.resolverFee
-            - fees.evRiskFee;
+        uint128 rawSeniorPoolFee = fees.totalFee - fees.creatorFee - fees.protocolFee - fees.resolverFee;
         fees.netShares = amount - fees.totalFee;
 
         if (!config.permissionlessCreationEnabled) {
@@ -230,14 +222,9 @@ contract ParimutuelViewFacet {
         }
 
         LibFeeRouting.SeniorPoolFeeRoute memory route =
-            LibFeeRouting.previewSeniorPoolFeeRoute(config.seniorCapitalPool, market.collateralToken, rawSeniorPoolFee);
+            LibFeeRouting.previewSeniorPoolFeeRoute(market.collateralToken, rawSeniorPoolFee);
         fees.seniorPoolFee = uint128(route.seniorPoolAmount);
         fees.protocolFee += uint128(route.treasuryAmount);
-
-        LibFeeRouting.EvRiskFeeRoute memory evRiskRoute =
-            LibFeeRouting.previewEvRiskFeeRoute(config.evRiskStakingRewards, fees.evRiskFee);
-        fees.evRiskFee = uint128(evRiskRoute.evRiskAmount);
-        fees.protocolFee += uint128(evRiskRoute.treasuryAmount);
     }
 
     function _requireParimutuelMarket(LibEveMarket.EveMarketStorage storage state, bytes32 marketId)

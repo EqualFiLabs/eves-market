@@ -5,9 +5,9 @@ import {CurveCLOBTypes} from "../types/CurveCLOBTypes.sol";
 import {ITradeRouter} from "../interfaces/ITradeRouter.sol";
 import {Errors} from "./Errors.sol";
 import {LibBookAccounting} from "./LibBookAccounting.sol";
+import {LibBuyExecution} from "./LibBuyExecution.sol";
 import {LibCurveMath} from "./LibCurveMath.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
-import {LibEveUSDCUnits} from "./LibEveUSDCUnits.sol";
 import {LibMarketAccess} from "./LibMarketAccess.sol";
 import {LibRouter} from "./LibRouter.sol";
 
@@ -19,20 +19,8 @@ library LibTradeRouter {
         uint128 collateralUsed;
     }
 
-    function eveUSDC() internal view returns (address token) {
-        token = LibEveMarket.store().config.collateralToken;
-        if (token == address(0)) {
-            revert ITradeRouter.ZeroAddress();
-        }
-    }
-
     function requireMarket(bytes32 marketId) internal view returns (LibEveMarket.Market storage market) {
         market = LibMarketAccess.requireExistingMarket(LibEveMarket.store(), marketId);
-    }
-
-    function requireCTFPositionMarket(bytes32 marketId) internal view returns (LibEveMarket.Market storage market) {
-        market = requireMarket(marketId);
-        LibMarketAccess.requirePositionTokenType(market, LibEveMarket.PositionTokenType.CTF);
     }
 
     function requireMarketCollateral(LibEveMarket.Market storage market, address routerCollateral) internal view {
@@ -79,6 +67,7 @@ library LibTradeRouter {
             return 0;
         }
         bytes32 bookId = params.isYesSide ? market.yesBookId : market.noBookId;
+        LibEveMarket.Book storage book = state.books[bookId];
 
         uint128 remainingCollateral = params.maxCollateralIn;
         for (uint256 index = 0; index < params.curveIds.length && remainingCollateral != 0; ++index) {
@@ -95,9 +84,29 @@ library LibTradeRouter {
                 continue;
             }
 
-            retainedFeeBalance += LibBookAccounting.retainedBuyFeeBalance(
-                state, quote.fee, state.books[bookId].feeConfig
-            );
+            retainedFeeBalance += LibBookAccounting.retainedBuyFeeBalance(state, book, quote.fee);
+            remainingCollateral -= quote.collateralUsed;
+        }
+    }
+
+    function previewRetainedBookBuyFeeBalance(CurveCLOBTypes.FillBookParams memory params)
+        internal
+        view
+        returns (uint128 retainedFeeBalance)
+    {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibEveMarket.Book storage book = state.books[params.bookId];
+        uint128 remainingCollateral = params.maxQuoteIn;
+        bool[] memory consumed = new bool[](params.curveIds.length);
+        for (uint256 routed; routed < params.curveIds.length && remainingCollateral != 0; ++routed) {
+            (uint256 index, bool found) =
+                LibBuyExecution.selectBestAskCurveIndex(state, params, consumed, params.bookId);
+            if (!found) break;
+            consumed[index] = true;
+            LibEveMarket.StoredCurve storage curve = state.curves[params.curveIds[index]];
+            BuyQuote memory quote = quoteBuyCurve(state, curve, remainingCollateral);
+            if (quote.sharesOut == 0) continue;
+            retainedFeeBalance += LibBookAccounting.retainedBuyFeeBalance(state, book, quote.fee);
             remainingCollateral -= quote.collateralUsed;
         }
     }
@@ -133,9 +142,5 @@ library LibTradeRouter {
     ) internal view returns (BuyQuote memory quote) {
         (quote.sharesOut, quote.fee, quote.price, quote.collateralUsed) =
             LibCurveMath.quoteAsk(state, curve, collateralIn);
-    }
-
-    function usdcFloor(uint256 eveUSDCAmount) internal pure returns (uint256 usdcAmount) {
-        usdcAmount = LibEveUSDCUnits.convertibleEveUSDC(eveUSDCAmount) / LibEveUSDCUnits.USDC_TO_EVEUSDC_SCALE;
     }
 }

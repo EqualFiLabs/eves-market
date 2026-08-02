@@ -9,7 +9,8 @@ import {LibDelayedOrderFacet} from "./LibDelayedOrderFacet.sol";
 import {LibDelayedOrderLimitBuy} from "./LibDelayedOrderLimitBuy.sol";
 import {LibDelayedOrderMarketBuy} from "./LibDelayedOrderMarketBuy.sol";
 import {LibDelayedOrderRoute} from "./LibDelayedOrderRoute.sol";
-import {LibDelayedOrderSell} from "./LibDelayedOrderSell.sol";
+import {LibDelayedOrderLimitSell} from "./LibDelayedOrderLimitSell.sol";
+import {LibDelayedOrderMarketSell} from "./LibDelayedOrderMarketSell.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
 
 library LibDelayedOrderExecution {
@@ -42,13 +43,13 @@ library LibDelayedOrderExecution {
         if (order.kind == LibEveMarket.DelayedOrderKind.MarketSell) {
             LibDelayedOrderRoute.PreparedRoute memory prepared =
                 LibDelayedOrderRoute.prepareValidBidRoute(state, order, book, route);
-            LibDelayedOrderSell.processMarketSell(state, orderId, order, book, prepared);
+            LibDelayedOrderMarketSell.processMarketSell(state, orderId, order, book, prepared);
             return;
         }
         if (order.kind == LibEveMarket.DelayedOrderKind.LimitSell) {
             LibDelayedOrderRoute.PreparedRoute memory prepared =
                 LibDelayedOrderRoute.prepareValidBidRoute(state, order, book, route);
-            LibDelayedOrderSell.processLimitSell(state, orderId, order, book, prepared);
+            LibDelayedOrderLimitSell.processLimitSell(state, orderId, order, book, prepared);
             return;
         }
 

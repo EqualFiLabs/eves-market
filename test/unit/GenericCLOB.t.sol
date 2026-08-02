@@ -2,10 +2,12 @@
 pragma solidity ^0.8.28;
 
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
 import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
-import {TradeRouterFacet} from "../../src/facets/TradeRouterFacet.sol";
-import {TradeRouterSellFacet} from "../../src/facets/TradeRouterSellFacet.sol";
+import {CollateralTradeRouterFacet} from "../../src/facets/CollateralTradeRouterFacet.sol";
+import {CollateralTradeRouterSellFacet} from "../../src/facets/CollateralTradeRouterSellFacet.sol";
+import {CollateralTradeRouterPreviewFacet} from "../../src/facets/CollateralTradeRouterPreviewFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
@@ -37,14 +39,15 @@ contract GenericCLOBTest is CurveTradingFixture {
 
         _addFacet(address(parimutuelFacet), _parimutuelSelectors());
         _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
-        _addFacet(address(new TradeRouterFacet()), _tradeRouterSelectors());
-        _addFacet(address(new TradeRouterSellFacet()), _tradeRouterSellSelectors());
+        _addFacet(address(new CollateralTradeRouterFacet()), _tradeRouterSelectors());
+        _addFacet(address(new CollateralTradeRouterSellFacet()), _tradeRouterSellSelectors());
+        _addFacet(address(new CollateralTradeRouterPreviewFacet()), _tradeRouterPreviewSelectors());
         ResolutionHarnessFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 9_500, 0, 0, 0);
+        FeeConfigFacet(address(diamond)).setParimutuelFeeSplit(500, 9_500, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelEpochWindowCap(30 days);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
         vm.stopPrank();
     }
 
@@ -207,7 +210,7 @@ contract GenericCLOBTest is CurveTradingFixture {
         assertEq(preview.unfilledShares, 0);
 
         vm.prank(taker);
-        ITradeRouter.SellBestResult memory result = ITradeRouter(address(diamond)).sellWithEveUSDC(params);
+        ITradeRouter.SellBestResult memory result = ITradeRouter(address(diamond)).sellWithCollateral(params);
 
         assertEq(result.sharesSold, 400);
         assertEq(result.collateralOut, 200);
@@ -353,18 +356,18 @@ contract GenericCLOBTest is CurveTradingFixture {
     }
 
     function _tradeRouterSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
-        selectors[0] = ITradeRouter.buyWithEveUSDC.selector;
-        selectors[1] = ITradeRouter.buyWithUSDC.selector;
-        selectors[2] = ITradeRouter.splitWithUSDC.selector;
-        selectors[3] = ITradeRouter.buyWithCollateral.selector;
+        selectors = new bytes4[](1);
+        selectors[0] = ITradeRouter.buyWithCollateral.selector;
     }
 
     function _tradeRouterSellSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
-        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[1] = ITradeRouter.sellWithUSDC.selector;
-        selectors[2] = ITradeRouter.previewSellBest.selector;
-        selectors[3] = ITradeRouter.sellWithCollateral.selector;
+        selectors = new bytes4[](1);
+        selectors[0] = ITradeRouter.sellWithCollateral.selector;
+    }
+
+    function _tradeRouterPreviewSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = ITradeRouter.previewSellBest.selector;
+        selectors[1] = ITradeRouter.executeExactRouterTransfer.selector;
     }
 }

@@ -1,28 +1,32 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
-import {EveUSDC} from "../../src/EveUSDC.sol";
+import {MockCollateral} from "../helpers/MockCollateral.sol";
 import {MarginAccountFacet} from "../../src/facets/MarginAccountFacet.sol";
-import {IMarginAccountFacet} from "../../src/interfaces/IMarginAccountFacet.sol";
 import {MarginTypes} from "../../src/types/MarginTypes.sol";
 import {TestBase} from "../helpers/TestBase.sol";
+import {
+    IMarginTestFacet as IMarginAccountFacet,
+    MarginAccountingHarnessFacet,
+    MarginAccountingHarnessSelectors
+} from "../helpers/MarginAccountingHarnessFacet.sol";
 
 contract MarginAccountPropertiesTest is TestBase {
     bytes32 internal constant RISK_DOMAIN = keccak256("margin-property-risk-domain");
 
-    EveUSDC internal eveUSDC;
+    MockCollateral internal collateral;
     address internal riskManager;
 
     function setUp() public override {
         super.setUp();
 
         riskManager = makeAddr("riskManager");
-        eveUSDC = new EveUSDC(address(usdc), makeAddr("onramp"), makeAddr("offramp"));
+        collateral = new MockCollateral();
 
         vm.startPrank(owner);
         diamond.registerFacet(address(new MarginAccountFacet()), _marginSelectors());
-        IMarginAccountFacet(address(diamond)).setMarginAsset(address(eveUSDC));
-        IMarginAccountFacet(address(diamond)).setMarginRiskManager(riskManager);
+        diamond.registerFacet(address(new MarginAccountingHarnessFacet()), MarginAccountingHarnessSelectors.harness());
+        IMarginAccountFacet(address(diamond)).setMarginAsset(address(collateral));
         vm.stopPrank();
     }
 
@@ -38,14 +42,14 @@ contract MarginAccountPropertiesTest is TestBase {
         uint256 withdrawableAfterRelease = deposited - allocated + released;
         uint256 withdrawn = bound(withdrawSeed, 0, withdrawableAfterRelease);
 
-        _wrapEveUSDC(maker, deposited / 1e12);
+        _fundCollateral(maker, deposited / 1e12);
 
         vm.startPrank(maker);
-        eveUSDC.approve(address(diamond), deposited);
+        collateral.approve(address(diamond), deposited);
         IMarginAccountFacet(address(diamond)).depositMargin(deposited, maker);
         bytes32 bucketId;
         if (allocated != 0) {
-            bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(RISK_DOMAIN, allocated);
+            bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(RISK_DOMAIN, allocated, 1);
         }
         if (released != 0) {
             IMarginAccountFacet(address(diamond)).releaseBucketMargin(bucketId, released);
@@ -60,8 +64,8 @@ contract MarginAccountPropertiesTest is TestBase {
         assertEq(account.freeMargin + account.allocatedMargin, deposited - withdrawn);
         assertEq(account.freeMargin, deposited - allocated + released - withdrawn);
         assertEq(account.allocatedMargin, allocated - released);
-        assertEq(eveUSDC.balanceOf(address(diamond)), deposited - withdrawn);
-        assertEq(eveUSDC.balanceOf(taker), withdrawn);
+        assertEq(collateral.balanceOf(address(diamond)), deposited - withdrawn);
+        assertEq(collateral.balanceOf(taker), withdrawn);
     }
 
     function testFuzz_LockedRiskCannotBeWithdrawnThroughBucketRelease(
@@ -73,12 +77,12 @@ contract MarginAccountPropertiesTest is TestBase {
         uint256 reserved = bound(reserveSeed, 1, deposited);
         uint256 releaseAttempt = bound(releaseSeed, deposited - reserved + 1, deposited);
 
-        _wrapEveUSDC(maker, deposited / 1e12);
+        _fundCollateral(maker, deposited / 1e12);
 
         vm.startPrank(maker);
-        eveUSDC.approve(address(diamond), deposited);
+        collateral.approve(address(diamond), deposited);
         IMarginAccountFacet(address(diamond)).depositMargin(deposited, maker);
-        bytes32 bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(RISK_DOMAIN, deposited);
+        bytes32 bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(RISK_DOMAIN, deposited, 1);
         vm.stopPrank();
 
         vm.prank(riskManager);
@@ -98,16 +102,16 @@ contract MarginAccountPropertiesTest is TestBase {
         assertEq(bucket.openOrderRisk, reserved);
     }
 
-    function testFuzz_RiskManagerCannotReserveMoreThanBucketMargin(uint256 depositSeed, uint256 reserveSeed) public {
+    function testFuzz_RiskAccountingCannotReserveMoreThanBucketMargin(uint256 depositSeed, uint256 reserveSeed) public {
         uint256 deposited = bound(depositSeed, 1, 1_000_000e6) * 1e12;
         uint256 reserveAttempt = bound(reserveSeed, deposited + 1, type(uint128).max);
 
-        _wrapEveUSDC(maker, deposited / 1e12);
+        _fundCollateral(maker, deposited / 1e12);
 
         vm.startPrank(maker);
-        eveUSDC.approve(address(diamond), deposited);
+        collateral.approve(address(diamond), deposited);
         IMarginAccountFacet(address(diamond)).depositMargin(deposited, maker);
-        bytes32 bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(RISK_DOMAIN, deposited);
+        bytes32 bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(RISK_DOMAIN, deposited, 1);
         vm.stopPrank();
 
         vm.prank(riskManager);
@@ -134,12 +138,12 @@ contract MarginAccountPropertiesTest is TestBase {
         uint256 firstElapsed = bound(firstElapsedSeed, 1, 30 days);
         uint256 secondElapsed = bound(secondElapsedSeed, 1, 30 days);
 
-        _wrapEveUSDC(maker, deposited / 1e12);
+        _fundCollateral(maker, deposited / 1e12);
 
         vm.startPrank(maker);
-        eveUSDC.approve(address(diamond), deposited);
+        collateral.approve(address(diamond), deposited);
         IMarginAccountFacet(address(diamond)).depositMargin(deposited, maker);
-        bytes32 bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(RISK_DOMAIN, deposited);
+        bytes32 bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(RISK_DOMAIN, deposited, 1);
         vm.stopPrank();
 
         vm.prank(owner);
@@ -151,66 +155,24 @@ contract MarginAccountPropertiesTest is TestBase {
 
         vm.warp(block.timestamp + firstElapsed);
         IMarginAccountFacet(address(diamond)).accrueBucketFundingNow(bucketId);
-        uint256 firstLiability = IMarginAccountFacet(address(diamond)).getMarginBucket(bucketId).fundingLiability;
+        MarginTypes.MarginBucket memory firstBucket = IMarginAccountFacet(address(diamond)).getMarginBucket(bucketId);
+        uint256 firstAccrualWad = firstBucket.fundingAccrued * 1e18 + firstBucket.fundingRemainderWad;
 
         vm.warp(block.timestamp + secondElapsed);
         IMarginAccountFacet(address(diamond)).accrueBucketFundingNow(bucketId);
-        uint256 secondLiability = IMarginAccountFacet(address(diamond)).getMarginBucket(bucketId).fundingLiability;
+        MarginTypes.MarginBucket memory secondBucket = IMarginAccountFacet(address(diamond)).getMarginBucket(bucketId);
+        uint256 secondAccrualWad = secondBucket.fundingAccrued * 1e18 + secondBucket.fundingRemainderWad;
 
-        assertGt(firstLiability, 0);
-        assertGe(secondLiability, firstLiability);
+        assertGt(firstAccrualWad, 0);
+        assertGt(secondAccrualWad, firstAccrualWad);
+        assertGe(secondBucket.fundingLiability, firstBucket.fundingLiability);
     }
 
-    function _wrapEveUSDC(address account, uint256 usdcAmount) internal {
-        usdc.mint(account, usdcAmount);
-
-        vm.startPrank(account);
-        usdc.approve(address(eveUSDC), usdcAmount);
-        eveUSDC.wrap(usdcAmount, account);
-        vm.stopPrank();
+    function _fundCollateral(address account, uint256 usdcAmount) internal {
+        collateral.mint(account, usdcAmount * 1e12);
     }
 
     function _marginSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](40);
-        selectors[0] = IMarginAccountFacet.marginConfig.selector;
-        selectors[1] = IMarginAccountFacet.depositMargin.selector;
-        selectors[2] = IMarginAccountFacet.withdrawMargin.selector;
-        selectors[3] = IMarginAccountFacet.allocateBucketMargin.selector;
-        selectors[4] = IMarginAccountFacet.releaseBucketMargin.selector;
-        selectors[5] = IMarginAccountFacet.getMarginAccount.selector;
-        selectors[6] = IMarginAccountFacet.getMarginBucket.selector;
-        selectors[7] = IMarginAccountFacet.bucketIdFor.selector;
-        selectors[8] = IMarginAccountFacet.riskDomainForBook.selector;
-        selectors[9] = IMarginAccountFacet.riskDomainForMarketBook.selector;
-        selectors[10] = IMarginAccountFacet.canBucketIncreaseRisk.selector;
-        selectors[11] = IMarginAccountFacet.setMarginAsset.selector;
-        selectors[12] = IMarginAccountFacet.setMarginRiskManager.selector;
-        selectors[13] = IMarginAccountFacet.setWarningRiskIncreaseAllowed.selector;
-        selectors[14] = IMarginAccountFacet.reserveBucketRisk.selector;
-        selectors[15] = IMarginAccountFacet.releaseReservedBucketRisk.selector;
-        selectors[16] = IMarginAccountFacet.activateReservedBucketRisk.selector;
-        selectors[17] = IMarginAccountFacet.releaseActiveBucketRisk.selector;
-        selectors[18] = IMarginAccountFacet.recordBucketProfit.selector;
-        selectors[19] = IMarginAccountFacet.recordBucketLoss.selector;
-        selectors[20] = IMarginAccountFacet.setBucketState.selector;
-        selectors[21] = IMarginAccountFacet.allocateBucketMarginWithKind.selector;
-        selectors[22] = IMarginAccountFacet.getBucketRisk.selector;
-        selectors[23] = IMarginAccountFacet.bucketLockedRisk.selector;
-        selectors[24] = IMarginAccountFacet.canBucketIncreaseRiskForBook.selector;
-        selectors[25] = IMarginAccountFacet.riskDomainOracleConfig.selector;
-        selectors[26] = IMarginAccountFacet.setRiskDomainOracleConfig.selector;
-        selectors[27] = IMarginAccountFacet.increaseOpenOrderRisk.selector;
-        selectors[28] = IMarginAccountFacet.releaseOpenOrderRisk.selector;
-        selectors[29] = IMarginAccountFacet.moveOpenOrderToPositionRisk.selector;
-        selectors[30] = IMarginAccountFacet.releasePositionRisk.selector;
-        selectors[31] = IMarginAccountFacet.recordBucketDebt.selector;
-        selectors[32] = IMarginAccountFacet.repayBucketDebt.selector;
-        selectors[33] = IMarginAccountFacet.accrueBucketFunding.selector;
-        selectors[34] = IMarginAccountFacet.settleBucketFunding.selector;
-        selectors[35] = IMarginAccountFacet.recordBucketUnrealizedPnl.selector;
-        selectors[36] = IMarginAccountFacet.recordBucketRecoveryPnl.selector;
-        selectors[37] = IMarginAccountFacet.recordBucketBadDebt.selector;
-        selectors[38] = IMarginAccountFacet.setRiskDomainFundingConfig.selector;
-        selectors[39] = IMarginAccountFacet.accrueBucketFundingNow.selector;
+        selectors = MarginAccountingHarnessSelectors.production();
     }
 }

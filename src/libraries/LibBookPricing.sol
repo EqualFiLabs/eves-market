@@ -126,6 +126,22 @@ library LibBookPricing {
         grossCost = uint128(rawCost);
     }
 
+    function grossCostForUp(LibEveMarket.Book storage book, uint128 baseAmount, uint128 priceNumerator)
+        internal
+        view
+        returns (uint128 grossCost)
+    {
+        // Both operands are uint128, so their product always fits in uint256.
+        uint256 product = uint256(baseAmount) * uint256(priceNumerator);
+        uint256 denominator = uint256(book.priceDenominator);
+        uint256 rawCost = product / denominator;
+        if (product % denominator != 0) ++rawCost;
+        if (rawCost > type(uint128).max) {
+            revert Errors.InvalidAmount(rawCost);
+        }
+        grossCost = uint128(rawCost);
+    }
+
     function baseForQuote(LibEveMarket.Book storage book, uint128 quoteAmount, uint128 priceNumerator)
         internal
         view
