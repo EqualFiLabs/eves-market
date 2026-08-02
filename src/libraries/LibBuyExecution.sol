@@ -15,7 +15,9 @@ import {LibCTF} from "./LibCTF.sol";
 import {LibCurveEscrow} from "./LibCurveEscrow.sol";
 import {LibCurveMath} from "./LibCurveMath.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
+import {LibMarkOracle} from "./LibMarkOracle.sol";
 import {LibMarketAccess} from "./LibMarketAccess.sol";
+import {LibProductAdapter} from "./LibProductAdapter.sol";
 
 library LibBuyExecution {
     using SafeERC20 for IERC20;
@@ -303,6 +305,7 @@ library LibBuyExecution {
     ) internal returns (Quote memory executedQuote) {
         LibEveMarket.StoredCurve storage curve = state.curves[curveId];
         LibEveMarket.Book storage book = state.books[curve.bookId];
+        LibProductAdapter.requireEscrowBackedCurve(state, curveId);
         if (
             book.assetType == LibEveMarket.BookAssetType.ERC20
                 && book.baseTransferMode == LibEveMarket.BaseTransferMode.BALANCE_DELTA
@@ -318,6 +321,7 @@ library LibBuyExecution {
         LibBookAccounting.recordBookAndMarketFill(
             state, book, curve.maker, quote.price, quote.collateralUsed, quote.fee, fees
         );
+        LibMarkOracle.recordFill(state, book, quote.price, quote.sharesOut, grossCost);
 
         if (quote.collateralUsed != 0 && request.payer != address(this)) {
             LibCurveEscrow.transferExactERC20From(book.quoteToken, request.payer, address(this), quote.collateralUsed);
@@ -399,6 +403,7 @@ library LibBuyExecution {
 
         LibBookAccounting.FeeShares memory fees = LibBookAccounting.feeSharesForBook(state, book, fee);
         LibBookAccounting.recordBookAndMarketFill(state, book, curve.maker, quote.price, collateralUsed, fee, fees);
+        LibMarkOracle.recordFill(state, book, quote.price, actualBaseOut, grossCost);
 
         if (grossCost != 0) {
             quoteToken.safeTransfer(curve.maker, grossCost);

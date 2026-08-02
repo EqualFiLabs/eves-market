@@ -248,6 +248,7 @@ interface MarketFactoryTypes {
         address eveToken;
         address eveTreasury;
         address stakingVault;
+        address secondaryStakingVault;
         address parimutuelShareToken;
         BookFeeConfigView orderbookFeeConfig;
         SpotFeeConfigView spotFeeConfig;

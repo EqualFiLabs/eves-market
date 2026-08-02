@@ -7,6 +7,7 @@ interface IEveUSDRouter {
     error ContractExpected(address account);
     error InvalidPoolToken(address token, address expectedPool, address actualPool);
     error InvalidPoolAsset(address provided, address expected);
+    error UnexpectedCollateralProfile(uint256 expectedProfileId, uint256 actualProfileId);
     error OutputBelowMinimum(uint256 actual, uint256 minimum);
     error SharesAboveMaximum(uint256 required, uint256 maximum);
     error ResidualRouterBalance(address token, uint256 expectedBalance, uint256 actualBalance);
@@ -19,6 +20,7 @@ interface IEveUSDRouter {
         address indexed caller,
         address indexed eveUSDReceiver,
         address indexed shareReceiver,
+        uint256 profileId,
         uint256 seriesId,
         uint256 ethAmount,
         uint256 eveUSDMinted,
@@ -28,6 +30,7 @@ interface IEveUSDRouter {
         address indexed caller,
         address indexed eveUSDReceiver,
         address indexed shareReceiver,
+        uint256 profileId,
         uint256 seriesId,
         uint256 wethAmount,
         uint256 eveUSDMinted,

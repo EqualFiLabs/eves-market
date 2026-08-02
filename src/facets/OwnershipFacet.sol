@@ -14,6 +14,7 @@ import {OwnershipConfigTypes} from "../types/OwnershipConfigTypes.sol";
 contract OwnershipFacet {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event StakingVaultSet(address indexed previousStakingVault, address indexed newStakingVault);
+    event SecondaryStakingVaultSet(address indexed previousStakingVault, address indexed newStakingVault);
     event OrderbookFeeSplitSet(uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps);
     event OrderbookEntryFeeBpsSet(uint16 previousEntryFeeBps, uint16 newEntryFeeBps);
     event SpotFeeSplitSet(uint16 makerFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps);
@@ -298,6 +299,13 @@ contract OwnershipFacet {
         LibDiamond.enforceIsContractOwner();
         address previousStakingVault = LibMarketConfigAdmin.setStakingVault(LibEveMarket.store().config, stakingVault);
         emit StakingVaultSet(previousStakingVault, stakingVault);
+    }
+
+    function setSecondaryStakingVault(address stakingVault) external {
+        LibDiamond.enforceIsContractOwner();
+        address previousStakingVault =
+            LibMarketConfigAdmin.setSecondaryStakingVault(LibEveMarket.store().config, stakingVault);
+        emit SecondaryStakingVaultSet(previousStakingVault, stakingVault);
     }
 
     function setOrderbookFeeSplit(uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps)

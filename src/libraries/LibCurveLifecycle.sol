@@ -16,6 +16,7 @@ import {LibCurveMath} from "./LibCurveMath.sol";
 import {LibCurvePacking} from "./LibCurvePacking.sol";
 import {LibCurveStorage} from "./LibCurveStorage.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
+import {LibProductAdapter} from "./LibProductAdapter.sol";
 import {LibSafeCast} from "./LibSafeCast.sol";
 
 library LibCurveLifecycle {
@@ -235,6 +236,7 @@ library LibCurveLifecycle {
 
             LibEveMarket.StoredCurve storage curve = state.curves[params_.curveId];
             requireCurveOwner(params_.curveId, curve, maker);
+            LibProductAdapter.requireEscrowBackedCurve(state, params_.curveId);
             LibEveMarket.Book storage book = state.books[curve.bookId];
             if (book.marketId != marketId) {
                 revert Errors.CurveMarketMismatch(marketId, book.marketId);
@@ -269,6 +271,7 @@ library LibCurveLifecycle {
 
             LibEveMarket.StoredCurve storage curve = state.curves[params_.curveId];
             requireCurveOwner(params_.curveId, curve, maker);
+            LibProductAdapter.requireEscrowBackedCurve(state, params_.curveId);
             if (curve.bookId != bookId) {
                 revert Errors.CurveBookMismatch(bookId, curve.bookId);
             }
@@ -332,6 +335,7 @@ library LibCurveLifecycle {
     ) internal returns (bytes32 nextCachedBookId, bool cacheInitialized) {
         LibEveMarket.StoredCurve storage curve = state.curves[curveId];
         requireCurveOwner(curveId, curve, caller);
+        LibProductAdapter.requireEscrowBackedCurve(state, curveId);
 
         if (expectedGeneration != curve.generation) {
             revert Errors.GenerationMismatch(expectedGeneration, curve.generation);
@@ -380,6 +384,7 @@ library LibCurveLifecycle {
     ) internal returns (CancelCache memory nextCache) {
         LibEveMarket.StoredCurve storage curve = state.curves[curveId];
         requireCurveOwner(curveId, curve, maker);
+        LibProductAdapter.requireEscrowBackedCurve(state, curveId);
 
         bytes32 bookId = curve.bookId;
         if (!cache.initialized || bookId != cache.bookId) {

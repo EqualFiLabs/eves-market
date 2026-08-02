@@ -12,6 +12,7 @@ import {SEveUSDCVault} from "../src/SEveUSDCVault.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
 import {TradeRouterFacet} from "../src/facets/TradeRouterFacet.sol";
+import {TradeRouterSellFacet} from "../src/facets/TradeRouterSellFacet.sol";
 import {VaultRouterFacet} from "../src/facets/VaultRouterFacet.sol";
 import {ITradeRouter} from "../src/interfaces/ITradeRouter.sol";
 import {IVaultRouter} from "../src/interfaces/IVaultRouter.sol";
@@ -26,6 +27,7 @@ contract UpgradeEveUSDC18 is Script {
         address seveUsdcLending;
         address makerLendingRouter;
         address tradeRouterFacet;
+        address tradeRouterSellFacet;
         address vaultRouterFacet;
     }
 
@@ -107,6 +109,7 @@ contract UpgradeEveUSDC18 is Script {
             )
         );
         deployment.tradeRouterFacet = address(new TradeRouterFacet());
+        deployment.tradeRouterSellFacet = address(new TradeRouterSellFacet());
         deployment.vaultRouterFacet = address(new VaultRouterFacet());
     }
 
@@ -136,9 +139,9 @@ contract UpgradeEveUSDC18 is Script {
     function _verifyUpgrade(UpgradeDeployment memory deployment, address diamond) private view {
         _assertSelector(diamond, ITradeRouter.buyWithEveUSDC.selector, deployment.tradeRouterFacet);
         _assertSelector(diamond, ITradeRouter.buyWithUSDC.selector, deployment.tradeRouterFacet);
-        _assertSelector(diamond, ITradeRouter.sellWithEveUSDC.selector, deployment.tradeRouterFacet);
-        _assertSelector(diamond, ITradeRouter.sellWithUSDC.selector, deployment.tradeRouterFacet);
-        _assertSelector(diamond, ITradeRouter.previewSellBest.selector, deployment.tradeRouterFacet);
+        _assertSelector(diamond, ITradeRouter.sellWithEveUSDC.selector, deployment.tradeRouterSellFacet);
+        _assertSelector(diamond, ITradeRouter.sellWithUSDC.selector, deployment.tradeRouterSellFacet);
+        _assertSelector(diamond, ITradeRouter.previewSellBest.selector, deployment.tradeRouterSellFacet);
         _assertSelector(diamond, ITradeRouter.splitWithUSDC.selector, deployment.tradeRouterFacet);
         _assertSelector(diamond, IVaultRouter.wrapAndDeposit.selector, deployment.vaultRouterFacet);
         _assertSelector(diamond, IVaultRouter.redeemAndUnwrap.selector, deployment.vaultRouterFacet);
@@ -153,6 +156,7 @@ contract UpgradeEveUSDC18 is Script {
         console2.log("seveUsdcLending", deployment.seveUsdcLending);
         console2.log("makerLendingRouter", deployment.makerLendingRouter);
         console2.log("tradeRouterFacet", deployment.tradeRouterFacet);
+        console2.log("tradeRouterSellFacet", deployment.tradeRouterSellFacet);
         console2.log("vaultRouterFacet", deployment.vaultRouterFacet);
         console2.log("diamond", diamond);
     }
@@ -162,13 +166,18 @@ contract UpgradeEveUSDC18 is Script {
         pure
         returns (DiamondCutFacet.FacetCut[] memory cuts)
     {
-        cuts = new DiamondCutFacet.FacetCut[](2);
+        cuts = new DiamondCutFacet.FacetCut[](3);
         cuts[0] = DiamondCutFacet.FacetCut({
             facetAddress: deployment.tradeRouterFacet,
             action: DiamondCutFacet.FacetCutAction.Replace,
             functionSelectors: _tradeRouterSelectors()
         });
         cuts[1] = DiamondCutFacet.FacetCut({
+            facetAddress: deployment.tradeRouterSellFacet,
+            action: DiamondCutFacet.FacetCutAction.Replace,
+            functionSelectors: _tradeRouterSellSelectors()
+        });
+        cuts[2] = DiamondCutFacet.FacetCut({
             facetAddress: deployment.vaultRouterFacet,
             action: DiamondCutFacet.FacetCutAction.Replace,
             functionSelectors: _vaultRouterSelectors()
@@ -176,13 +185,17 @@ contract UpgradeEveUSDC18 is Script {
     }
 
     function _tradeRouterSelectors() private pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](3);
         selectors[0] = ITradeRouter.buyWithEveUSDC.selector;
         selectors[1] = ITradeRouter.buyWithUSDC.selector;
-        selectors[2] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[3] = ITradeRouter.sellWithUSDC.selector;
-        selectors[4] = ITradeRouter.previewSellBest.selector;
-        selectors[5] = ITradeRouter.splitWithUSDC.selector;
+        selectors[2] = ITradeRouter.splitWithUSDC.selector;
+    }
+
+    function _tradeRouterSellSelectors() private pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](3);
+        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
+        selectors[1] = ITradeRouter.sellWithUSDC.selector;
+        selectors[2] = ITradeRouter.previewSellBest.selector;
     }
 
     function _vaultRouterSelectors() private pure returns (bytes4[] memory selectors) {

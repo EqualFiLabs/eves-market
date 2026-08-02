@@ -18,7 +18,9 @@ import {LibCurveEscrow} from "./LibCurveEscrow.sol";
 import {LibCurveMath} from "./LibCurveMath.sol";
 import {LibCurvePacking} from "./LibCurvePacking.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
+import {LibMarkOracle} from "./LibMarkOracle.sol";
 import {LibMarketAccess} from "./LibMarketAccess.sol";
+import {LibProductAdapter} from "./LibProductAdapter.sol";
 
 library LibSellExecution {
     using SafeERC20 for IERC20;
@@ -477,6 +479,7 @@ library LibSellExecution {
         CurveCLOBTypes.SellExecutionContext memory context,
         DirectBidSettlement settlement
     ) internal returns (SellQuote memory executedQuote) {
+        LibProductAdapter.requireEscrowBackedCurve(state, curveId);
         uint128 actualBaseSold = context.useEscrowedBase
             ? LibCurveEscrow.transferBaseFromEscrow(book, curve.maker, quote.sharesOut)
             : LibCurveEscrow.transferBaseFromSeller(book, context.source, curve.maker, quote.sharesOut);
@@ -502,6 +505,7 @@ library LibSellExecution {
         LibBookAccounting.recordBookAndMarketFill(
             state, book, curve.maker, quote.price, quote.grossCost, quote.fee, fees
         );
+        LibMarkOracle.recordFill(state, book, quote.price, quote.sharesOut, quote.grossCost);
 
         if (settlement == DirectBidSettlement.TransferToReceiver && quote.collateralOut != 0) {
             IERC20(book.quoteToken).safeTransfer(context.receiver, quote.collateralOut);
@@ -522,6 +526,7 @@ library LibSellExecution {
         SellQuote memory quote,
         CurveCLOBTypes.SellExecutionContext memory context
     ) internal {
+        LibProductAdapter.requireEscrowBackedCurve(state, curveId);
         IERC20 collateralToken = IERC20(market.collateralToken);
         uint256 soldPositionId = soldYesSide ? market.yesPositionId : market.noPositionId;
         LibEveMarket.Book storage book = state.books[curve.bookId];
@@ -545,8 +550,21 @@ library LibSellExecution {
             market, curve.maker, uint128(PRICE_SCALE - quote.price), collateralUsed, quote.fee, fees
         );
         LibBookAccounting.recordBookOnlyFill(book, curve.maker, quote.price, collateralUsed, quote.fee, fees);
+        recordComplementSellOracle(state, market, soldYesSide, quote);
 
         emit Events.CurveFilled(curveId, curve.maker, context.seller, collateralUsed, quote.sharesOut, quote.fee);
+    }
+
+    function recordComplementSellOracle(
+        LibEveMarket.EveMarketStorage storage state,
+        LibEveMarket.Market storage market,
+        bool soldYesSide,
+        SellQuote memory quote
+    ) internal {
+        uint128 soldSidePrice = uint128(PRICE_SCALE - quote.price);
+        LibEveMarket.Book storage soldSideBook = LibCLOBBook.ensureMarketSideBook(state, market, soldYesSide);
+        uint128 soldSideNotional = LibBookPricing.grossCostFor(soldSideBook, quote.sharesOut, soldSidePrice);
+        LibMarkOracle.recordFill(state, soldSideBook, soldSidePrice, quote.sharesOut, soldSideNotional);
     }
 
     function requireCTFPositionMarket(LibEveMarket.Market storage market) internal view {

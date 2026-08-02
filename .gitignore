@@ -11,12 +11,17 @@
 /lib/*
 
 /conditional-tokens-contracts/
+/conditional-tokens/cache_forge/
+/conditional-tokens/out/*
+!/conditional-tokens/out/ConditionalTokens.sol/
+!/conditional-tokens/out/ConditionalTokens.sol/ConditionalTokens.json
 /ETHSKILLS.md
 
 /node_modules/
 
 .DS_Store
 .idea/
+
 # Public repository hygiene
 /.kiro/
 /.opencode/

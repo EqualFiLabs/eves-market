@@ -9,6 +9,7 @@ import {FeeRouterFacet} from "../src/facets/FeeRouterFacet.sol";
 import {OBRResolutionFacet} from "../src/facets/OBRResolutionFacet.sol";
 import {BookTradeFacet} from "../src/facets/BookTradeFacet.sol";
 import {TradeRouterFacet} from "../src/facets/TradeRouterFacet.sol";
+import {TradeRouterSellFacet} from "../src/facets/TradeRouterSellFacet.sol";
 import {IBookAdminFacet} from "../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../src/interfaces/IBookTradeFacet.sol";
@@ -29,6 +30,7 @@ contract UpgradeBaseSepoliaTradingRewards is Script {
         address curveCLOBFacet;
         address bookTradeFacet;
         address tradeRouterFacet;
+        address tradeRouterSellFacet;
     }
 
     struct UpgradeConfig {
@@ -45,6 +47,7 @@ contract UpgradeBaseSepoliaTradingRewards is Script {
         deployment.curveCLOBFacet = address(new CurveCLOBFacet());
         deployment.bookTradeFacet = address(new BookTradeFacet());
         deployment.tradeRouterFacet = address(new TradeRouterFacet());
+        deployment.tradeRouterSellFacet = address(new TradeRouterSellFacet());
 
         DiamondCutFacet(config.diamond).diamondCut(_buildCuts(config.diamond, deployment), address(0), "");
         vm.stopBroadcast();
@@ -98,7 +101,11 @@ contract UpgradeBaseSepoliaTradingRewards is Script {
             action: DiamondCutFacet.FacetCutAction.Replace,
             functionSelectors: _existingTradeRouterSelectors()
         });
-        cuts[9] = _singleSelectorCut(diamond, deployment.tradeRouterFacet, ITradeRouter.previewSellBest.selector);
+        cuts[9] = DiamondCutFacet.FacetCut({
+            facetAddress: deployment.tradeRouterSellFacet,
+            action: DiamondCutFacet.FacetCutAction.Replace,
+            functionSelectors: _tradeRouterSellSelectors()
+        });
     }
 
     function _singleSelectorCut(address diamond, address facet, bytes4 selector)
@@ -147,10 +154,9 @@ contract UpgradeBaseSepoliaTradingRewards is Script {
     }
 
     function _curveTradeSelectors() private pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](2);
         selectors[0] = ICurveTradeFacet.fillCurve.selector;
         selectors[1] = ICurveTradeFacet.fillBest.selector;
-        selectors[2] = ICurveTradeFacet.fillBestFor.selector;
     }
 
     function _bookTradeSelectors() private pure returns (bytes4[] memory selectors) {
@@ -162,12 +168,17 @@ contract UpgradeBaseSepoliaTradingRewards is Script {
     }
 
     function _existingTradeRouterSelectors() private pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](3);
         selectors[0] = ITradeRouter.buyWithEveUSDC.selector;
         selectors[1] = ITradeRouter.buyWithUSDC.selector;
-        selectors[2] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[3] = ITradeRouter.sellWithUSDC.selector;
-        selectors[4] = ITradeRouter.splitWithUSDC.selector;
+        selectors[2] = ITradeRouter.splitWithUSDC.selector;
+    }
+
+    function _tradeRouterSellSelectors() private pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](3);
+        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
+        selectors[1] = ITradeRouter.sellWithUSDC.selector;
+        selectors[2] = ITradeRouter.previewSellBest.selector;
     }
 
     function _verifyUpgrade(address diamond, UpgradeDeployment memory deployment) private view {
@@ -180,7 +191,7 @@ contract UpgradeBaseSepoliaTradingRewards is Script {
         _assertSelectorRouting(diamond, deployment.curveCLOBFacet, _curveTradeSelectors());
         _assertSelectorRouting(diamond, deployment.bookTradeFacet, _bookTradeSelectors());
         _assertSelectorRouting(diamond, deployment.tradeRouterFacet, _existingTradeRouterSelectors());
-        _assertSelector(diamond, ITradeRouter.previewSellBest.selector, deployment.tradeRouterFacet);
+        _assertSelectorRouting(diamond, deployment.tradeRouterSellFacet, _tradeRouterSellSelectors());
     }
 
     function _assertSelectorRouting(address diamond, address facet, bytes4[] memory selectors) private view {
@@ -207,5 +218,6 @@ contract UpgradeBaseSepoliaTradingRewards is Script {
         console2.log("curveCLOBFacet", deployment.curveCLOBFacet);
         console2.log("bookTradeFacet", deployment.bookTradeFacet);
         console2.log("tradeRouterFacet", deployment.tradeRouterFacet);
+        console2.log("tradeRouterSellFacet", deployment.tradeRouterSellFacet);
     }
 }

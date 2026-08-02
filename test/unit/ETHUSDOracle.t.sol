@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {ChainlinkETHUSDOracle} from "../../src/ChainlinkETHUSDOracle.sol";
 import {IETHUSDOracle} from "../../src/interfaces/IETHUSDOracle.sol";
+import {IUsdOracle} from "../../src/interfaces/IUsdOracle.sol";
 import {MockETHUSDOracle} from "../../src/mocks/MockETHUSDOracle.sol";
 
 contract ETHUSDOracleTest is Test {
@@ -76,28 +77,28 @@ contract ETHUSDOracleTest is Test {
 
     function test_RevertWhen_ChainlinkPriceIsZeroOrNegative() public {
         feed.setRoundData(2, 0, NOW - 10 minutes, 2);
-        vm.expectRevert(IETHUSDOracle.InvalidPrice.selector);
+        vm.expectRevert(IUsdOracle.InvalidPrice.selector);
         oracle.ethUsdPriceWad();
 
         feed.setRoundData(3, -1, NOW - 10 minutes, 3);
-        vm.expectRevert(IETHUSDOracle.InvalidPrice.selector);
+        vm.expectRevert(IUsdOracle.InvalidPrice.selector);
         oracle.ethUsdPriceWad();
     }
 
     function test_RevertWhen_ChainlinkRoundIsIncomplete() public {
         feed.setRoundData(3, 2_500e8, NOW - 10 minutes, 2);
 
-        vm.expectRevert(IETHUSDOracle.InvalidPrice.selector);
+        vm.expectRevert(IUsdOracle.InvalidPrice.selector);
         oracle.ethUsdPriceWad();
     }
 
     function test_RevertWhen_ChainlinkUpdatedAtIsZeroOrFuture() public {
         feed.setRoundData(2, 2_500e8, 0, 2);
-        vm.expectRevert(IETHUSDOracle.InvalidPrice.selector);
+        vm.expectRevert(IUsdOracle.InvalidPrice.selector);
         oracle.ethUsdPriceWad();
 
         feed.setRoundData(3, 2_500e8, NOW + 1, 3);
-        vm.expectRevert(IETHUSDOracle.InvalidPrice.selector);
+        vm.expectRevert(IUsdOracle.InvalidPrice.selector);
         oracle.ethUsdPriceWad();
     }
 
@@ -105,7 +106,7 @@ contract ETHUSDOracleTest is Test {
         uint256 updatedAt = NOW - MAX_STALENESS - 1;
         feed.setRoundData(2, 2_500e8, updatedAt, 2);
 
-        vm.expectRevert(abi.encodeWithSelector(IETHUSDOracle.StalePrice.selector, updatedAt, MAX_STALENESS));
+        vm.expectRevert(abi.encodeWithSelector(IUsdOracle.StalePrice.selector, updatedAt, MAX_STALENESS));
         oracle.ethUsdPriceWad();
     }
 
@@ -169,21 +170,21 @@ contract ETHUSDOracleTest is Test {
     function test_MockOracleSupportsConfigurableInvalidPriceFailure() public {
         mockOracle.setInvalidPrice(true);
 
-        vm.expectRevert(IETHUSDOracle.InvalidPrice.selector);
+        vm.expectRevert(IUsdOracle.InvalidPrice.selector);
         mockOracle.ethUsdPriceWad();
     }
 
     function test_MockOracleRejectsZeroPrice() public {
         mockOracle.setPriceWad(0);
 
-        vm.expectRevert(IETHUSDOracle.InvalidPrice.selector);
+        vm.expectRevert(IUsdOracle.InvalidPrice.selector);
         mockOracle.ethUsdPriceWad();
     }
 
     function test_MockOracleSupportsConfigurableStalePriceFailure() public {
         mockOracle.setStalePrice(true);
 
-        vm.expectRevert(abi.encodeWithSelector(IETHUSDOracle.StalePrice.selector, NOW, MAX_STALENESS));
+        vm.expectRevert(abi.encodeWithSelector(IUsdOracle.StalePrice.selector, NOW, MAX_STALENESS));
         mockOracle.ethUsdPriceWad();
     }
 
@@ -191,7 +192,7 @@ contract ETHUSDOracleTest is Test {
         uint256 updatedAt = NOW - MAX_STALENESS - 1;
         mockOracle.setUpdatedAt(updatedAt);
 
-        vm.expectRevert(abi.encodeWithSelector(IETHUSDOracle.StalePrice.selector, updatedAt, MAX_STALENESS));
+        vm.expectRevert(abi.encodeWithSelector(IUsdOracle.StalePrice.selector, updatedAt, MAX_STALENESS));
         mockOracle.ethUsdPriceWad();
     }
 

@@ -7,6 +7,7 @@ import {IERC165} from "../../lib/openzeppelin-contracts/contracts/utils/introspe
 import {MakerLendingRouter} from "../../src/MakerLendingRouter.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
+import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
 import {IMakerLendingRouter} from "../../src/interfaces/IMakerLendingRouter.sol";
 import {IParimutuelFacet} from "../../src/interfaces/IParimutuelFacet.sol";
@@ -82,6 +83,7 @@ contract MakerLendingRouterTest is RouterTestBase {
         super.setUp();
         _addFacet(address(new ResolutionHarnessFacet()), _resolutionHarnessSelectors());
         _addFacet(address(new ParimutuelFacet()), _parimutuelSelectors());
+        _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
 
         parimutuelShareToken = new ParimutuelShareToken(address(diamond), "uri://parimutuel/{id}");
 
@@ -374,7 +376,9 @@ contract MakerLendingRouterTest is RouterTestBase {
 
         vm.prank(borrower);
         vm.expectRevert(
-            abi.encodeWithSelector(IMakerLendingRouter.InvalidMarketCollateral.selector, address(usdc), address(eveUSDC))
+            abi.encodeWithSelector(
+                IMakerLendingRouter.InvalidMarketCollateral.selector, address(usdc), address(eveUSDC)
+            )
         );
         router.onramp(500e6, 200e6, 7 days, usdcMarketId, borrower);
 
@@ -571,8 +575,12 @@ contract MakerLendingRouterTest is RouterTestBase {
         _approveRouterPositions(secondBorrower);
         _notifyRevenue(60e6);
 
-        (uint256 mergeOutUsdc, uint256 redeemedCollateralEveUSDC, uint256 repaymentAmountUsdc, uint256 expectedUsdcOut) =
-            router.previewOfframpToUSDC(loanId, marketIdA, usdcPositionAmount);
+        (
+            uint256 mergeOutUsdc,
+            uint256 redeemedCollateralEveUSDC,
+            uint256 repaymentAmountUsdc,
+            uint256 expectedUsdcOut
+        ) = router.previewOfframpToUSDC(loanId, marketIdA, usdcPositionAmount);
 
         vm.prank(secondBorrower);
         vm.expectEmit(true, true, false, true, address(router));

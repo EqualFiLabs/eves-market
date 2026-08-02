@@ -13,6 +13,7 @@ import {CurveCLOBTypes} from "../../src/types/CurveCLOBTypes.sol";
 import {ITradeRouter} from "../../src/interfaces/ITradeRouter.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
 import {TradeRouterFacet} from "../../src/facets/TradeRouterFacet.sol";
+import {TradeRouterSellFacet} from "../../src/facets/TradeRouterSellFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
@@ -29,6 +30,7 @@ contract TradeRouterTest is VaultFeeRoutingFixture {
     function setUp() public override {
         super.setUp();
         _addFacet(address(new TradeRouterFacet()), _tradeRouterSelectors());
+        _addFacet(address(new TradeRouterSellFacet()), _tradeRouterSellSelectors());
         _addFacet(address(new ResolutionHarnessFacet()), _resolutionHarnessSelectors());
         tradeRouter = ITradeRouter(address(diamond));
         alternateReceiver = makeAddr("trade-router-alt-receiver");
@@ -563,15 +565,19 @@ contract TradeRouterTest is VaultFeeRoutingFixture {
     }
 
     function _tradeRouterSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](4);
         selectors[0] = ITradeRouter.buyWithEveUSDC.selector;
         selectors[1] = ITradeRouter.buyWithUSDC.selector;
-        selectors[2] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[3] = ITradeRouter.sellWithUSDC.selector;
-        selectors[4] = ITradeRouter.previewSellBest.selector;
-        selectors[5] = ITradeRouter.splitWithUSDC.selector;
-        selectors[6] = ITradeRouter.buyWithCollateral.selector;
-        selectors[7] = ITradeRouter.sellWithCollateral.selector;
+        selectors[2] = ITradeRouter.splitWithUSDC.selector;
+        selectors[3] = ITradeRouter.buyWithCollateral.selector;
+    }
+
+    function _tradeRouterSellSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
+        selectors[1] = ITradeRouter.sellWithUSDC.selector;
+        selectors[2] = ITradeRouter.previewSellBest.selector;
+        selectors[3] = ITradeRouter.sellWithCollateral.selector;
     }
 
     function _expectedSellAmounts(uint128 shares, uint128 oppositePrice)

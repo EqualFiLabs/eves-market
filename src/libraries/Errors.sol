@@ -51,6 +51,11 @@ library Errors {
     error CurveNotActive(uint256 curveId);
     error CurveExpired(uint256 curveId);
     error CurveNotReusable(uint256 curveId, uint128 remainingVolume, uint64 expiresAt);
+    error CurveBackingMismatch(uint256 curveId, uint8 expected, uint8 actual);
+    error AdapterCurveMetadataMissing(uint256 curveId);
+    error AdapterCurveInactive(uint256 curveId);
+    error InvalidProductAdapter(uint8 adapterKind);
+    error QuoteEnvelopeBoundToAdapterCurve(uint256 envelopeId, uint256 curveId);
     error InvalidProfileId(uint8 profileId);
     error InvalidTickPreset(uint8 tickPresetId);
     error InsufficientVolume(uint128 requested, uint128 remaining);

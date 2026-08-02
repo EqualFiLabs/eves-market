@@ -140,6 +140,17 @@ library LibMarketConfigAdmin {
         config.stakingVault = stakingVault;
     }
 
+    function setSecondaryStakingVault(LibEveMarket.MarketConfig storage config, address stakingVault)
+        internal
+        returns (address previousStakingVault)
+    {
+        if (stakingVault != address(0)) {
+            LibAdminConfig.enforceVault(stakingVault);
+        }
+        previousStakingVault = config.secondaryStakingVault;
+        config.secondaryStakingVault = stakingVault;
+    }
+
     function setParimutuelConfig(
         LibEveMarket.MarketConfig storage config,
         address shareToken,

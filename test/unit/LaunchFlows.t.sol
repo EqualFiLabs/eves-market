@@ -4,11 +4,13 @@ pragma solidity ^0.8.28;
 import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
+import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {BookFacet} from "../../src/facets/BookFacet.sol";
 import {BookOrderFacet} from "../../src/facets/BookOrderFacet.sol";
 import {BookTradeFacet} from "../../src/facets/BookTradeFacet.sol";
 import {BookViewFacet} from "../../src/facets/BookViewFacet.sol";
 import {TradeRouterFacet} from "../../src/facets/TradeRouterFacet.sol";
+import {TradeRouterSellFacet} from "../../src/facets/TradeRouterSellFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
@@ -52,6 +54,7 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
 
         shareToken = new ParimutuelShareToken(address(diamond), "uri://launch-parimutuel/{id}");
         _addFacet(address(new ParimutuelFacet()), _parimutuelSelectors());
+        _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
         _addFacet(address(new BookFacet()), _bookSelectors());
         _addFacet(address(new BookOrderFacet()), _bookOrderSelectors());
         _addFacet(address(new BookTradeFacet()), _bookTradeSelectors());
@@ -388,8 +391,10 @@ contract LaunchRouterFlowsTest is VaultFeeRoutingFixture {
         receiver = makeAddr("launch-router-receiver");
 
         _addFacet(address(new TradeRouterFacet()), _tradeRouterSelectors());
+        _addFacet(address(new TradeRouterSellFacet()), _tradeRouterSellSelectors());
         _addFacet(address(new ResolutionHarnessFacet()), _resolutionHarnessSelectors());
         _addFacet(address(new ParimutuelFacet()), _parimutuelSelectors());
+        _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
 
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
@@ -524,14 +529,18 @@ contract LaunchRouterFlowsTest is VaultFeeRoutingFixture {
     }
 
     function _tradeRouterSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](4);
         selectors[0] = ITradeRouter.buyWithEveUSDC.selector;
         selectors[1] = ITradeRouter.buyWithUSDC.selector;
-        selectors[2] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[3] = ITradeRouter.sellWithUSDC.selector;
-        selectors[4] = ITradeRouter.previewSellBest.selector;
-        selectors[5] = ITradeRouter.splitWithUSDC.selector;
-        selectors[6] = ITradeRouter.buyWithCollateral.selector;
-        selectors[7] = ITradeRouter.sellWithCollateral.selector;
+        selectors[2] = ITradeRouter.splitWithUSDC.selector;
+        selectors[3] = ITradeRouter.buyWithCollateral.selector;
+    }
+
+    function _tradeRouterSellSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
+        selectors[1] = ITradeRouter.sellWithUSDC.selector;
+        selectors[2] = ITradeRouter.previewSellBest.selector;
+        selectors[3] = ITradeRouter.sellWithCollateral.selector;
     }
 }

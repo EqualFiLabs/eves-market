@@ -210,10 +210,9 @@ abstract contract VaultFeeRoutingFixture is DiamondFixture {
     }
 
     function _curveTradeSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](2);
         selectors[0] = ICurveTradeFacet.fillCurve.selector;
         selectors[1] = ICurveTradeFacet.fillBest.selector;
-        selectors[2] = ICurveTradeFacet.fillBestFor.selector;
     }
 
     function _curveViewSelectors() internal pure returns (bytes4[] memory selectors) {

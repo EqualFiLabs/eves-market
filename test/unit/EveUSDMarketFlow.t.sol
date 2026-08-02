@@ -27,6 +27,7 @@ import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 import {SettlementFeeFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 
 contract EveUSDMarketFlowTest is SettlementFeeFixture {
+    uint256 internal constant WETH_PROFILE = 1;
     uint8 internal constant EVE_USD_PROFILE_ID = 2;
     uint128 internal constant EVE_USD_PAYOUT_UNIT = 1 ether;
     uint256 internal constant ETH_USD_PRICE_WAD = 2_500e18;
@@ -49,7 +50,7 @@ contract EveUSDMarketFlowTest is SettlementFeeFixture {
         weth = new CanonicalWETH9();
         oracle = new MockETHUSDOracle(ETH_USD_PRICE_WAD, ORACLE_MAX_STALENESS);
         (eveUSD, evRisk, pool) = _deployPool(COLLATERAL_RATIO_BPS, RECOVERY_TRIGGER_BPS);
-        router = new EveUSDRouter(address(pool), address(weth), address(eveUSD), address(evRisk));
+        router = new EveUSDRouter(address(pool), address(weth), address(eveUSD), address(evRisk), WETH_PROFILE);
         comboPositions = new EvesPositionManager(address(diamond), "");
 
         _addFacet(address(ownershipFacet), _evesPositionManagerSelector());

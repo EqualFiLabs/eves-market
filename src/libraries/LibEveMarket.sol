@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
+import {MarkOracleTypes} from "../types/MarkOracleTypes.sol";
+import {MarginTypes} from "../types/MarginTypes.sol";
+import {ProductAdapterTypes} from "../types/ProductAdapterTypes.sol";
+import {QuoteEnvelopeTypes} from "../types/QuoteEnvelopeTypes.sol";
+
 library LibEveMarket {
     bytes32 internal constant STORAGE_SLOT = bytes32(uint256(keccak256("eve.prediction.market.storage")) - 1);
 
@@ -186,6 +191,8 @@ library LibEveMarket {
         address eveToken;
         address eveTreasury;
         address stakingVault;
+        address secondaryStakingVault;
+        address seniorCapitalPool;
         BookFeeConfig orderbookFeeConfig;
         SpotFeeConfig spotFeeConfig;
         ParimutuelFeeConfig parimutuelFeeConfig;
@@ -545,6 +552,36 @@ library LibEveMarket {
         mapping(uint8 => uint128) parimutuelProfileMinEntry;
         mapping(uint8 => uint128) parlayUnderwritingFeeByProfile;
         DelayedOrderStorage delayedOrders;
+        mapping(bytes32 => MarkOracleTypes.BookOracle) markOracles;
+        uint32 markOracleCautionThreshold;
+        uint32 markOracleStaleThreshold;
+        address marginAsset;
+        address marginRiskManager;
+        bool marginWarningRiskIncreaseAllowed;
+        uint256 totalMarginLiabilities;
+        mapping(address => MarginTypes.MarginAccount) marginAccounts;
+        mapping(bytes32 => MarginTypes.MarginBucket) marginBuckets;
+        mapping(address => mapping(bytes32 => bytes32)) marginBucketIds;
+        mapping(bytes32 => MarginTypes.RiskDomainOracleConfig) marginRiskDomainOracles;
+        mapping(uint8 => MarginTypes.RiskParams) marginDefaultRiskParams;
+        mapping(bytes32 => MarginTypes.RiskParams) marginRiskDomainParams;
+        mapping(bytes32 => MarkOracleTypes.RiskMarkConfig) marginRiskDomainMarkConfigs;
+        mapping(bytes32 => MarginTypes.FundingConfig) marginRiskDomainFundingConfigs;
+        uint256 nextQuoteEnvelopeId;
+        mapping(uint256 => QuoteEnvelopeTypes.StoredQuoteEnvelope) quoteEnvelopes;
+        mapping(address => uint256[]) operatorQuoteEnvelopeIds;
+        mapping(bytes32 => uint256[]) bookQuoteEnvelopeIds;
+        mapping(uint256 => ProductAdapterTypes.AdapterCurveMetadata) adapterCurveMetadata;
+        mapping(uint256 => uint256) mloCurveEnvelopeIds;
+        mapping(uint256 => uint256) mloEnvelopeCurveIds;
+        mapping(uint256 => uint256) mloCurveSeniorReserved;
+        mapping(uint256 => address) mloCurveSeniorPools;
+        mapping(bytes32 => mapping(bytes32 => address)) mloInventoryVaults;
+        mapping(bytes32 => mapping(bytes32 => uint256)) mloBucketYesInventory;
+        mapping(bytes32 => mapping(bytes32 => uint256)) mloBucketNoInventory;
+        mapping(bytes32 => mapping(bytes32 => uint256)) mloBucketMarketSeniorDebt;
+        mapping(bytes32 => mapping(bytes32 => uint256)) mloBucketMarketPositionRisk;
+        mapping(bytes32 => mapping(bytes32 => address)) mloBucketMarketSeniorPools;
     }
 
     function store() internal pure returns (EveMarketStorage storage storage_) {

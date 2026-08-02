@@ -240,18 +240,24 @@ abstract contract ParlayBase {
         }
 
         LibParlay.Config storage config = _requireConfig();
-        uint256 vaultAmount = (fee * config.vaultFeeBps) / LibParlay.BPS_DENOMINATOR;
-        uint256 feeRecipientAmount = fee - vaultAmount;
+        LibEveMarket.MarketConfig storage marketConfig = LibEveMarket.store().config;
+        uint256 rawVaultAmount = (fee * config.vaultFeeBps) / LibParlay.BPS_DENOMINATOR;
+        uint256 feeRecipientAmount = fee - rawVaultAmount;
 
-        if (
-            vaultAmount != 0
-                && LibFeeRouting.canRouteVaultFee(LibEveMarket.store().config.stakingVault, address(collateralToken))
-        ) {
-            collateralToken.forceApprove(LibEveMarket.store().config.stakingVault, vaultAmount);
-            ISEveUSDCVault(LibEveMarket.store().config.stakingVault).notifyRevenue(address(collateralToken), vaultAmount);
-        } else {
-            feeRecipientAmount += vaultAmount;
-            vaultAmount = 0;
+        LibFeeRouting.VaultFeeRoute memory route = LibFeeRouting.previewVaultFeeRoute(
+            marketConfig.stakingVault, marketConfig.secondaryStakingVault, address(collateralToken), rawVaultAmount
+        );
+        uint256 vaultAmount = route.primaryAmount + route.secondaryAmount;
+        feeRecipientAmount += route.treasuryAmount;
+
+        if (route.primaryAmount != 0) {
+            collateralToken.forceApprove(marketConfig.stakingVault, route.primaryAmount);
+            ISEveUSDCVault(marketConfig.stakingVault).notifyRevenue(address(collateralToken), route.primaryAmount);
+        }
+        if (route.secondaryAmount != 0) {
+            collateralToken.forceApprove(marketConfig.secondaryStakingVault, route.secondaryAmount);
+            ISEveUSDCVault(marketConfig.secondaryStakingVault)
+                .notifyRevenue(address(collateralToken), route.secondaryAmount);
         }
 
         if (feeRecipientAmount != 0) {

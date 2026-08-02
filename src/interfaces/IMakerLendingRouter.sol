@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
+/// @notice Deprecated maker-lending router interface retained until the senior margin pool replacement lands.
 interface IMakerLendingRouter {
     error ZeroAmount();
     error ZeroAddress();

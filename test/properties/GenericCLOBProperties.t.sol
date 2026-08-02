@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
+import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
@@ -29,6 +30,7 @@ contract GenericCLOBPropertiesTest is CurveTradingFixture {
         shareToken = new ParimutuelShareToken(address(diamond), "uri://parimutuel/{id}");
 
         _addFacet(address(parimutuelFacet), _parimutuelSelectors());
+        _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
         ResolutionHarnessFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
 
         vm.startPrank(owner);
@@ -84,14 +86,15 @@ contract GenericCLOBPropertiesTest is CurveTradingFixture {
         _approveCreatorWithEve(StateProbeFacet(address(diamond)).parimutuelCreationSeedAmount(), type(uint256).max);
 
         vm.prank(creator);
-        marketId = IParimutuelFacet(address(diamond)).createParimutuelMarket(
-            "generic clob property",
-            "generic-clob",
-            DEFAULT_RESOLUTION_SOURCE,
-            uint64(block.timestamp),
-            uint64(block.timestamp + 7 days),
-            7 days
-        );
+        marketId = IParimutuelFacet(address(diamond))
+            .createParimutuelMarket(
+                "generic clob property",
+                "generic-clob",
+                DEFAULT_RESOLUTION_SOURCE,
+                uint64(block.timestamp),
+                uint64(block.timestamp + 7 days),
+                7 days
+            );
 
         (,,,, yesPositionId, noPositionId) = StateProbeFacet(address(diamond)).getStoredMarketCore(marketId);
         (uint8 marketType, address positionToken) =

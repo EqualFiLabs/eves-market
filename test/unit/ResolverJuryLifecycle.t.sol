@@ -7,6 +7,7 @@ import {MultiOutcomeOrderbookFacet} from "../../src/facets/MultiOutcomeOrderbook
 import {MultiOutcomeOrderbookViewFacet} from "../../src/facets/MultiOutcomeOrderbookViewFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
+import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {ResolverRegistryFacet} from "../../src/facets/ResolverRegistryFacet.sol";
 import {ResolverJuryInit} from "../../src/init/ResolverJuryInit.sol";
 import {IMultiOutcomeOrderbookFacet} from "../../src/interfaces/IMultiOutcomeOrderbookFacet.sol";
@@ -47,6 +48,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         outcomePositions = new EvesPositionManager(address(diamond), "");
 
         _addFacet(address(new ParimutuelFacet()), _parimutuelSelectors());
+        _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
         _addFacet(address(new MultiOutcomeOrderbookFacet()), _multiOutcomeSelectors());
         _addFacet(address(new MultiOutcomeOrderbookViewFacet()), _multiOutcomeViewSelectors());
         _addFacet(address(ownershipFacet), _evesPositionManagerSelector());

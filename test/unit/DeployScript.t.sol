@@ -10,6 +10,8 @@ import {EveUSDPool} from "../../src/EveUSDPool.sol";
 import {EveUSDRouter} from "../../src/EveUSDRouter.sol";
 import {Faucet} from "../../src/Faucet.sol";
 import {MakerLendingRouter} from "../../src/MakerLendingRouter.sol";
+import {SEveUSDLending} from "../../src/SEveUSDLending.sol";
+import {SEveUSDVault} from "../../src/SEveUSDVault.sol";
 import {SEveUSDCLending} from "../../src/SEveUSDCLending.sol";
 import {SEveUSDCVault} from "../../src/SEveUSDCVault.sol";
 import {CanonicalWETH9} from "../../src/mocks/CanonicalWETH9.sol";
@@ -26,6 +28,7 @@ import {ICurveInventoryFacet} from "../../src/interfaces/ICurveInventoryFacet.so
 import {ICurveLifecycleFacet} from "../../src/interfaces/ICurveLifecycleFacet.sol";
 import {ICurveTradeFacet} from "../../src/interfaces/ICurveTradeFacet.sol";
 import {ICurveViewFacet} from "../../src/interfaces/ICurveViewFacet.sol";
+import {IEveUSDPool} from "../../src/interfaces/IEveUSDPool.sol";
 import {CurveCLOBTypes} from "../../src/types/CurveCLOBTypes.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
@@ -57,6 +60,7 @@ contract ConfigProbeFacet {
         address eveToken;
         address eveTreasury;
         address stakingVault;
+        address secondaryStakingVault;
         address parimutuelShareToken;
         uint16 orderbookEntryFeeBps;
         uint16 orderbookMakerFeeBps;
@@ -103,6 +107,7 @@ contract ConfigProbeFacet {
         snapshot.eveToken = config.eveToken;
         snapshot.eveTreasury = config.eveTreasury;
         snapshot.stakingVault = config.stakingVault;
+        snapshot.secondaryStakingVault = config.secondaryStakingVault;
         snapshot.parimutuelShareToken = config.parimutuelShareToken;
         snapshot.orderbookEntryFeeBps = config.orderbookFeeConfig.entryFeeBps;
         snapshot.orderbookMakerFeeBps = config.orderbookFeeConfig.makerFeeBps;
@@ -166,6 +171,7 @@ contract DeployScriptTest is Test {
             eveToken: address(eveToken),
             eveTreasury: treasury,
             stakingVault: address(0),
+            secondaryStakingVault: address(0),
             evesPositionManager: address(0),
             parimutuelShareToken: address(0),
             parlayTicketToken: address(0),
@@ -221,7 +227,7 @@ contract DeployScriptTest is Test {
         deployScript.verifyDeployment(deployment);
 
         assertEq(OwnershipFacet(deployment.diamond).owner(), protocolOwner);
-        assertEq(DiamondLoupeFacet(deployment.diamond).facetAddresses().length, 39);
+        assertEq(DiamondLoupeFacet(deployment.diamond).facetAddresses().length, 48);
         assertTrue(deployment.parimutuelShareToken != address(0));
         assertTrue(deployment.parlayTicketToken != address(0));
         assertTrue(deployment.eveIdentity != address(0));
@@ -257,6 +263,7 @@ contract DeployScriptTest is Test {
         assertEq(snapshot.eveToken, address(eveToken));
         assertEq(snapshot.eveTreasury, treasury);
         assertEq(snapshot.stakingVault, address(0));
+        assertEq(snapshot.secondaryStakingVault, address(0));
         assertEq(snapshot.parimutuelShareToken, deployment.parimutuelShareToken);
         assertEq(snapshot.orderbookEntryFeeBps, 100);
         assertEq(snapshot.orderbookVaultFeeBps, 100);
@@ -314,6 +321,7 @@ contract DeployScriptTest is Test {
             eveToken: address(eveToken),
             eveTreasury: treasury,
             stakingVault: address(0),
+            secondaryStakingVault: address(0),
             evesPositionManager: address(0),
             parimutuelShareToken: address(0),
             parlayTicketToken: address(0),
@@ -391,6 +399,7 @@ contract DeployScriptTest is Test {
             eveToken: address(eveToken),
             eveTreasury: treasury,
             stakingVault: address(0),
+            secondaryStakingVault: address(0),
             evesPositionManager: address(0),
             parimutuelShareToken: address(0),
             parlayTicketToken: address(0),
@@ -458,6 +467,7 @@ contract DeployScriptTest is Test {
             eveToken: address(0),
             eveTreasury: treasury,
             stakingVault: address(0),
+            secondaryStakingVault: address(0),
             evesPositionManager: address(0),
             parimutuelShareToken: address(0),
             parlayTicketToken: address(0),
@@ -513,6 +523,8 @@ contract DeployScriptTest is Test {
             usdcToken: address(0),
             eveUSDC: address(0),
             seveUsdcLending: address(0),
+            seveUsdVault: address(0),
+            seveUsdLending: address(0),
             makerLendingRouter: address(0),
             eveUsdcOnramp: address(0),
             eveUsdcOfframp: address(0),
@@ -548,6 +560,8 @@ contract DeployScriptTest is Test {
                 recoveryTimelock: 3 days,
                 mintFeeBps: 25,
                 recombinationFeeBps: 10,
+                insuranceTargetBps: 1_000,
+                insuranceFeeBps: 500,
                 payoutUnit: 1e18,
                 marketCreationFee: 2e18,
                 parimutuelCreationSeedAmount: 3e18,
@@ -592,6 +606,8 @@ contract DeployScriptTest is Test {
         assertTrue(deployment.wethToken != address(0));
         assertTrue(deployment.eveETH != address(0));
         assertTrue(deployment.market.parimutuelShareToken != address(0));
+        assertTrue(deployment.seveUsdVault != address(0));
+        assertTrue(deployment.seveUsdLending != address(0));
 
         assertEq(OwnershipFacet(deployment.market.diamond).owner(), protocolOwner);
         assertEq(EveUSDC(deployment.eveUSDC).usdc(), deployment.usdcToken);
@@ -608,6 +624,14 @@ contract DeployScriptTest is Test {
         assertEq(address(SEveUSDCLending(deployment.seveUsdcLending).vault()), deployment.seveUsdcVault);
         assertEq(address(SEveUSDCLending(deployment.seveUsdcLending).eveUSDC()), deployment.eveUSDC);
         assertTrue(SEveUSDCLending(deployment.seveUsdcLending).approvedRouters(deployment.makerLendingRouter));
+        assertEq(SEveUSDVault(deployment.seveUsdVault).asset(), deployment.eveUSD);
+        assertEq(SEveUSDVault(deployment.seveUsdVault).name(), "sEVEUSD");
+        assertEq(SEveUSDVault(deployment.seveUsdVault).symbol(), "sEVEUSD");
+        assertEq(SEveUSDVault(deployment.seveUsdVault).owner(), protocolOwner);
+        assertEq(SEveUSDVault(deployment.seveUsdVault).feeRecipient(), treasury);
+        assertEq(SEveUSDVault(deployment.seveUsdVault).lendingContract(), deployment.seveUsdLending);
+        assertEq(address(SEveUSDLending(deployment.seveUsdLending).vault()), deployment.seveUsdVault);
+        assertEq(address(SEveUSDLending(deployment.seveUsdLending).eveUSD()), deployment.eveUSD);
         assertEq(CanonicalWETH9(payable(deployment.wethToken)).symbol(), "WETH");
         assertEq(EveETH(deployment.eveETH).weth(), deployment.wethToken);
         _assertEveUSDDeployment(deployment, config, protocolOwner, treasury);
@@ -650,6 +674,7 @@ contract DeployScriptTest is Test {
         assertEq(marketView.collateralToken, deployment.eveUSDC);
         assertEq(marketView.eveToken, deployment.eveToken);
         assertEq(marketView.stakingVault, deployment.seveUsdcVault);
+        assertEq(marketView.secondaryStakingVault, deployment.seveUsdVault);
         assertEq(marketView.parimutuelShareToken, deployment.market.parimutuelShareToken);
         assertEq(marketView.comboFeeConfig.tradeFeeBps, config.market.comboTradeFeeBps);
         assertEq(marketView.comboFeeConfig.makerFeeBps, config.market.comboMakerFeeBps);
@@ -734,21 +759,27 @@ contract DeployScriptTest is Test {
 
         assertEq(EveUSD(deployment.eveUSD).pool(), deployment.eveUsdPool);
         assertEq(EveRiskShares(deployment.evRisk).pool(), deployment.eveUsdPool);
-        assertEq(EveUSDPool(deployment.eveUsdPool).weth(), deployment.wethToken);
+        uint256 wethProfileId = EveUSDPool(deployment.eveUsdPool).firstCollateralProfileId();
+        IEveUSDPool.StableCollateralProfile memory stableProfile =
+            EveUSDPool(deployment.eveUsdPool).collateralProfile(wethProfileId);
+        assertEq(stableProfile.collateralToken, deployment.wethToken);
         assertEq(EveUSDPool(deployment.eveUsdPool).eveUSD(), deployment.eveUSD);
         assertEq(EveUSDPool(deployment.eveUsdPool).evRisk(), deployment.evRisk);
-        assertEq(EveUSDPool(deployment.eveUsdPool).oracle(), deployment.eveUsdOracle);
+        assertEq(stableProfile.oracle, deployment.eveUsdOracle);
         assertEq(EveUSDPool(deployment.eveUsdPool).owner(), protocolOwner);
         assertEq(EveUSDPool(deployment.eveUsdPool).feeRecipient(), treasury);
-        assertEq(EveUSDPool(deployment.eveUsdPool).nextSeriesCollateralRatioBps(), config.eveUsd.collateralRatioBps);
-        assertEq(EveUSDPool(deployment.eveUsdPool).nextSeriesRecoveryTriggerBps(), config.eveUsd.recoveryTriggerBps);
+        assertEq(stableProfile.collateralRatioBps, config.eveUsd.collateralRatioBps);
+        assertEq(stableProfile.recoveryTriggerBps, config.eveUsd.recoveryTriggerBps);
         assertEq(EveUSDPool(deployment.eveUsdPool).recoveryTimelock(), config.eveUsd.recoveryTimelock);
-        assertEq(EveUSDPool(deployment.eveUsdPool).mintFeeBps(), config.eveUsd.mintFeeBps);
-        assertEq(EveUSDPool(deployment.eveUsdPool).recombinationFeeBps(), config.eveUsd.recombinationFeeBps);
+        assertEq(stableProfile.mintFeeBps, config.eveUsd.mintFeeBps);
+        assertEq(stableProfile.recombinationFeeBps, config.eveUsd.recombinationFeeBps);
+        assertEq(stableProfile.insuranceTargetBps, config.eveUsd.insuranceTargetBps);
+        assertEq(stableProfile.insuranceFeeBps, config.eveUsd.insuranceFeeBps);
         assertEq(EveUSDRouter(payable(deployment.eveUsdRouter)).pool(), deployment.eveUsdPool);
         assertEq(EveUSDRouter(payable(deployment.eveUsdRouter)).weth(), deployment.wethToken);
         assertEq(EveUSDRouter(payable(deployment.eveUsdRouter)).eveUSD(), deployment.eveUSD);
         assertEq(EveUSDRouter(payable(deployment.eveUsdRouter)).evRisk(), deployment.evRisk);
+        assertEq(EveUSDRouter(payable(deployment.eveUsdRouter)).wethProfileId(), wethProfileId);
 
         MarketFactoryTypes.CollateralProfileView memory profile =
             IMarketFactoryFacet(deployment.market.diamond).getCollateralProfile(2);
@@ -924,7 +955,7 @@ contract DeployScriptTest is Test {
 
     function _isGnosisConditionalTokensBytecode(address conditionalTokens) internal view returns (bool) {
         string memory deployedArtifact =
-            vm.readFile("../../conditional-tokens-contracts/out/ConditionalTokens.sol/ConditionalTokens.json");
+            vm.readFile("conditional-tokens/out/ConditionalTokens.sol/ConditionalTokens.json");
         bytes memory expectedRuntime = vm.parseJsonBytes(deployedArtifact, ".deployedBytecode.object");
         return conditionalTokens.codehash == keccak256(expectedRuntime);
     }

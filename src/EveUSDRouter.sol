@@ -28,14 +28,16 @@ contract EveUSDRouter is IEveUSDRouter, IERC1155Receiver, ReentrancyGuard {
     address public immutable weth;
     address public immutable eveUSD;
     address public immutable evRisk;
+    uint256 public immutable wethProfileId;
 
-    constructor(address pool_, address weth_, address eveUSD_, address evRisk_) {
+    constructor(address pool_, address weth_, address eveUSD_, address evRisk_, uint256 wethProfileId_) {
         _requireContract(pool_);
         _requireContract(weth_);
         _requireContract(eveUSD_);
         _requireContract(evRisk_);
 
-        _requirePoolAsset(weth_, IEveUSDPool(pool_).weth());
+        IEveUSDPool.StableCollateralProfile memory profile = IEveUSDPool(pool_).collateralProfile(wethProfileId_);
+        _requirePoolAsset(weth_, profile.collateralToken);
         _requirePoolAsset(eveUSD_, IEveUSDPool(pool_).eveUSD());
         _requirePoolAsset(evRisk_, IEveUSDPool(pool_).evRisk());
         _requireTokenPool(eveUSD_, pool_, IEveUSD(eveUSD_).pool());
@@ -45,6 +47,7 @@ contract EveUSDRouter is IEveUSDRouter, IERC1155Receiver, ReentrancyGuard {
         weth = weth_;
         eveUSD = eveUSD_;
         evRisk = evRisk_;
+        wethProfileId = wethProfileId_;
     }
 
     receive() external payable {
@@ -72,14 +75,16 @@ contract EveUSDRouter is IEveUSDRouter, IERC1155Receiver, ReentrancyGuard {
         IERC20(weth).forceApprove(pool, msg.value);
 
         (seriesId, eveUSDMinted, sharesMinted) =
-            IEveUSDPool(pool).depositWETH(msg.value, eveUSDReceiver, shareReceiver);
+            IEveUSDPool(pool).depositCollateral(wethProfileId, msg.value, eveUSDReceiver, shareReceiver);
         _requireMinimum(eveUSDMinted, minEveUSD);
         _requireMinimum(sharesMinted, minShares);
         IERC20(weth).forceApprove(pool, 0);
         residuals.nativeBalance -= msg.value;
         _assertResidualBalancesRestored(seriesId, residuals);
 
-        emit ETHDeposited(msg.sender, eveUSDReceiver, shareReceiver, seriesId, msg.value, eveUSDMinted, sharesMinted);
+        emit ETHDeposited(
+            msg.sender, eveUSDReceiver, shareReceiver, wethProfileId, seriesId, msg.value, eveUSDMinted, sharesMinted
+        );
     }
 
     function depositWETH(
@@ -102,13 +107,15 @@ contract EveUSDRouter is IEveUSDRouter, IERC1155Receiver, ReentrancyGuard {
         IERC20(weth).forceApprove(pool, wethAmount);
 
         (seriesId, eveUSDMinted, sharesMinted) =
-            IEveUSDPool(pool).depositWETH(wethAmount, eveUSDReceiver, shareReceiver);
+            IEveUSDPool(pool).depositCollateral(wethProfileId, wethAmount, eveUSDReceiver, shareReceiver);
         _requireMinimum(eveUSDMinted, minEveUSD);
         _requireMinimum(sharesMinted, minShares);
         IERC20(weth).forceApprove(pool, 0);
         _assertResidualBalancesRestored(seriesId, residuals);
 
-        emit WETHDeposited(msg.sender, eveUSDReceiver, shareReceiver, seriesId, wethAmount, eveUSDMinted, sharesMinted);
+        emit WETHDeposited(
+            msg.sender, eveUSDReceiver, shareReceiver, wethProfileId, seriesId, wethAmount, eveUSDMinted, sharesMinted
+        );
     }
 
     function recombineToWETH(
@@ -186,7 +193,7 @@ contract EveUSDRouter is IEveUSDRouter, IERC1155Receiver, ReentrancyGuard {
         view
         returns (IEveUSDPool.DepositPreview memory preview)
     {
-        preview = IEveUSDPool(pool).previewDeposit(wethAmount);
+        preview = IEveUSDPool(pool).previewDeposit(wethProfileId, wethAmount);
         _requireMinimum(preview.eveUSDMinted, minEveUSD);
         _requireMinimum(preview.sharesMinted, minShares);
     }
@@ -198,6 +205,9 @@ contract EveUSDRouter is IEveUSDRouter, IERC1155Receiver, ReentrancyGuard {
         uint256 minOut
     ) internal view returns (IEveUSDPool.RedemptionPreview memory preview) {
         preview = IEveUSDPool(pool).previewRecombine(seriesId, eveUSDAmount);
+        if (preview.profileId != wethProfileId) {
+            revert UnexpectedCollateralProfile(wethProfileId, preview.profileId);
+        }
         if (preview.sharesBurned > maxSharesIn) {
             revert SharesAboveMaximum(preview.sharesBurned, maxSharesIn);
         }

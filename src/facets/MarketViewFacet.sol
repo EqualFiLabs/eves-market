@@ -112,6 +112,7 @@ contract MarketViewFacet is MarketFactoryTypes {
             eveToken: marketConfig.eveToken,
             eveTreasury: marketConfig.eveTreasury,
             stakingVault: marketConfig.stakingVault,
+            secondaryStakingVault: marketConfig.secondaryStakingVault,
             parimutuelShareToken: marketConfig.parimutuelShareToken,
             orderbookFeeConfig: BookFeeConfigView({
                 entryFeeBps: marketConfig.orderbookFeeConfig.entryFeeBps,

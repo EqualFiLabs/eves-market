@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IERC4626} from "../../lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
+/// @notice Deprecated experimental staking vault interface retained for transition to the senior margin pool.
 interface ISEveUSDCVault is IERC4626 {
     error ZeroAmount();
     error ZeroShares();
@@ -17,10 +18,13 @@ interface ISEveUSDCVault is IERC4626 {
     error RewardTokenAlreadyRegistered(address token);
     error RewardTokenNotActive(address token);
     error RewardTokenDisabled(address token);
+    error AssetRewardMustUseAssetRevenue(address token);
     error NoRewardsClaimable(address account, address token);
 
     event RevenueNotified(address indexed caller, uint256 assets);
     event RewardRevenueNotified(address indexed caller, address indexed token, uint256 amount);
+    event AssetRevenueSponsored(address indexed sponsor, uint256 assets);
+    event RewardSponsored(address indexed sponsor, address indexed token, uint256 amount);
     event RewardTokenRegistered(address indexed token, address indexed registrant, uint256 fee);
     event RewardTokenStatusDisabled(address indexed token);
     event RewardTokenRegistrationFeeSet(uint256 previousFee, uint256 newFee);
@@ -41,6 +45,10 @@ interface ISEveUSDCVault is IERC4626 {
     function notifyRevenue(uint256 assets) external;
 
     function notifyRevenue(address token, uint256 amount) external;
+
+    function sponsorAssetRevenue(uint256 assets) external;
+
+    function sponsorReward(address token, uint256 amount) external returns (uint256 received);
 
     function registerRewardToken(address token) external;
 

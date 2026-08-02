@@ -18,6 +18,10 @@ import {ICurveViewFacet} from "../src/interfaces/ICurveViewFacet.sol";
 import {CurveCLOBTypes} from "../src/types/CurveCLOBTypes.sol";
 
 contract UpgradeSpotCurveFacets is Script {
+    bytes4 private constant FILL_BEST_FOR_SELECTOR = bytes4(
+        keccak256("fillBestFor((bytes32,bool,uint128,uint128,uint128,uint256[],uint32[],bytes32[],address,address))")
+    );
+
     struct UpgradeDeployment {
         address curveCLOBFacet;
         address bookOrderFacet;
@@ -39,7 +43,7 @@ contract UpgradeSpotCurveFacets is Script {
 
         _assertSelector(diamond, ICurveTradeFacet.fillCurve.selector, deployment.curveCLOBFacet);
         _assertSelector(diamond, ICurveTradeFacet.fillBest.selector, deployment.curveCLOBFacet);
-        _assertSelector(diamond, ICurveTradeFacet.fillBestFor.selector, deployment.curveCLOBFacet);
+        _assertSelector(diamond, FILL_BEST_FOR_SELECTOR, address(0));
         _assertSelector(diamond, IBookOrderFacet.postBookCurve.selector, deployment.bookOrderFacet);
         _assertSelector(diamond, IBookOrderFacet.postBookCurvesBatch.selector, deployment.bookOrderFacet);
         _assertSelector(diamond, IBookOrderFacet.topUpBookCurvesBatch.selector, deployment.bookOrderFacet);
@@ -55,7 +59,8 @@ contract UpgradeSpotCurveFacets is Script {
         view
         returns (DiamondCutFacet.FacetCut[] memory cuts)
     {
-        cuts = new DiamondCutFacet.FacetCut[](4);
+        bool removeFillBestFor = _facetAddress(diamond, FILL_BEST_FOR_SELECTOR) != address(0);
+        cuts = new DiamondCutFacet.FacetCut[](removeFillBestFor ? 5 : 4);
         cuts[0] = DiamondCutFacet.FacetCut({
             facetAddress: deployment.curveCLOBFacet,
             action: DiamondCutFacet.FacetCutAction.Replace,
@@ -76,6 +81,13 @@ contract UpgradeSpotCurveFacets is Script {
             action: DiamondCutFacet.FacetCutAction.Replace,
             functionSelectors: _bookTradeSelectors()
         });
+        if (removeFillBestFor) {
+            cuts[4] = DiamondCutFacet.FacetCut({
+                facetAddress: address(0),
+                action: DiamondCutFacet.FacetCutAction.Remove,
+                functionSelectors: _removedCurveTradeSelectors()
+            });
+        }
     }
 
     function _selectorAction(address diamond, bytes4 selector)
@@ -91,10 +103,14 @@ contract UpgradeSpotCurveFacets is Script {
     }
 
     function _curveTradeSelectors() private pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](2);
         selectors[0] = ICurveTradeFacet.fillCurve.selector;
         selectors[1] = ICurveTradeFacet.fillBest.selector;
-        selectors[2] = ICurveTradeFacet.fillBestFor.selector;
+    }
+
+    function _removedCurveTradeSelectors() private pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = FILL_BEST_FOR_SELECTOR;
     }
 
     function _bookOrderReplacementSelectors() private pure returns (bytes4[] memory selectors) {
