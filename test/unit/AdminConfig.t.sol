@@ -14,7 +14,7 @@ import {Errors} from "../../src/libraries/Errors.sol";
 
 import {SettlementFeeFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 import {MockConditionalTokens} from "../helpers/MockConditionalTokens.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 
 contract EmptyContract {}
@@ -92,8 +92,8 @@ contract AdminConfigTest is SettlementFeeFixture {
 
     function test_AdminCanConfigureCollateralProfileAndViewIt() public {
         uint8 profileId = 1;
-        MockUSDC profileCollateral = new MockUSDC();
-        MockUSDC wrapperToken = new MockUSDC();
+        MockUSDG profileCollateral = new MockUSDG();
+        MockUSDG wrapperToken = new MockUSDG();
         uint128 payoutUnit = 0.0005 ether;
         uint128 marketCreationFee = 0.002 ether;
 
@@ -159,7 +159,7 @@ contract AdminConfigTest is SettlementFeeFixture {
     function test_AdminCollateralProfileRejectsInvalidConfig() public {
         uint8 profileId = 2;
         address eoa = makeAddr("profile-eoa");
-        MockUSDC profileCollateral = new MockUSDC();
+        MockUSDG profileCollateral = new MockUSDG();
 
         vm.startPrank(owner);
 
@@ -209,7 +209,7 @@ contract AdminConfigTest is SettlementFeeFixture {
 
     function test_AdminSettersAcceptValidatedContractsAndEmitEvents() public {
         MockConditionalTokens newConditionalTokens = new MockConditionalTokens();
-        MockUSDC newCollateralToken = new MockUSDC();
+        MockUSDG newCollateralToken = new MockUSDG();
         uint16 previousFeeRate = 0;
         uint16 newFeeRate = 250;
         uint16 newSpotFeeRate = 75;

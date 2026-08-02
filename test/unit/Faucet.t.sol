@@ -6,12 +6,12 @@ import {Test} from "../../lib/forge-std/src/Test.sol";
 
 import {Faucet} from "../../src/Faucet.sol";
 import {MockEveToken} from "../helpers/MockEveToken.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 
 contract FaucetTest is Test {
     Faucet internal faucet;
     MockEveToken internal eve;
-    MockUSDC internal usdc;
+    MockUSDG internal usdc;
 
     address internal owner = makeAddr("owner");
     address internal alice = makeAddr("alice");
@@ -28,7 +28,7 @@ contract FaucetTest is Test {
     function setUp() public {
         faucet = new Faucet(owner);
         eve = new MockEveToken();
-        usdc = new MockUSDC();
+        usdc = new MockUSDG();
 
         eve.mint(address(faucet), 100_000e18);
         usdc.mint(address(faucet), 20_000e6);

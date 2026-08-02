@@ -9,7 +9,7 @@ import {ISeniorCapitalFacet} from "../../src/interfaces/ISeniorCapitalFacet.sol"
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibSeniorCapital} from "../../src/libraries/LibSeniorCapital.sol";
 import {MockEveToken} from "../helpers/MockEveToken.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../../src/mocks/MockUSDG.sol";
 
 contract SeniorCapitalHarness is SeniorCapitalFacet, SeniorCapitalViewFacet {
     function setMarginAsset(address asset) external {
@@ -167,7 +167,7 @@ contract SeniorCapitalFacetTest is Test {
     }
 
     function test_RevertingExitReceiverCannotBlockLaterClaims() public {
-        MockUSDC selectiveAsset = new MockUSDC();
+        MockUSDG selectiveAsset = new MockUSDG();
         SeniorCapitalHarness selectiveSenior = new SeniorCapitalHarness();
         selectiveSenior.setMarginAsset(address(selectiveAsset));
         selectiveAsset.mint(alice, 100e18);
@@ -197,7 +197,7 @@ contract SeniorCapitalFacetTest is Test {
         assertEq(selectiveSenior.claimableSeniorCapitalExit(alice), 100e18);
         assertEq(selectiveSenior.claimableSeniorCapitalExit(bob), 100e18);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(MockUSDC.AccountBlacklisted.selector, blockedReceiver));
+        vm.expectRevert(abi.encodeWithSelector(MockUSDG.AccountBlacklisted.selector, blockedReceiver));
         selectiveSenior.claimSeniorCapitalExit(blockedReceiver);
         vm.prank(bob);
         selectiveSenior.claimSeniorCapitalExit(bob);

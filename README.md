@@ -96,8 +96,7 @@ eve-predict/
 ├── docs/                             # Specs and deep-dive design notes
 ├── conditional-tokens/               # Canonical Gnosis Conditional Tokens submodule
 ├── EvePredict-Design.md              # Full protocol design document
-├── foundry.toml
-├── conditional-tokens-build/         # Isolated Solidity 0.5 CTF artifact build config
+├── foundry.toml                       # Main and isolated Solidity 0.5 profiles
 └── remappings.txt
 ```
 
@@ -129,7 +128,7 @@ forge-std/=lib/forge-std/src/
 The Conditional Tokens artifact is built from the canonical Solidity 0.5 submodule with a separate pinned OpenZeppelin 2.3 dependency:
 
 ```shell
-forge build --config-path conditional-tokens-build/foundry.toml
+FOUNDRY_PROFILE=conditional-tokens forge build
 ```
 
 ---
@@ -137,7 +136,7 @@ forge build --config-path conditional-tokens-build/foundry.toml
 ## Build
 
 ```shell
-forge build --config-path conditional-tokens-build/foundry.toml
+FOUNDRY_PROFILE=conditional-tokens forge build
 forge build
 ```
 
@@ -178,10 +177,27 @@ Fuzz runs are configured low (`runs = 12`) in `foundry.toml` for speed; raise lo
 
 ## Deploy
 
-The deployment entry point is `script/Deploy.s.sol`. It deploys Eve's standalone contracts, cuts every facet into the Eve Diamond, attaches the configured Statics Dollar Core, and initializes protocol config from environment variables. Build `out/conditional-tokens/ConditionalTokens.sol/ConditionalTokens.json` before running deploys that auto-deploy Gnosis CTF. Environment templates are provided:
+The deployment entry point is `script/Deploy.s.sol:DeployScript`. It deploys
+Eve's standalone contracts, cuts every facet into the Eve Diamond, attaches the
+configured Statics Dollar Core, and initializes protocol config from
+environment variables. Build
+`out/conditional-tokens/ConditionalTokens.sol/ConditionalTokens.json` before
+local deploys that auto-deploy Gnosis CTF. Robinhood testnet requires an
+explicit verified ConditionalTokens address instead. Environment templates are
+provided:
 
+- `.env.example` — Robinhood Chain testnet inputs with no secrets or addresses
 - `.env.anvil` — local Anvil defaults
 - `.env.base-sepolia` — historical Base Sepolia testing
+
+Current testnet deployments default the Diamond governance delay to 15 minutes. Set
+`INITIAL_GOVERNANCE_DELAY_SECONDS` explicitly to override it.
+`MLO_PROFIT_SPLIT_DELAY_SECONDS` independently controls the delay for new MLO
+profit-split proposals and defaults to the configured Diamond delay. Changing
+either value after deployment requires an exact-calldata operation scheduled
+through the active Diamond governance delay; an MLO profit-split proposal then
+waits only its MLO delay. Before a mainnet deployment, set both values explicitly
+to `604800` seconds and restore the deployment fallback to seven days.
 
 Example (local Anvil):
 
@@ -189,7 +205,7 @@ Example (local Anvil):
 anvil   # in a separate terminal
 
 source .env.anvil
-forge script script/Deploy.s.sol:Deploy \
+forge script script/Deploy.s.sol:DeployScript \
   --rpc-url http://127.0.0.1:8545 \
   --broadcast
 ```
@@ -198,10 +214,73 @@ Historical Base Sepolia example (not the active launch target):
 
 ```shell
 source .env.base-sepolia
-forge script script/Deploy.s.sol:Deploy \
+forge script script/Deploy.s.sol:DeployScript \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" \
   --broadcast --verify
 ```
+
+### Robinhood Chain testnet
+
+Robinhood testnet is chain `46630`. Complete the Statics deployment and create
+its USDG pegged profile first. Keep the existing `USDC_*` configuration names
+for this testnet release, but point them to Mock USDG.
+
+Build, deploy, and verify canonical Gnosis ConditionalTokens explicitly. The
+isolated profile preserves its Solidity `0.5.17`, Istanbul, and
+optimizer-disabled build:
+
+```shell
+FOUNDRY_PROFILE=conditional-tokens forge build
+
+BASESCAN_API_KEY=unused FOUNDRY_PROFILE=conditional-tokens \
+forge create conditional-tokens/contracts/ConditionalTokens.sol:ConditionalTokens \
+  --rpc-url "$ROBINHOOD_TESTNET_RPC_URL" \
+  --chain-id 46630 \
+  --private-key "$PRIVATE_KEY" \
+  --broadcast \
+  --verify \
+  --verifier blockscout \
+  --verifier-url "$ROBINHOOD_TESTNET_VERIFIER_URL"
+```
+
+Record the confirmed address as `CONDITIONAL_TOKENS`. Deploy and verify the
+six-decimal, permit-enabled Mock USDG, then record it as `USDC_TOKEN`.
+`MOCK_USDG_INITIAL_RECIPIENT` must be the deployment broadcaster when the Eve
+launcher will transfer `FAUCET_USDC_FUND_AMOUNT` from that balance:
+
+```shell
+BASESCAN_API_KEY=unused forge script script/DeployMockUSDG.s.sol:DeployMockUSDG \
+  --rpc-url "$ROBINHOOD_TESTNET_RPC_URL" \
+  --chain-id 46630 \
+  --broadcast \
+  --verify \
+  --verifier blockscout \
+  --verifier-url "$ROBINHOOD_TESTNET_VERIFIER_URL" \
+  -vv
+```
+
+After filling every required value in a private copy of `.env.example`,
+simulate `DeployScript` without `--broadcast`. With separate authorization for
+the public deployment, run:
+
+```shell
+BASESCAN_API_KEY=unused forge script script/Deploy.s.sol:DeployScript \
+  --rpc-url "$ROBINHOOD_TESTNET_RPC_URL" \
+  --chain-id 46630 \
+  --broadcast \
+  --verify \
+  --verifier blockscout \
+  --verifier-url "$ROBINHOOD_TESTNET_VERIFIER_URL" \
+  --retries 20 \
+  --delay 5 \
+  -vv
+```
+
+Preserve each broadcast artifact and Explorer link. Confirm every standalone
+contract and facet is marked verified; verifying only the Eve Diamond does not
+publish the facet implementations. The current Blockscout endpoint does not
+require its own API key. Do not treat a successful broadcast as verification
+evidence until Explorer reports the sources.
 
 Upgrade scripts (each performs a targeted DiamondCut) live alongside `Deploy.s.sol`, e.g. `UpgradeOBRResolutionFacet.s.sol`, `UpgradeSpotCurveFacets.s.sol`, and `UpgradeBookDecommission.s.sol`.
 
@@ -311,9 +390,12 @@ Deployment reads protocol parameters from environment variables (see `.env.anvil
 | `PRIVATE_KEY` | Deployer key |
 | `INITIAL_OWNER` | Diamond owner |
 | `EVE_TREASURY` | Protocol treasury recipient |
-| `USDC_TOKEN` | Pegged collateral used by the Statics Dollar rail |
+| `USDC_TOKEN` | Pegged collateral used by the Statics Dollar rail; Mock USDG on Robinhood testnet |
+| `CONDITIONAL_TOKENS` | Explicit verified Gnosis CTF address; mandatory on Robinhood testnet |
 | `STATICS_DOLLAR_CORE_ADDRESS` | Bootstrapped canonical Statics Dollar Core |
 | `STATICS_DOLLAR_USDC_PROFILE_ID` | Pegged USDC profile selected for Eve entry |
+| `INITIAL_GOVERNANCE_DELAY_SECONDS` | Initial Diamond governance delay; current testnet fallback is 900 seconds |
+| `MLO_PROFIT_SPLIT_DELAY_SECONDS` | Independent MLO profit-split delay; defaults to the Diamond delay |
 | `ROBINHOOD_RPC_URL` | Robinhood Chain RPC used only by local fork verification |
 | `ROBINHOOD_FORK_BLOCK` | Must match the pinned launch verification block |
 | `PERMISSIONLESS_CREATION_ENABLED` | Allow non-owner market creation |

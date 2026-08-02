@@ -58,7 +58,7 @@ import {DeployScript} from "../../script/Deploy.s.sol";
 import {MockConditionalTokens} from "../helpers/MockConditionalTokens.sol";
 import {StaticsDollarCoreFixture} from "../helpers/StaticsDollarCoreFixture.sol";
 import {MockEveToken} from "../helpers/MockEveToken.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 import {MarginTypes} from "../../src/types/MarginTypes.sol";
 import {MLOPredictionTypes} from "../../src/types/MLOPredictionTypes.sol";
@@ -185,13 +185,15 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
 
     function test_DeployAutoDeploysConditionalTokensWhenConfigOmitsAddress() public {
         DeployScript deployScript = new DeployScript();
-        MockUSDC collateralToken = new MockUSDC();
+        MockUSDG collateralToken = new MockUSDG();
         MockEveToken eveToken = new MockEveToken();
         address protocolOwner = makeAddr("protocolOwner");
         address treasury = makeAddr("treasury");
 
         DeployScript.DeploymentConfig memory config = DeployScript.DeploymentConfig({
             owner: protocolOwner,
+            governanceDelay: 15 minutes,
+            mloProfitSplitDelay: 15 minutes,
             conditionalTokens: address(0),
             conditionalTokensArtifactPath: "",
             collateralToken: address(collateralToken),
@@ -257,7 +259,7 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
 
         DeployScript.Deployment memory deployment = deployScript.deploy(config, address(deployScript));
 
-        deployScript.verifyDeployment(deployment);
+        deployScript.verifyDeployment(deployment, config.governanceDelay, config.mloProfitSplitDelay);
         _assertDiamondFacetSizes(deployment.diamond);
 
         assertEq(OwnershipFacet(deployment.diamond).owner(), protocolOwner);
@@ -424,13 +426,15 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
     function test_DeployUsesExplicitConditionalTokensAddressWhenProvided() public {
         DeployScript deployScript = new DeployScript();
         MockConditionalTokens conditionalTokens = new MockConditionalTokens();
-        MockUSDC collateralToken = new MockUSDC();
+        MockUSDG collateralToken = new MockUSDG();
         MockEveToken eveToken = new MockEveToken();
         address protocolOwner = makeAddr("protocolOwner");
         address treasury = makeAddr("treasury");
 
         DeployScript.DeploymentConfig memory config = DeployScript.DeploymentConfig({
             owner: protocolOwner,
+            governanceDelay: 15 minutes,
+            mloProfitSplitDelay: 15 minutes,
             conditionalTokens: address(conditionalTokens),
             conditionalTokensArtifactPath: "",
             collateralToken: address(collateralToken),
@@ -508,13 +512,15 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
     function test_RevertWhen_DeployConfigHasInvalidParimutuelFeeSplit() public {
         DeployScript deployScript = new DeployScript();
         MockConditionalTokens conditionalTokens = new MockConditionalTokens();
-        MockUSDC collateralToken = new MockUSDC();
+        MockUSDG collateralToken = new MockUSDG();
         MockEveToken eveToken = new MockEveToken();
         address protocolOwner = makeAddr("protocolOwner");
         address treasury = makeAddr("treasury");
 
         DeployScript.DeploymentConfig memory config = DeployScript.DeploymentConfig({
             owner: protocolOwner,
+            governanceDelay: 15 minutes,
+            mloProfitSplitDelay: 15 minutes,
             conditionalTokens: address(conditionalTokens),
             conditionalTokensArtifactPath: "",
             collateralToken: address(collateralToken),
@@ -590,6 +596,8 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
 
         DeployScript.DeploymentConfig memory marketConfig = DeployScript.DeploymentConfig({
             owner: protocolOwner,
+            governanceDelay: 15 minutes,
+            mloProfitSplitDelay: 15 minutes,
             conditionalTokens: address(0),
             conditionalTokensArtifactPath: "",
             collateralToken: address(0),
@@ -653,7 +661,7 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
             mloDefaultFundingRatePerSecondWad: 0
         });
 
-        MockUSDC launchUsdc = new MockUSDC();
+        MockUSDG launchUsdc = new MockUSDG();
         ActiveStaticsDollar memory active = _deployActiveStaticsDollar(protocolOwner, launchUsdc);
         IStaticsDollarCore launchCore = IStaticsDollarCore(active.deployment.core);
         StaticsDollar launchStaticsDollar = StaticsDollar(active.deployment.staticsDollar);
@@ -801,7 +809,7 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
     function _proveStaticsDollarMLOLaunchLifecycle(
         DeployScript.FullDeployment memory deployment,
         IStaticsDollarCore core,
-        MockUSDC usdc,
+        MockUSDG usdc,
         uint256 profileId,
         address maker,
         bytes32 marketId
@@ -869,7 +877,7 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         bytes memory finalizeCall = abi.encodeCall(
             IOBRResolutionFacet.adminFinalizeResolution, (marketId, uint8(LibEveMarket.MarketOutcome.No))
         );
-        (, uint64 readyAt) = DiamondCutFacet(deployment.market.diamond).scheduleGovernanceOperation(finalizeCall);
+        (, uint256 readyAt) = DiamondCutFacet(deployment.market.diamond).scheduleGovernanceOperation(finalizeCall);
         vm.warp(readyAt);
         IOBRResolutionFacet(deployment.market.diamond)
             .adminFinalizeResolution(marketId, uint8(LibEveMarket.MarketOutcome.No));
@@ -911,7 +919,7 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
 
         bytes memory callData = abi.encodeCall(DiamondCutFacet.diamondCut, (cuts, address(0), new bytes(0)));
         vm.prank(owner);
-        (, uint64 readyAt) = DiamondCutFacet(diamond).scheduleGovernanceOperation(callData);
+        (, uint256 readyAt) = DiamondCutFacet(diamond).scheduleGovernanceOperation(callData);
         vm.warp(readyAt);
         vm.prank(owner);
         DiamondCutFacet(diamond).diamondCut(cuts, address(0), new bytes(0));
@@ -936,7 +944,7 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         bytes memory finalizeCall = abi.encodeCall(
             IOBRResolutionFacet.adminFinalizeResolution, (marketId, uint8(LibEveMarket.MarketOutcome.Yes))
         );
-        (, uint64 readyAt) = DiamondCutFacet(diamond).scheduleGovernanceOperation(finalizeCall);
+        (, uint256 readyAt) = DiamondCutFacet(diamond).scheduleGovernanceOperation(finalizeCall);
         uint256 disputeReadyAt = block.timestamp + disputeWindow + 1;
         vm.warp(readyAt > disputeReadyAt ? readyAt : disputeReadyAt);
         IOBRResolutionFacet(diamond).adminFinalizeResolution(marketId, uint8(LibEveMarket.MarketOutcome.Yes));
@@ -966,13 +974,13 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         assertEq(eveClaimAmount, config.faucetEveClaimAmount);
         assertTrue(eveEnabled);
         assertTrue(eveExists);
-        assertEq(MockUSDC(deployment.usdcToken).balanceOf(deployment.faucet), config.faucetUsdcFundAmount);
+        assertEq(MockUSDG(deployment.usdcToken).balanceOf(deployment.faucet), config.faucetUsdcFundAmount);
         assertEq(MockEveToken(deployment.eveToken).balanceOf(deployment.faucet), config.faucetEveFundAmount);
 
         address claimer = makeAddr("claimer");
         vm.prank(claimer);
         Faucet(deployment.faucet).claim();
-        assertEq(MockUSDC(deployment.usdcToken).balanceOf(claimer), config.faucetUsdcClaimAmount);
+        assertEq(MockUSDG(deployment.usdcToken).balanceOf(claimer), config.faucetUsdcClaimAmount);
         assertEq(MockEveToken(deployment.eveToken).balanceOf(claimer), config.faucetEveClaimAmount);
     }
 }

@@ -133,10 +133,14 @@ contract DeployScript is Script {
     using stdJson for string;
 
     uint256 internal constant EIP170_MAX_CODE_SIZE = 24_576;
+    uint64 internal constant DEFAULT_INITIAL_GOVERNANCE_DELAY = 15 minutes;
+    uint256 internal constant ROBINHOOD_TESTNET_CHAIN_ID = 46630;
 
     string internal constant DEFAULT_CONDITIONAL_TOKENS_ARTIFACT_PATH =
         "out/conditional-tokens/ConditionalTokens.sol/ConditionalTokens.json";
     uint8 internal constant STATICS_DOLLAR_PROFILE_ID = 1;
+
+    error RobinhoodTestnetConditionalTokensRequired();
 
     struct StaticsDollarStackConfig {
         address core;
@@ -157,6 +161,8 @@ contract DeployScript is Script {
 
     struct DeploymentConfig {
         address owner;
+        uint64 governanceDelay;
+        uint64 mloProfitSplitDelay;
         address conditionalTokens;
         string conditionalTokensArtifactPath;
         address collateralToken;
@@ -376,7 +382,7 @@ contract DeployScript is Script {
         _mintFullStackEveToken(deployment, config, autoDeployEveToken);
         _fundFaucet(deployment, config, autoDeployEveToken);
         _bootstrapMLOInsurance(deployment, config, temporaryOwner);
-        DiamondCutFacet(deployment.market.diamond).finalizeGovernanceDelay(finalOwner);
+        DiamondCutFacet(deployment.market.diamond).finalizeGovernanceDelay(finalOwner, config.market.governanceDelay);
         _verifyFullDeployment(deployment, config);
     }
 
@@ -485,19 +491,19 @@ contract DeployScript is Script {
         _configureDeployment(deployment.diamond, config, deployment.negRiskAdapter, deployment.ctfSettlementAdapter);
 
         if (finalizeGovernance) {
-            DiamondCutFacet(deployment.diamond).finalizeGovernanceDelay(config.owner);
+            DiamondCutFacet(deployment.diamond).finalizeGovernanceDelay(config.owner, config.governanceDelay);
         } else {
             require(config.owner == temporaryOwner, "unfinalized owner mismatch");
         }
 
         if (finalizeGovernance) {
-            _verifyDeployment(deployment);
+            _verifyDeployment(deployment, config.governanceDelay, config.mloProfitSplitDelay);
             require(OwnershipFacet(deployment.diamond).owner() == config.owner, "owner mismatch");
         }
     }
 
     function diamondCutSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = DiamondCutFacet.diamondCut.selector;
         selectors[1] = DiamondCutFacet.freezeFacet.selector;
         selectors[2] = DiamondCutFacet.isSelectorFrozen.selector;
@@ -508,6 +514,7 @@ contract DeployScript is Script {
         selectors[7] = DiamondCutFacet.governanceOperationReadyAt.selector;
         selectors[8] = DiamondCutFacet.governanceDelay.selector;
         selectors[9] = DiamondCutFacet.governanceDelayFinalized.selector;
+        selectors[10] = DiamondCutFacet.setGovernanceDelay.selector;
     }
 
     function loupeSelectors() public pure returns (bytes4[] memory selectors) {
@@ -632,7 +639,7 @@ contract DeployScript is Script {
     }
 
     function mloProfitShareSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](12);
         selectors[0] = IMLOProfitShareFacet.initializeMLOProfitSplit.selector;
         selectors[1] = IMLOProfitShareFacet.scheduleMLOProfitSplit.selector;
         selectors[2] = IMLOProfitShareFacet.cancelMLOProfitSplit.selector;
@@ -643,6 +650,8 @@ contract DeployScript is Script {
         selectors[7] = IMLOProfitShareFacet.previewMLOProfitRelease.selector;
         selectors[8] = IMLOProfitShareFacet.mloBucketProfitReward.selector;
         selectors[9] = IMLOProfitShareFacet.claimMLOBucketProfitReward.selector;
+        selectors[10] = IMLOProfitShareFacet.setMLOProfitSplitDelay.selector;
+        selectors[11] = IMLOProfitShareFacet.mloProfitSplitDelay.selector;
     }
 
     function markOracleSelectors() public pure returns (bytes4[] memory selectors) {
@@ -1239,8 +1248,12 @@ contract DeployScript is Script {
         selectors[1] = ITradeRouter.executeExactRouterTransfer.selector;
     }
 
-    function verifyDeployment(Deployment memory deployment) external view {
-        _verifyDeployment(deployment);
+    function verifyDeployment(
+        Deployment memory deployment,
+        uint64 expectedGovernanceDelay,
+        uint64 expectedMLOProfitSplitDelay
+    ) external view {
+        _verifyDeployment(deployment, expectedGovernanceDelay, expectedMLOProfitSplitDelay);
     }
 
     function verifyFullDeployment(FullDeployment memory deployment, FullDeploymentConfig memory config) external view {
@@ -1250,6 +1263,9 @@ contract DeployScript is Script {
 
     function _loadConfigFromEnv() internal view returns (DeploymentConfig memory config) {
         config.owner = vm.envAddress("INITIAL_OWNER");
+        config.governanceDelay =
+            uint64(vm.envOr("INITIAL_GOVERNANCE_DELAY_SECONDS", uint256(DEFAULT_INITIAL_GOVERNANCE_DELAY)));
+        config.mloProfitSplitDelay = uint64(vm.envOr("MLO_PROFIT_SPLIT_DELAY_SECONDS", uint256(config.governanceDelay)));
         config.conditionalTokens = vm.envOr("CONDITIONAL_TOKENS", address(0));
         config.conditionalTokensArtifactPath =
             vm.envOr("CONDITIONAL_TOKENS_ARTIFACT", DEFAULT_CONDITIONAL_TOKENS_ARTIFACT_PATH);
@@ -1562,7 +1578,7 @@ contract DeployScript is Script {
         OwnershipFacet(diamond).setEveToken(config.eveToken);
         OwnershipFacet(diamond).setEveTreasury(config.eveTreasury);
         IMarginAccountFacet(diamond).setMarginAsset(config.collateralToken);
-        IMLOProfitShareFacet(diamond).initializeMLOProfitSplit(7_500, 2_000, 500);
+        IMLOProfitShareFacet(diamond).initializeMLOProfitSplit(7_500, 2_000, 500, config.mloProfitSplitDelay);
         IMarginAccountFacet(diamond)
             .setDefaultFundingConfig(
                 MarginTypes.BucketKind.MLO,
@@ -1830,9 +1846,20 @@ contract DeployScript is Script {
         IERC20(deployment.usdcToken).forceApprove(deployment.staticsDiamond, 0);
     }
 
-    function _verifyDeployment(Deployment memory deployment) internal view {
+    function _verifyDeployment(
+        Deployment memory deployment,
+        uint64 expectedGovernanceDelay,
+        uint64 expectedMLOProfitSplitDelay
+    ) internal view {
         require(DiamondCutFacet(deployment.diamond).governanceDelayFinalized(), "governance delay not finalized");
-        require(DiamondCutFacet(deployment.diamond).governanceDelay() == 7 days, "governance delay mismatch");
+        require(
+            DiamondCutFacet(deployment.diamond).governanceDelay() == expectedGovernanceDelay,
+            "governance delay mismatch"
+        );
+        require(
+            IMLOProfitShareFacet(deployment.diamond).mloProfitSplitDelay() == expectedMLOProfitSplitDelay,
+            "MLO profit split delay mismatch"
+        );
         MarketFactoryTypes.MarketConfigView memory marketConfig =
             IMarketFactoryFacet(deployment.diamond).getMarketConfig();
         require(
@@ -1972,7 +1999,7 @@ contract DeployScript is Script {
     }
 
     function _verifyFullDeployment(FullDeployment memory deployment, FullDeploymentConfig memory config) internal view {
-        _verifyDeployment(deployment.market);
+        _verifyDeployment(deployment.market, config.market.governanceDelay, config.market.mloProfitSplitDelay);
         require(deployment.faucet != address(0), "zero faucet");
 
         MarketFactoryTypes.MarketConfigView memory marketConfig =
@@ -2237,6 +2264,9 @@ contract DeployScript is Script {
     {
         if (configuredAddress != address(0)) {
             return configuredAddress;
+        }
+        if (block.chainid == ROBINHOOD_TESTNET_CHAIN_ID) {
+            revert RobinhoodTestnetConditionalTokensRequired();
         }
 
         bytes memory creationCode = _loadConditionalTokensCreationCode(artifactPath);

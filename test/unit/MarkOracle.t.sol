@@ -28,7 +28,7 @@ import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {CurveCLOBTypes} from "../../src/types/CurveCLOBTypes.sol";
 import {MarkOracleTypes} from "../../src/types/MarkOracleTypes.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {TestBase} from "../helpers/TestBase.sol";
 
 contract MarkOracleTest is TestBase {
@@ -36,12 +36,12 @@ contract MarkOracleTest is TestBase {
     uint72 internal constant FORTY_CENTS = 400_000_000;
     bytes32 internal constant SPOT_SALT = keccak256("mark-oracle-spot-book");
 
-    MockUSDC internal spotToken;
+    MockUSDG internal spotToken;
 
     function setUp() public override {
         super.setUp();
 
-        spotToken = new MockUSDC();
+        spotToken = new MockUSDG();
         spotToken.mint(maker, 1_000_000e6);
         spotToken.mint(taker, 1_000_000e6);
 

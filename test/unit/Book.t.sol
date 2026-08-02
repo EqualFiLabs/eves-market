@@ -25,7 +25,7 @@ import {LibCurvePacking} from "../../src/libraries/LibCurvePacking.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {MockEveToken} from "../helpers/MockEveToken.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {ITestStateFacet, TestBase} from "../helpers/TestBase.sol";
 
 contract MockFeeOnTransferToken is ERC20 {
@@ -69,13 +69,13 @@ contract BookTest is TestBase {
     uint128 internal constant MICRO_EVE_QUOTE_IN = 810_000_000_000_000;
 
     CurveCLOBFacet internal curveFacet;
-    MockUSDC internal spotToken;
+    MockUSDG internal spotToken;
 
     function setUp() public override {
         super.setUp();
 
         curveFacet = new CurveCLOBFacet();
-        spotToken = new MockUSDC();
+        spotToken = new MockUSDG();
         spotToken.mint(maker, 1_000_000e6);
         spotToken.mint(taker, 1_000_000e6);
 
@@ -201,7 +201,7 @@ contract BookTest is TestBase {
     }
 
     function test_CreateSpotBookSnapshotsSpotFeeConfig() public {
-        MockUSDC secondSpotToken = new MockUSDC();
+        MockUSDG secondSpotToken = new MockUSDG();
         vm.prank(owner);
         ITestStateFacet(address(diamond)).setSpotFeeConfigFixture(75, 8_500, 1_400, 100);
 

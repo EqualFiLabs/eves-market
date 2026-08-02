@@ -27,7 +27,7 @@ import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {CurveCLOBTypes} from "../../src/types/CurveCLOBTypes.sol";
 import {ProductAdapterTypes} from "../../src/types/ProductAdapterTypes.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {ProductAdapterHarnessFacet} from "../helpers/ProductAdapterHarnessFacet.sol";
 import {ITestStateFacet, TestBase} from "../helpers/TestBase.sol";
 
@@ -39,12 +39,12 @@ contract ProductAdapterBoundaryTest is TestBase {
     bytes32 internal constant RISK_DOMAIN_ID = keccak256("adapter-boundary-risk-domain");
     bytes32 internal constant ADAPTER_DATA_KEY = keccak256("adapter-boundary-data");
 
-    MockUSDC internal spotToken;
+    MockUSDG internal spotToken;
 
     function setUp() public override {
         super.setUp();
 
-        spotToken = new MockUSDC();
+        spotToken = new MockUSDG();
         spotToken.mint(maker, 1_000_000e6);
         spotToken.mint(taker, 1_000_000e6);
 

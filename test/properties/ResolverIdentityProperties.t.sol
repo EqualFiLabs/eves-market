@@ -13,7 +13,7 @@ import {ResolverRegistryFacet} from "src/facets/ResolverRegistryFacet.sol";
 import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
-import {MockUSDC} from "test/helpers/MockUSDC.sol";
+import {MockUSDG} from "test/helpers/MockUSDG.sol";
 
 contract ResolverIdentityReputationHarness {
     function creatorCounts(uint256 identityId)
@@ -166,7 +166,7 @@ contract ResolverIdentityPropertiesTest is Test {
     ResolverIdentityReputationHarness internal reputation;
     ResolverRegistryPropertyHarness internal registry;
     EveIdentity internal registryIdentity;
-    MockUSDC internal feeToken;
+    MockUSDG internal feeToken;
     MockEveToken internal eveToken;
 
     function setUp() public {
@@ -174,7 +174,7 @@ contract ResolverIdentityPropertiesTest is Test {
         reputation = new ResolverIdentityReputationHarness();
         registry = new ResolverRegistryPropertyHarness();
         registryIdentity = new EveIdentity(address(registry), "Eve Identity", "EVE-ID");
-        feeToken = new MockUSDC();
+        feeToken = new MockUSDG();
         eveToken = new MockEveToken();
         registry.configure(address(registryIdentity), address(feeToken), address(eveToken), 1 days, 7 days);
     }

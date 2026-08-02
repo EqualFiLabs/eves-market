@@ -11,7 +11,7 @@ import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibDelayedOrder} from "../../src/libraries/LibDelayedOrder.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {DelayedOrderTypes} from "../../src/types/DelayedOrderTypes.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {ITestStateFacet, TestBase} from "../helpers/TestBase.sol";
 
 interface IDelayedOrderSubmissionFacet {
@@ -207,7 +207,7 @@ contract DelayedOrderSubmissionProperties is TestBase {
     }
 
     function test_SubmitDelayedOrderRejectsSpotBook() public {
-        MockUSDC spotToken = new MockUSDC();
+        MockUSDG spotToken = new MockUSDG();
         bytes32 bookId = _createSpotBook(address(spotToken));
 
         vm.startPrank(taker);

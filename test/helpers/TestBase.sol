@@ -24,7 +24,7 @@ import {ERC1155ReceiverHarness} from "./ERC1155ReceiverHarness.sol";
 import {MockConditionalTokens} from "./MockConditionalTokens.sol";
 import {MockCurveProfile} from "./MockCurveProfile.sol";
 import {MockEveToken} from "./MockEveToken.sol";
-import {MockUSDC} from "./MockUSDC.sol";
+import {MockUSDG} from "./MockUSDG.sol";
 
 interface ITestStateFacet {
     function configure(address conditionalTokens, address collateralToken, address eveToken, address eveTreasury)
@@ -1158,7 +1158,7 @@ abstract contract TestBase is Test, ERC1155ReceiverHarness {
     MockDiamond internal diamond;
     TestStateFacet internal stateFacet;
     MockConditionalTokens internal conditionalTokens;
-    MockUSDC internal usdc;
+    MockUSDG internal usdc;
     MockEveToken internal eveToken;
     MockCurveProfile internal curveProfile;
     ParimutuelShareToken internal parimutuelShareToken;
@@ -1172,7 +1172,7 @@ abstract contract TestBase is Test, ERC1155ReceiverHarness {
         treasury = makeAddr("treasury");
 
         conditionalTokens = new MockConditionalTokens();
-        usdc = new MockUSDC();
+        usdc = new MockUSDG();
         eveToken = new MockEveToken();
         curveProfile = new MockCurveProfile();
 

@@ -24,7 +24,7 @@ import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 
 import {SettlementFeeFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 import {StaticsDollarCoreFixture} from "../helpers/StaticsDollarCoreFixture.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 
 contract StaticsDollarMarketFlowTest is SettlementFeeFixture, StaticsDollarCoreFixture {
     uint8 internal constant STATICS_DOLLAR_PROFILE_ID = 2;
@@ -33,14 +33,14 @@ contract StaticsDollarMarketFlowTest is SettlementFeeFixture, StaticsDollarCoreF
 
     StaticsDollar internal staticsDollar;
     IStaticsDollarCore internal core;
-    MockUSDC internal usdc;
+    MockUSDG internal usdc;
     uint256 internal usdcProfileId;
     EvesPositionManager internal comboPositions;
 
     function setUp() public override {
         super.setUp();
 
-        usdc = new MockUSDC();
+        usdc = new MockUSDG();
         ActiveStaticsDollar memory active = _deployActiveStaticsDollar(owner, usdc);
         core = IStaticsDollarCore(active.deployment.core);
         staticsDollar = StaticsDollar(active.deployment.staticsDollar);

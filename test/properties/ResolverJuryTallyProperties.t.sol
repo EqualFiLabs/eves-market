@@ -16,7 +16,7 @@ import {ResolverRegistryReputationFacet} from "src/facets/ResolverRegistryReputa
 import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
-import {MockUSDC} from "test/helpers/MockUSDC.sol";
+import {MockUSDG} from "test/helpers/MockUSDG.sol";
 
 contract ResolverJuryTallyPropertyHarness is
     ResolverJuryFacet,
@@ -143,13 +143,13 @@ contract ResolverJuryTallyPropertiesTest is Test {
 
     ResolverJuryTallyPropertyHarness internal jury;
     EveIdentity internal identity;
-    MockUSDC internal feeToken;
+    MockUSDG internal feeToken;
     MockEveToken internal eveToken;
 
     function setUp() public {
         jury = new ResolverJuryTallyPropertyHarness();
         identity = new EveIdentity(address(jury), "Eve Identity", "EVE-ID");
-        feeToken = new MockUSDC();
+        feeToken = new MockUSDG();
         eveToken = new MockEveToken();
         jury.configure(address(identity), address(feeToken), address(eveToken));
     }

@@ -7,7 +7,7 @@ import {Errors} from "../../src/libraries/Errors.sol";
 import {LibDelayedOrder} from "../../src/libraries/LibDelayedOrder.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {MockConditionalTokens} from "../helpers/MockConditionalTokens.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {ERC1155ReceiverHarness} from "../helpers/ERC1155ReceiverHarness.sol";
 
 contract DelayedOrderMathHarness {
@@ -114,7 +114,7 @@ contract DelayedOrderProperties is Test {
     DelayedOrderMathHarness internal mathHarness;
     DelayedOrderCreditHarness internal creditHarness;
     DelayedOrderQueueHarness internal queueHarness;
-    MockUSDC internal usdc;
+    MockUSDG internal usdc;
     MockConditionalTokens internal conditionalTokens;
     address internal owner;
 
@@ -122,7 +122,7 @@ contract DelayedOrderProperties is Test {
         mathHarness = new DelayedOrderMathHarness();
         creditHarness = new DelayedOrderCreditHarness();
         queueHarness = new DelayedOrderQueueHarness();
-        usdc = new MockUSDC();
+        usdc = new MockUSDG();
         conditionalTokens = new MockConditionalTokens();
         owner = makeAddr("credit-owner");
     }

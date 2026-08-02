@@ -31,7 +31,7 @@ import {ERC20Permit} from "../../lib/openzeppelin-contracts/contracts/token/ERC2
 import {CollateralRouterFixture} from "../helpers/DiamondFixtures.sol";
 import {StaticsDollarCoreFixture} from "../helpers/StaticsDollarCoreFixture.sol";
 import {MockCollateral} from "../helpers/MockCollateral.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 
 /// @dev Narrow fixture-only setter for installing the collateral denomination before
@@ -246,7 +246,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
     }
 
     function test_MintAndBuyWithUSDCMintsStaticsDollarThroughSharedGateway() public {
-        MockUSDC launchUsdc = new MockUSDC();
+        MockUSDG launchUsdc = new MockUSDG();
         ActiveStaticsDollar memory active = _deployActiveStaticsDollar(owner, launchUsdc);
         IStaticsDollarCore launchCore = IStaticsDollarCore(active.deployment.core);
         StaticsDollar launchStaticsDollar = StaticsDollar(active.deployment.staticsDollar);
@@ -296,7 +296,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
     }
 
     function test_StaticsDollarBuyRouterRestoresBalanceWithRetainedSeniorFee() public {
-        MockUSDC launchUsdc = new MockUSDC();
+        MockUSDG launchUsdc = new MockUSDG();
         ActiveStaticsDollar memory active = _deployActiveStaticsDollar(owner, launchUsdc);
         IStaticsDollarCore launchCore = IStaticsDollarCore(active.deployment.core);
         StaticsDollar launchStaticsDollar = StaticsDollar(active.deployment.staticsDollar);
@@ -336,7 +336,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
     }
 
     function test_MintAndBuyWithUSDCPermitConsumesExactAllowance() public {
-        MockUSDC launchUsdc = new MockUSDC();
+        MockUSDG launchUsdc = new MockUSDG();
         ActiveStaticsDollar memory active = _deployActiveStaticsDollar(owner, launchUsdc);
         (address permitTaker, uint256 permitTakerKey) = makeAddrAndKey("permitTaker");
         (bytes32 marketId, uint256 curveId, uint32 generation, bytes32 commitment) =
@@ -362,7 +362,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
     }
 
     function test_MintAndBuyWithUSDCPermitRejectsAlreadyConsumedSignature() public {
-        MockUSDC launchUsdc = new MockUSDC();
+        MockUSDG launchUsdc = new MockUSDG();
         ActiveStaticsDollar memory active = _deployActiveStaticsDollar(owner, launchUsdc);
         (address permitTaker, uint256 permitTakerKey) = makeAddrAndKey("frontrunPermitTaker");
         (bytes32 marketId, uint256 curveId, uint32 generation, bytes32 commitment) =
@@ -399,7 +399,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
     }
 
     function test_MintAndBuyWithUSDCPermitRollsBackOnStaleRoute() public {
-        MockUSDC launchUsdc = new MockUSDC();
+        MockUSDG launchUsdc = new MockUSDG();
         ActiveStaticsDollar memory active = _deployActiveStaticsDollar(owner, launchUsdc);
         (address permitTaker, uint256 permitTakerKey) = makeAddrAndKey("rollbackPermitTaker");
         (bytes32 marketId, uint256 curveId, uint32 generation, bytes32 commitment) =
@@ -427,7 +427,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
     }
 
     function test_StaticsDollarRailDoesNotCacheMutableProfileMode() public {
-        MockUSDC launchUsdc = new MockUSDC();
+        MockUSDG launchUsdc = new MockUSDG();
         ActiveStaticsDollar memory active = _deployActiveStaticsDollar(owner, launchUsdc);
         vm.prank(owner);
         CoreGovernanceFacet(active.deployment.core).enterReduceOnly(active.profileId);
@@ -460,8 +460,8 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
     }
 
     function test_RevertWhen_StaticsDollarRailUsesDifferentUsdc() public {
-        MockUSDC launchUsdc = new MockUSDC();
-        MockUSDC wrongUsdc = new MockUSDC();
+        MockUSDG launchUsdc = new MockUSDG();
+        MockUSDG wrongUsdc = new MockUSDG();
         ActiveStaticsDollar memory active = _deployActiveStaticsDollar(owner, launchUsdc);
 
         vm.startPrank(owner);
@@ -525,7 +525,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
     function _mintStaticsDollar(
         IStaticsDollarCore core,
         StaticsDollar token,
-        MockUSDC usdc,
+        MockUSDG usdc,
         uint256 profileId,
         address receiver,
         uint256 assets
@@ -539,7 +539,7 @@ contract TradeRouterTest is CollateralRouterFixture, StaticsDollarCoreFixture {
         assertEq(token.balanceOf(receiver) >= assets, true);
     }
 
-    function _prepareStaticsDollarMarket(ActiveStaticsDollar memory active, MockUSDC launchUsdc, string memory name)
+    function _prepareStaticsDollarMarket(ActiveStaticsDollar memory active, MockUSDG launchUsdc, string memory name)
         internal
         returns (bytes32 marketId, uint256 curveId, uint32 generation, bytes32 commitment)
     {

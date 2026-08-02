@@ -123,7 +123,7 @@ contract MLOPredictionAdapterTest is TestBase {
         diamond.registerFacet(address(new SeniorCapitalViewFacet()), _seniorCapitalViewSelectors());
         IMarginAccountFacet(address(diamond)).setMarginAsset(address(collateral));
         IMLOPredictionAdapterFacet(address(diamond)).setMLORecoveryConfig(address(insuranceFund), 5_000, 32);
-        IMLOProfitShareFacet(address(diamond)).initializeMLOProfitSplit(7_500, 2_000, 500);
+        IMLOProfitShareFacet(address(diamond)).initializeMLOProfitSplit(7_500, 2_000, 500, 15 minutes);
         ITestStateFacet(address(diamond))
             .configure(address(conditionalTokens), address(collateral), address(eveToken), treasury);
         ITestStateFacet(address(diamond)).setStaticsDollarCoreFixture(address(collateral));
@@ -147,7 +147,7 @@ contract MLOPredictionAdapterTest is TestBase {
     }
 
     function _diamondCutSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = DiamondCutFacet.diamondCut.selector;
         selectors[1] = DiamondCutFacet.freezeFacet.selector;
         selectors[2] = DiamondCutFacet.isSelectorFrozen.selector;
@@ -158,6 +158,7 @@ contract MLOPredictionAdapterTest is TestBase {
         selectors[7] = DiamondCutFacet.governanceOperationReadyAt.selector;
         selectors[8] = DiamondCutFacet.governanceDelay.selector;
         selectors[9] = DiamondCutFacet.governanceDelayFinalized.selector;
+        selectors[10] = DiamondCutFacet.setGovernanceDelay.selector;
     }
 
     function test_DirectMLOAskFillUsesSeniorCapitalAndRetainsOppositeInventory() public {
@@ -709,7 +710,7 @@ contract MLOPredictionAdapterTest is TestBase {
 
     function test_FinalizedGovernanceDelaysRecoveryConfiguration() public {
         vm.prank(owner);
-        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, 15 minutes);
         bytes memory callData = abi.encodeCall(
             IMLOPredictionAdapterFacet.setMLORecoveryConfig, (address(insuranceFund), uint16(6_000), uint16(32))
         );
@@ -720,7 +721,7 @@ contract MLOPredictionAdapterTest is TestBase {
         IMLOPredictionAdapterFacet(address(diamond)).setMLORecoveryConfig(address(insuranceFund), 6_000, 32);
 
         vm.prank(owner);
-        (, uint64 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(callData);
+        (, uint256 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(callData);
         vm.warp(readyAt);
         vm.prank(owner);
         IMLOPredictionAdapterFacet(address(diamond)).setMLORecoveryConfig(address(insuranceFund), 6_000, 32);
@@ -2800,7 +2801,7 @@ contract MLOPredictionAdapterTest is TestBase {
     }
 
     function _mloProfitShareSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](12);
         selectors[0] = IMLOProfitShareFacet.initializeMLOProfitSplit.selector;
         selectors[1] = IMLOProfitShareFacet.scheduleMLOProfitSplit.selector;
         selectors[2] = IMLOProfitShareFacet.cancelMLOProfitSplit.selector;
@@ -2811,6 +2812,8 @@ contract MLOPredictionAdapterTest is TestBase {
         selectors[7] = IMLOProfitShareFacet.previewMLOProfitRelease.selector;
         selectors[8] = IMLOProfitShareFacet.mloBucketProfitReward.selector;
         selectors[9] = IMLOProfitShareFacet.claimMLOBucketProfitReward.selector;
+        selectors[10] = IMLOProfitShareFacet.setMLOProfitSplitDelay.selector;
+        selectors[11] = IMLOProfitShareFacet.mloProfitSplitDelay.selector;
     }
 
     function _seniorCapitalSelectors() internal pure returns (bytes4[] memory selectors) {

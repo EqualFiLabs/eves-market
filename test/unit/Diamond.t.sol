@@ -25,6 +25,10 @@ contract GovernanceInitProbe {
 }
 
 contract DiamondTest is DiamondFixture {
+    uint64 internal constant TEST_GOVERNANCE_DELAY = 15 minutes;
+
+    event GovernanceDelayUpdated(uint64 previousDelay, uint64 newDelay);
+
     function test_FacetRegistrationAndLoupeViewsStayInSync() public view {
         assertEq(OwnershipFacet(address(diamond)).owner(), owner);
         assertEq(
@@ -137,10 +141,96 @@ contract DiamondTest is DiamondFixture {
         assertFalse(DiamondCutFacet(address(diamond)).isSelectorFrozen(unroutedSelector));
     }
 
+    function test_FinalizationInstallsConfiguredGovernanceDelay() public {
+        vm.prank(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, TEST_GOVERNANCE_DELAY);
+
+        assertTrue(DiamondCutFacet(address(diamond)).governanceDelayFinalized());
+        assertEq(DiamondCutFacet(address(diamond)).governanceDelay(), TEST_GOVERNANCE_DELAY);
+    }
+
+    function test_GovernanceDelayChangeUsesCurrentDelayAndOnlyAffectsNewSchedules() public {
+        uint64 newDelay = 2 hours;
+        address newOwner = makeAddr("snapshot-owner");
+        bytes memory ownershipCall = abi.encodeCall(OwnershipFacet.transferOwnership, (newOwner));
+        bytes memory delayCall = abi.encodeCall(DiamondCutFacet.setGovernanceDelay, (newDelay));
+
+        vm.prank(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, TEST_GOVERNANCE_DELAY);
+        vm.startPrank(owner);
+        (, uint256 ownershipReadyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(ownershipCall);
+        (, uint256 delayReadyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(delayCall);
+        vm.stopPrank();
+
+        assertEq(ownershipReadyAt, block.timestamp + TEST_GOVERNANCE_DELAY);
+        assertEq(delayReadyAt, ownershipReadyAt);
+
+        bytes32 delayOperationId = DiamondCutFacet(address(diamond)).governanceOperationId(delayCall);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.GovernanceOperationTimelocked.selector, delayOperationId, delayReadyAt)
+        );
+        DiamondCutFacet(address(diamond)).setGovernanceDelay(newDelay);
+
+        vm.warp(delayReadyAt);
+        vm.prank(owner);
+        vm.expectEmit(false, false, false, true);
+        emit GovernanceDelayUpdated(TEST_GOVERNANCE_DELAY, newDelay);
+        DiamondCutFacet(address(diamond)).setGovernanceDelay(newDelay);
+
+        assertEq(DiamondCutFacet(address(diamond)).governanceDelay(), newDelay);
+        assertEq(
+            DiamondCutFacet(address(diamond))
+                .governanceOperationReadyAt(DiamondCutFacet(address(diamond)).governanceOperationId(ownershipCall)),
+            ownershipReadyAt
+        );
+
+        bytes memory feeCall = abi.encodeCall(OwnershipFacet.setMarketCreationFee, (55e6));
+        vm.prank(owner);
+        (, uint256 feeReadyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(feeCall);
+        assertEq(feeReadyAt, block.timestamp + newDelay);
+    }
+
+    function test_GovernanceCanChooseZeroOrFullUint64Delay() public {
+        vm.prank(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, 0);
+
+        bytes memory maxDelayCall = abi.encodeCall(DiamondCutFacet.setGovernanceDelay, (type(uint64).max));
+        vm.startPrank(owner);
+        (, uint256 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(maxDelayCall);
+        assertEq(readyAt, block.timestamp);
+        DiamondCutFacet(address(diamond)).setGovernanceDelay(type(uint64).max);
+
+        bytes memory feeCall = abi.encodeCall(OwnershipFacet.setMarketCreationFee, (1));
+        (, uint256 feeReadyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(feeCall);
+        vm.stopPrank();
+
+        assertEq(feeReadyAt, block.timestamp + type(uint64).max);
+    }
+
+    function test_RevertWhen_GovernanceDelayChangeIsUnfinalizedUnscheduledOrUnauthorized() public {
+        vm.prank(owner);
+        vm.expectRevert(Errors.GovernanceDelayNotFinalized.selector);
+        DiamondCutFacet(address(diamond)).setGovernanceDelay(1 hours);
+
+        vm.prank(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, TEST_GOVERNANCE_DELAY);
+
+        bytes memory callData = abi.encodeCall(DiamondCutFacet.setGovernanceDelay, (1 hours));
+        bytes32 operationId = DiamondCutFacet(address(diamond)).governanceOperationId(callData);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(Errors.GovernanceOperationNotScheduled.selector, operationId));
+        DiamondCutFacet(address(diamond)).setGovernanceDelay(1 hours);
+
+        vm.prank(outsider);
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
+        DiamondCutFacet(address(diamond)).setGovernanceDelay(1 hours);
+    }
+
     function test_FinalizedGovernanceRequiresExactDelayedOwnershipCall() public {
         address newOwner = makeAddr("delayed-owner");
         vm.prank(owner);
-        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, TEST_GOVERNANCE_DELAY);
         bytes memory callData = abi.encodeCall(OwnershipFacet.transferOwnership, (newOwner));
         bytes32 operationId = DiamondCutFacet(address(diamond)).governanceOperationId(callData);
 
@@ -149,7 +239,7 @@ contract DiamondTest is DiamondFixture {
         OwnershipFacet(address(diamond)).transferOwnership(newOwner);
 
         vm.prank(owner);
-        (, uint64 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(callData);
+        (, uint256 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(callData);
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(Errors.GovernanceOperationTimelocked.selector, operationId, readyAt));
         OwnershipFacet(address(diamond)).transferOwnership(newOwner);
@@ -175,9 +265,9 @@ contract DiamondTest is DiamondFixture {
         bytes memory callData = abi.encodeCall(DiamondCutFacet.diamondCut, (cuts, address(init), initData));
 
         vm.prank(owner);
-        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, TEST_GOVERNANCE_DELAY);
         vm.prank(owner);
-        (, uint64 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(callData);
+        (, uint256 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(callData);
         vm.warp(readyAt);
         vm.prank(owner);
         DiamondCutFacet(address(diamond)).diamondCut(cuts, address(init), initData);
@@ -193,13 +283,13 @@ contract DiamondTest is DiamondFixture {
     function testFuzz_FinalizedGovernanceCannotExecuteBeforeReady(uint32 elapsedRaw) public {
         address newOwner = makeAddr("fuzz-delayed-owner");
         vm.prank(owner);
-        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, TEST_GOVERNANCE_DELAY);
         bytes memory callData = abi.encodeCall(OwnershipFacet.transferOwnership, (newOwner));
         bytes32 operationId = DiamondCutFacet(address(diamond)).governanceOperationId(callData);
         vm.prank(owner);
-        (, uint64 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(callData);
-        uint256 elapsed = bound(uint256(elapsedRaw), 0, 7 days - 1);
-        vm.warp(uint256(readyAt) - 7 days + elapsed);
+        (, uint256 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(callData);
+        uint256 elapsed = bound(uint256(elapsedRaw), 0, TEST_GOVERNANCE_DELAY - 1);
+        vm.warp(readyAt - TEST_GOVERNANCE_DELAY + elapsed);
 
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(Errors.GovernanceOperationTimelocked.selector, operationId, readyAt));

@@ -21,7 +21,7 @@ import {ResolverRegistryRewardsFacet} from "src/facets/ResolverRegistryRewardsFa
 import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
-import {MockUSDC} from "test/helpers/MockUSDC.sol";
+import {MockUSDG} from "test/helpers/MockUSDG.sol";
 
 contract ResolverJuryFundHarness is
     ResolverJuryFacet,
@@ -209,7 +209,7 @@ contract ResolverJuryFundConservationHandler is Test {
     struct Scenario {
         ResolverJuryFundHarness jury;
         EveIdentity identity;
-        MockUSDC feeToken;
+        MockUSDG feeToken;
         MockEveToken eveToken;
         MockEveToken bondToken;
     }
@@ -217,7 +217,7 @@ contract ResolverJuryFundConservationHandler is Test {
     function _newScenario() internal returns (Scenario memory scenario) {
         scenario.jury = new ResolverJuryFundHarness();
         scenario.identity = new EveIdentity(address(scenario.jury), "Eve Identity", "EVE-ID");
-        scenario.feeToken = new MockUSDC();
+        scenario.feeToken = new MockUSDG();
         scenario.eveToken = new MockEveToken();
         scenario.bondToken = new MockEveToken();
         scenario.jury

@@ -19,9 +19,10 @@ contract DiamondCutFacet {
     }
 
     event DiamondCut(FacetCut[] diamondCut, address init, bytes initCalldata);
-    event GovernanceOperationScheduled(bytes32 indexed operationId, uint64 readyAt, bytes callData);
+    event GovernanceOperationScheduled(bytes32 indexed operationId, uint256 readyAt, bytes callData);
     event GovernanceOperationCancelled(bytes32 indexed operationId);
     event GovernanceDelayFinalized(address indexed previousOwner, address indexed finalOwner, uint64 delay);
+    event GovernanceDelayUpdated(uint64 previousDelay, uint64 newDelay);
 
     function diamondCut(FacetCut[] calldata diamondCut_, address init, bytes calldata initCalldata) external {
         LibDiamond.enforceIsContractOwner();
@@ -66,7 +67,7 @@ contract DiamondCutFacet {
 
     function scheduleGovernanceOperation(bytes calldata callData)
         external
-        returns (bytes32 operationId_, uint64 readyAt)
+        returns (bytes32 operationId_, uint256 readyAt)
     {
         LibDiamond.enforceIsContractOwnerRaw();
         operationId_ = LibGovernanceDelay.operationId(callData);
@@ -80,27 +81,37 @@ contract DiamondCutFacet {
         emit GovernanceOperationCancelled(operationId_);
     }
 
-    function finalizeGovernanceDelay(address finalOwner) external {
+    function finalizeGovernanceDelay(address finalOwner, uint64 initialDelay) external {
         LibDiamond.enforceIsContractOwnerRaw();
         LibGovernanceDelay.Storage storage state = LibGovernanceDelay.s();
         if (state.finalized) revert Errors.GovernanceDelayAlreadyFinalized();
         if (finalOwner == address(0)) revert Errors.ZeroAddress();
         address previousOwner = LibDiamond.contractOwner();
         LibDiamond.setContractOwner(finalOwner);
+        state.delay = initialDelay;
         state.finalized = true;
-        emit GovernanceDelayFinalized(previousOwner, finalOwner, LibGovernanceDelay.MINIMUM_DELAY);
+        emit GovernanceDelayFinalized(previousOwner, finalOwner, initialDelay);
+    }
+
+    function setGovernanceDelay(uint64 newDelay) external {
+        LibDiamond.enforceIsContractOwner();
+        LibGovernanceDelay.Storage storage state = LibGovernanceDelay.s();
+        if (!state.finalized) revert Errors.GovernanceDelayNotFinalized();
+        uint64 previousDelay = state.delay;
+        state.delay = newDelay;
+        emit GovernanceDelayUpdated(previousDelay, newDelay);
     }
 
     function governanceOperationId(bytes calldata callData) external view returns (bytes32) {
         return LibGovernanceDelay.operationId(callData);
     }
 
-    function governanceOperationReadyAt(bytes32 operationId_) external view returns (uint64) {
+    function governanceOperationReadyAt(bytes32 operationId_) external view returns (uint256) {
         return LibGovernanceDelay.s().readyAt[operationId_];
     }
 
-    function governanceDelay() external pure returns (uint64) {
-        return LibGovernanceDelay.MINIMUM_DELAY;
+    function governanceDelay() external view returns (uint64) {
+        return LibGovernanceDelay.s().delay;
     }
 
     function governanceDelayFinalized() external view returns (bool) {

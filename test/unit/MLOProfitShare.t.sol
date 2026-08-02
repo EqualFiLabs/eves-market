@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {MLOInsuranceFund} from "../../src/MLOInsuranceFund.sol";
+import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {MarginAccountFacet} from "../../src/facets/MarginAccountFacet.sol";
 import {MLOPredictionRecoveryFacet} from "../../src/facets/MLOPredictionRecoveryFacet.sol";
 import {MLOProfitShareFacet} from "../../src/facets/MLOProfitShareFacet.sol";
@@ -23,6 +24,10 @@ import {
 import {TestBase} from "../helpers/TestBase.sol";
 
 contract MLOProfitShareTest is TestBase {
+    uint64 internal constant TEST_MLO_DELAY = 15 minutes;
+
+    event MLOProfitSplitDelayUpdated(uint64 previousDelay, uint64 newDelay);
+
     MockCollateral internal collateral;
     MLOInsuranceFund internal insurance;
     address internal riskManager;
@@ -35,6 +40,7 @@ contract MLOProfitShareTest is TestBase {
         seniorDepositor = makeAddr("seniorDepositor");
 
         vm.startPrank(owner);
+        diamond.registerFacet(address(new DiamondCutFacet()), _governanceSelectors());
         diamond.registerFacet(address(new MarginAccountFacet()), MarginAccountingHarnessSelectors.production());
         diamond.registerFacet(address(new MarginAccountingHarnessFacet()), MarginAccountingHarnessSelectors.harness());
         diamond.registerFacet(address(new MLOProfitShareFacet()), _profitShareSelectors());
@@ -44,8 +50,108 @@ contract MLOProfitShareTest is TestBase {
         IMarginAccountFacet(address(diamond)).setMarginAsset(address(collateral));
         insurance = new MLOInsuranceFund(address(collateral), address(diamond), address(diamond));
         IMLOPredictionAdapterFacet(address(diamond)).setMLORecoveryConfig(address(insurance), 5_000, 50);
-        IMLOProfitShareFacet(address(diamond)).initializeMLOProfitSplit(7_500, 2_000, 500);
+        IMLOProfitShareFacet(address(diamond)).initializeMLOProfitSplit(7_500, 2_000, 500, TEST_MLO_DELAY);
         vm.stopPrank();
+    }
+
+    function test_ConfiguredProfitSplitDelayControlsNewProposalWindow() public {
+        uint256 scheduledAt = block.timestamp;
+        vm.prank(owner);
+        IMLOProfitShareFacet(address(diamond)).scheduleMLOProfitSplit(8_000, 1_000, 1_000);
+
+        MLOProfitShareTypes.PendingProfitSplit memory pending =
+            IMLOProfitShareFacet(address(diamond)).pendingMLOProfitSplit();
+        assertEq(IMLOProfitShareFacet(address(diamond)).mloProfitSplitDelay(), TEST_MLO_DELAY);
+        assertEq(pending.executableAt, scheduledAt + TEST_MLO_DELAY);
+        assertEq(pending.expiresAt, pending.executableAt + 2 days);
+    }
+
+    function test_MLODelayChangeUsesGlobalTimelockAndPreservesPendingProposal() public {
+        vm.prank(owner);
+        IMLOProfitShareFacet(address(diamond)).scheduleMLOProfitSplit(8_000, 1_000, 1_000);
+        MLOProfitShareTypes.PendingProfitSplit memory original =
+            IMLOProfitShareFacet(address(diamond)).pendingMLOProfitSplit();
+
+        vm.prank(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, TEST_MLO_DELAY);
+
+        uint64 newDelay = 1 hours;
+        bytes memory delayCall = abi.encodeCall(IMLOProfitShareFacet.setMLOProfitSplitDelay, (newDelay));
+        bytes32 operationId = DiamondCutFacet(address(diamond)).governanceOperationId(delayCall);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(Errors.GovernanceOperationNotScheduled.selector, operationId));
+        IMLOProfitShareFacet(address(diamond)).setMLOProfitSplitDelay(newDelay);
+
+        vm.prank(owner);
+        (, uint256 readyAt) = DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(delayCall);
+        assertEq(readyAt, block.timestamp + TEST_MLO_DELAY);
+
+        vm.warp(readyAt);
+        vm.prank(owner);
+        vm.expectEmit(false, false, false, true);
+        emit MLOProfitSplitDelayUpdated(TEST_MLO_DELAY, newDelay);
+        IMLOProfitShareFacet(address(diamond)).setMLOProfitSplitDelay(newDelay);
+
+        MLOProfitShareTypes.PendingProfitSplit memory unchanged =
+            IMLOProfitShareFacet(address(diamond)).pendingMLOProfitSplit();
+        assertEq(IMLOProfitShareFacet(address(diamond)).mloProfitSplitDelay(), newDelay);
+        assertEq(unchanged.executableAt, original.executableAt);
+        assertEq(unchanged.expiresAt, original.expiresAt);
+
+        vm.startPrank(owner);
+        IMLOProfitShareFacet(address(diamond)).cancelMLOProfitSplit();
+        IMLOProfitShareFacet(address(diamond)).scheduleMLOProfitSplit(8_000, 1_000, 1_000);
+        vm.stopPrank();
+        MLOProfitShareTypes.PendingProfitSplit memory replacement =
+            IMLOProfitShareFacet(address(diamond)).pendingMLOProfitSplit();
+        assertEq(replacement.executableAt, block.timestamp + newDelay);
+    }
+
+    function test_MLOSplitProposalDoesNotAlsoWaitForGlobalGovernanceDelay() public {
+        vm.prank(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, 2 hours);
+
+        vm.prank(owner);
+        IMLOProfitShareFacet(address(diamond)).scheduleMLOProfitSplit(8_000, 1_000, 1_000);
+        MLOProfitShareTypes.PendingProfitSplit memory pending =
+            IMLOProfitShareFacet(address(diamond)).pendingMLOProfitSplit();
+        assertEq(pending.executableAt, block.timestamp + TEST_MLO_DELAY);
+
+        vm.warp(pending.executableAt);
+        vm.prank(owner);
+        IMLOProfitShareFacet(address(diamond)).executeMLOProfitSplit();
+        assertEq(IMLOProfitShareFacet(address(diamond)).activeMLOProfitSplit().version, 2);
+    }
+
+    function test_MLODelaySupportsFullUint64Range() public {
+        vm.prank(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, 0);
+
+        bytes memory delayCall = abi.encodeCall(IMLOProfitShareFacet.setMLOProfitSplitDelay, (type(uint64).max));
+        vm.startPrank(owner);
+        DiamondCutFacet(address(diamond)).scheduleGovernanceOperation(delayCall);
+        IMLOProfitShareFacet(address(diamond)).setMLOProfitSplitDelay(type(uint64).max);
+        IMLOProfitShareFacet(address(diamond)).scheduleMLOProfitSplit(8_000, 1_000, 1_000);
+        vm.stopPrank();
+
+        MLOProfitShareTypes.PendingProfitSplit memory pending =
+            IMLOProfitShareFacet(address(diamond)).pendingMLOProfitSplit();
+        assertEq(pending.executableAt, block.timestamp + type(uint64).max);
+        assertEq(pending.expiresAt, pending.executableAt + 2 days);
+    }
+
+    function test_RevertWhen_MLODelayChangeIsUnfinalizedOrUnauthorized() public {
+        vm.prank(owner);
+        vm.expectRevert(Errors.GovernanceDelayNotFinalized.selector);
+        IMLOProfitShareFacet(address(diamond)).setMLOProfitSplitDelay(1 hours);
+
+        vm.prank(owner);
+        DiamondCutFacet(address(diamond)).finalizeGovernanceDelay(owner, TEST_MLO_DELAY);
+
+        vm.prank(taker);
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, taker));
+        IMLOProfitShareFacet(address(diamond)).setMLOProfitSplitDelay(1 hours);
     }
 
     function test_NetProfitSplitsBetweenMakerSeniorAndInsurance() public {
@@ -531,7 +637,7 @@ contract MLOProfitShareTest is TestBase {
     }
 
     function _profitShareSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](12);
         selectors[0] = IMLOProfitShareFacet.initializeMLOProfitSplit.selector;
         selectors[1] = IMLOProfitShareFacet.scheduleMLOProfitSplit.selector;
         selectors[2] = IMLOProfitShareFacet.cancelMLOProfitSplit.selector;
@@ -542,6 +648,23 @@ contract MLOProfitShareTest is TestBase {
         selectors[7] = IMLOProfitShareFacet.previewMLOProfitRelease.selector;
         selectors[8] = IMLOProfitShareFacet.mloBucketProfitReward.selector;
         selectors[9] = IMLOProfitShareFacet.claimMLOBucketProfitReward.selector;
+        selectors[10] = IMLOProfitShareFacet.setMLOProfitSplitDelay.selector;
+        selectors[11] = IMLOProfitShareFacet.mloProfitSplitDelay.selector;
+    }
+
+    function _governanceSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](11);
+        selectors[0] = DiamondCutFacet.diamondCut.selector;
+        selectors[1] = DiamondCutFacet.freezeFacet.selector;
+        selectors[2] = DiamondCutFacet.isSelectorFrozen.selector;
+        selectors[3] = DiamondCutFacet.scheduleGovernanceOperation.selector;
+        selectors[4] = DiamondCutFacet.cancelGovernanceOperation.selector;
+        selectors[5] = DiamondCutFacet.finalizeGovernanceDelay.selector;
+        selectors[6] = DiamondCutFacet.governanceOperationId.selector;
+        selectors[7] = DiamondCutFacet.governanceOperationReadyAt.selector;
+        selectors[8] = DiamondCutFacet.governanceDelay.selector;
+        selectors[9] = DiamondCutFacet.governanceDelayFinalized.selector;
+        selectors[10] = DiamondCutFacet.setGovernanceDelay.selector;
     }
 
     function _seniorSelectors() internal pure returns (bytes4[] memory selectors) {

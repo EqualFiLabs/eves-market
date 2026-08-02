@@ -5,11 +5,11 @@ import {Errors} from "./Errors.sol";
 
 library LibGovernanceDelay {
     bytes32 internal constant STORAGE_SLOT = keccak256("eve.prediction.governance.delay.storage.v1");
-    uint64 internal constant MINIMUM_DELAY = 7 days;
 
     struct Storage {
         bool finalized;
-        mapping(bytes32 operationId => uint64 readyAt) readyAt;
+        uint64 delay;
+        mapping(bytes32 operationId => uint256 readyAt) readyAt;
     }
 
     function s() internal pure returns (Storage storage state) {
@@ -23,16 +23,16 @@ library LibGovernanceDelay {
         return keccak256(abi.encode(block.chainid, address(this), callData));
     }
 
-    function schedule(bytes32 id) internal returns (uint64 readyAt) {
+    function schedule(bytes32 id) internal returns (uint256 readyAt) {
         Storage storage state = s();
         if (!state.finalized) revert Errors.GovernanceDelayNotFinalized();
-        uint64 existing = state.readyAt[id];
+        uint256 existing = state.readyAt[id];
         if (existing != 0) revert Errors.GovernanceOperationAlreadyScheduled(id, existing);
-        readyAt = uint64(block.timestamp + MINIMUM_DELAY);
+        readyAt = block.timestamp + state.delay;
         state.readyAt[id] = readyAt;
     }
 
-    function cancel(bytes32 id) internal returns (uint64 readyAt) {
+    function cancel(bytes32 id) internal returns (uint256 readyAt) {
         Storage storage state = s();
         readyAt = state.readyAt[id];
         if (readyAt == 0) revert Errors.GovernanceOperationNotScheduled(id);
@@ -41,7 +41,7 @@ library LibGovernanceDelay {
 
     function consume(bytes32 id) internal {
         Storage storage state = s();
-        uint64 readyAt = state.readyAt[id];
+        uint256 readyAt = state.readyAt[id];
         if (readyAt == 0) revert Errors.GovernanceOperationNotScheduled(id);
         if (block.timestamp < readyAt) revert Errors.GovernanceOperationTimelocked(id, readyAt);
         delete state.readyAt[id];

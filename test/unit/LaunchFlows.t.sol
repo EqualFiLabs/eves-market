@@ -38,7 +38,7 @@ import {
     SettlementFeeFixture,
     StateProbeFacet
 } from "../helpers/DiamondFixtures.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 
 contract LaunchMarketFlowsTest is SettlementFeeFixture {
@@ -195,7 +195,7 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
         uint8 tickPresetId = 4;
         uint72 askTick = uint72(uint256(TWO_USDC) / 20);
         uint72 bidTick = uint72(uint256(ONE_POINT_EIGHT_USDC) / 20);
-        MockUSDC baseToken = new MockUSDC();
+        MockUSDG baseToken = new MockUSDG();
         baseToken.mint(maker, 1_000e6);
         baseToken.mint(taker, 1_000e6);
 
@@ -251,7 +251,7 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
     }
 
     function _executeSpotAskBuy(SpotLaunchCase memory spot) internal {
-        MockUSDC baseToken = MockUSDC(spot.baseToken);
+        MockUSDG baseToken = MockUSDG(spot.baseToken);
         uint256 takerQuoteBeforeBuy = collateralToken.balanceOf(taker);
         uint256 takerBaseBeforeBuy = baseToken.balanceOf(taker);
         (uint32 askGeneration, bytes32 askCommitment) =
@@ -289,7 +289,7 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
     }
 
     function _executeSpotBidSell(SpotLaunchCase memory spot) internal {
-        MockUSDC baseToken = MockUSDC(spot.baseToken);
+        MockUSDG baseToken = MockUSDG(spot.baseToken);
         uint256 takerQuoteBeforeSell = collateralToken.balanceOf(taker);
         uint256 takerBaseBeforeSell = baseToken.balanceOf(taker);
         (uint32 bidGeneration, bytes32 bidCommitment) =

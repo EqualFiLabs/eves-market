@@ -28,7 +28,7 @@ import {CurveCLOBTypes} from "../../src/types/CurveCLOBTypes.sol";
 import {DelayedOrderTypes} from "../../src/types/DelayedOrderTypes.sol";
 import {ITestStateFacet, TestBase} from "../helpers/TestBase.sol";
 import {MockConditionalTokens} from "../helpers/MockConditionalTokens.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 
 interface IDelayedOrderInvariantFacet {
     function submitDelayedOrder(DelayedOrderTypes.SubmitDelayedOrderParams calldata params)
@@ -286,7 +286,7 @@ contract DelayedOrderInvariantHandler is TestBase {
         treasury_ = treasury;
     }
 
-    function usdcToken() external view returns (MockUSDC token) {
+    function usdcToken() external view returns (MockUSDG token) {
         token = usdc;
     }
 
@@ -563,7 +563,7 @@ contract DelayedOrderInvariantsTest is StdInvariant, Test {
 
     // Feature: live-delayed-taker-order, Property 33: global token conservation across lifecycles.
     function invariant_GlobalTokenConservationAcrossLifecycles() public view {
-        MockUSDC usdc = handler.usdcToken();
+        MockUSDG usdc = handler.usdcToken();
         MockConditionalTokens ctf = handler.ctfToken();
         uint256 usdcTotal = usdc.balanceOf(handler.diamondAddress()) + usdc.balanceOf(address(ctf))
             + usdc.balanceOf(handler.creatorAddress()) + usdc.balanceOf(handler.treasuryAddress());

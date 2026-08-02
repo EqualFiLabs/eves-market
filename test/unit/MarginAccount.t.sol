@@ -27,7 +27,7 @@ import {Errors} from "../../src/libraries/Errors.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {MarginTypes} from "../../src/types/MarginTypes.sol";
 import {MarkOracleTypes} from "../../src/types/MarkOracleTypes.sol";
-import {MockUSDC} from "../helpers/MockUSDC.sol";
+import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {TestBase} from "../helpers/TestBase.sol";
 import {
     IMarginTestFacet as IMarginAccountFacet,
@@ -40,7 +40,7 @@ contract MarginAccountTest is TestBase {
     bytes32 internal constant SPOT_SALT = keccak256("margin-spot-book");
 
     MockCollateral internal collateral;
-    MockUSDC internal spotToken;
+    MockUSDG internal spotToken;
     address internal riskManager;
 
     function setUp() public override {
@@ -48,7 +48,7 @@ contract MarginAccountTest is TestBase {
 
         riskManager = makeAddr("riskManager");
         collateral = new MockCollateral();
-        spotToken = new MockUSDC();
+        spotToken = new MockUSDG();
         spotToken.mint(maker, 1_000_000e6);
         spotToken.mint(taker, 1_000_000e6);
 
