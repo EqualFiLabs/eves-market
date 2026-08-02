@@ -6,7 +6,6 @@ import {LibDiamond} from "../libraries/LibDiamond.sol";
 import {LibCollateralProfile} from "../libraries/LibCollateralProfile.sol";
 import {LibDelayedOrderConfigAdmin} from "../libraries/LibDelayedOrderConfigAdmin.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
-import {LibFeeConfigAdmin} from "../libraries/LibFeeConfigAdmin.sol";
 import {LibMarketConfigAdmin} from "../libraries/LibMarketConfigAdmin.sol";
 import {LibResolverJuryConfigAdmin} from "../libraries/LibResolverJuryConfigAdmin.sol";
 import {Errors} from "../libraries/Errors.sol";
@@ -16,34 +15,7 @@ import {OwnershipConfigTypes} from "../types/OwnershipConfigTypes.sol";
 
 contract OwnershipFacet {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event OrderbookFeeSplitSet(
-        uint16 makerFeeBps,
-        uint16 creatorFeeBps,
-        uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
-    );
-    event OrderbookEntryFeeBpsSet(uint16 previousEntryFeeBps, uint16 newEntryFeeBps);
-    event SpotFeeSplitSet(
-        uint16 makerFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps, uint16 resolverFeeBps, uint16 evRiskFeeBps
-    );
-    event SpotTradeFeeBpsSet(uint16 previousTradeFeeBps, uint16 newTradeFeeBps);
-    event ComboFeeSplitSet(
-        uint16 makerFeeBps,
-        uint16 creatorFeeBps,
-        uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
-    );
-    event ComboTradeFeeBpsSet(uint16 previousTradeFeeBps, uint16 newTradeFeeBps);
-    event ParimutuelFeeSplitSet(
-        uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps, uint16 resolverFeeBps, uint16 evRiskFeeBps
-    );
-    event EvRiskStakingRewardsSet(
-        address indexed previousEvRiskStakingRewards, address indexed newEvRiskStakingRewards
-    );
+    event StaticsDollarRailSet(address indexed core, uint256 indexed profileId, address indexed usdcToken);
     event ParimutuelConfigSet(address indexed shareToken, uint16 entryFeeBps, uint128 minEntry);
     event ResolutionBondConfigSet(
         address indexed previousBondToken,
@@ -135,25 +107,6 @@ contract OwnershipFacet {
         uint8 previousMode = uint8(state.config.resolutionMode);
         state.config.resolutionMode = mode;
         emit Events.ResolutionModeSet(previousMode, newMode);
-    }
-
-    function setOrderbookEntryFeeBps(uint16 newEntryFeeBps) external {
-        LibDiamond.enforceIsContractOwner();
-        uint16 previousEntryFeeBps =
-            LibFeeConfigAdmin.setOrderbookEntryFeeBps(LibEveMarket.store().config, newEntryFeeBps);
-        emit OrderbookEntryFeeBpsSet(previousEntryFeeBps, newEntryFeeBps);
-    }
-
-    function setSpotTradeFeeBps(uint16 newTradeFeeBps) external {
-        LibDiamond.enforceIsContractOwner();
-        uint16 previousTradeFeeBps = LibFeeConfigAdmin.setSpotTradeFeeBps(LibEveMarket.store().config, newTradeFeeBps);
-        emit SpotTradeFeeBpsSet(previousTradeFeeBps, newTradeFeeBps);
-    }
-
-    function setComboTradeFeeBps(uint16 newTradeFeeBps) external {
-        LibDiamond.enforceIsContractOwner();
-        uint16 previousTradeFeeBps = LibFeeConfigAdmin.setComboTradeFeeBps(LibEveMarket.store().config, newTradeFeeBps);
-        emit ComboTradeFeeBpsSet(previousTradeFeeBps, newTradeFeeBps);
     }
 
     function setResolutionBondConfig(address bondToken, uint128 l1Amount, uint128 l2Amount) external {
@@ -366,83 +319,10 @@ contract OwnershipFacet {
         emit EveTreasurySet(previousEveTreasury, eveTreasury);
     }
 
-    function setEvRiskStakingRewards(address evRiskStakingRewards) external {
+    function setStaticsDollarRail(address core, uint256 profileId, address usdcToken) external {
         LibDiamond.enforceIsContractOwner();
-        address previousEvRiskStakingRewards =
-            LibMarketConfigAdmin.setEvRiskStakingRewards(LibEveMarket.store().config, evRiskStakingRewards);
-        emit EvRiskStakingRewardsSet(previousEvRiskStakingRewards, evRiskStakingRewards);
-    }
-
-    function setOrderbookFeeSplit(
-        uint16 makerFeeBps,
-        uint16 creatorFeeBps,
-        uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
-    ) external {
-        LibDiamond.enforceIsContractOwner();
-        LibFeeConfigAdmin.setOrderbookFeeSplit(
-            LibEveMarket.store().config,
-            makerFeeBps,
-            creatorFeeBps,
-            protocolFeeBps,
-            vaultFeeBps,
-            resolverFeeBps,
-            evRiskFeeBps
-        );
-        emit OrderbookFeeSplitSet(
-            makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps
-        );
-    }
-
-    function setSpotFeeSplit(
-        uint16 makerFeeBps,
-        uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
-    ) external {
-        LibDiamond.enforceIsContractOwner();
-        LibFeeConfigAdmin.setSpotFeeSplit(
-            LibEveMarket.store().config, makerFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps
-        );
-        emit SpotFeeSplitSet(makerFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
-    }
-
-    function setComboFeeSplit(
-        uint16 makerFeeBps,
-        uint16 creatorFeeBps,
-        uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
-    ) external {
-        LibDiamond.enforceIsContractOwner();
-        LibFeeConfigAdmin.setComboFeeSplit(
-            LibEveMarket.store().config,
-            makerFeeBps,
-            creatorFeeBps,
-            protocolFeeBps,
-            vaultFeeBps,
-            resolverFeeBps,
-            evRiskFeeBps
-        );
-        emit ComboFeeSplitSet(makerFeeBps, creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
-    }
-
-    function setParimutuelFeeSplit(
-        uint16 creatorFeeBps,
-        uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
-    ) external {
-        LibDiamond.enforceIsContractOwner();
-        LibFeeConfigAdmin.setParimutuelFeeSplit(
-            LibEveMarket.store().config, creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps
-        );
-        emit ParimutuelFeeSplitSet(creatorFeeBps, protocolFeeBps, vaultFeeBps, resolverFeeBps, evRiskFeeBps);
+        LibMarketConfigAdmin.setStaticsDollarRail(LibEveMarket.store().config, core, profileId, usdcToken);
+        emit StaticsDollarRailSet(core, profileId, usdcToken);
     }
 
     function setParimutuelConfig(address shareToken, uint16 entryFeeBps, uint128 minEntry) external {

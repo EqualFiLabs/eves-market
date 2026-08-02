@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
@@ -39,7 +40,7 @@ contract CTFIntegrationTest is SettlementFeeFixture {
 
     function test_EndToEndLifecycleReportsPayoutsAndRedeemsWinningShares() public {
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         (bytes32 marketId, ExpectedMarketData memory expected, uint64 expiryTime) =
             _createTradingMarket("ctf-e2e", "integration", 7 days);
@@ -66,7 +67,7 @@ contract CTFIntegrationTest is SettlementFeeFixture {
 
     function test_CrossMarketIsolationKeepsConditionIdsAndPositionsDistinct() public {
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         (bytes32 marketIdA, ExpectedMarketData memory expectedA, uint64 expiryTimeA) =
             _createTradingMarket("isolation-a", "integration", 7 days);
@@ -96,7 +97,7 @@ contract CTFIntegrationTest is SettlementFeeFixture {
 
     function test_DirectRedemptionDoesNotBurnDiamondEscrowedCurveInventory() public {
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         (bytes32 marketId, ExpectedMarketData memory expected, uint64 expiryTime) =
             _createTradingMarket("ctf-direct-escrow-safe", "integration", 7 days);

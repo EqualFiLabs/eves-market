@@ -16,7 +16,7 @@ import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 import {LibResolverJury} from "../libraries/LibResolverJury.sol";
 import {LibResolverRewards} from "../libraries/LibResolverRewards.sol";
 
-contract ResolverRegistryFacet is IResolverRegistryFacet {
+contract ResolverRegistryFacet {
     using SafeERC20 for IERC20;
 
     uint256 internal constant EPOCH_BLOCKHASH_LOOKUP_WINDOW = 256;
@@ -27,7 +27,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         LibReentrancy.exit();
     }
 
-    function mintIdentity() external override nonReentrant returns (uint256 identityId) {
+    function mintIdentity() external nonReentrant returns (uint256 identityId) {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         address identityContract = jury.eveIdentity;
         if (identityContract == address(0)) {
@@ -43,7 +43,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         jury.resolverRep[identityId].activationTimestamp = uint64(block.timestamp);
     }
 
-    function setCreatorRole(bool enabled) external override {
+    function setCreatorRole(bool enabled) external {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         IEveIdentity identityToken = IEveIdentity(_requireEveIdentity(jury));
         uint256 identityId = identityToken.identityOf(msg.sender);
@@ -54,7 +54,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         _setIdentityRoleFlags(jury, identityToken, identityId, enabled, identityToken.hasResolverRole(identityId));
     }
 
-    function setResolverRole(bool enabled) external override {
+    function setResolverRole(bool enabled) external {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         IEveIdentity identityToken = IEveIdentity(_requireEveIdentity(jury));
         uint256 identityId = identityToken.identityOf(msg.sender);
@@ -84,7 +84,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         identityToken.setRoles(identityId, creatorRole, resolverRole);
     }
 
-    function depositResolverStake(uint256 amount) external override nonReentrant {
+    function depositResolverStake(uint256 amount) external nonReentrant {
         if (amount == 0 || amount > type(uint128).max) {
             revert Errors.InvalidAmount(amount);
         }
@@ -123,7 +123,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         emit Events.ResolverStakeDeposited(identityId, msg.sender, uint128(amount), record.resolverStake);
     }
 
-    function openResolverEpochRotation() external override returns (uint64 epochId) {
+    function openResolverEpochRotation() external returns (uint64 epochId) {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
         epochId = jury.currentResolverEpoch + 1;
@@ -154,7 +154,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         );
     }
 
-    function optIntoResolverEpoch(bytes32 randomnessCommitment) external override returns (uint64 epochId) {
+    function optIntoResolverEpoch(bytes32 randomnessCommitment) external returns (uint64 epochId) {
         if (randomnessCommitment == bytes32(0)) {
             revert Errors.InvalidConfigValue("randomnessCommitment");
         }
@@ -184,7 +184,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         emit Events.ResolverEpochCandidateOptedIn(epochId, identityId);
     }
 
-    function commitResolverEpochRandomness(uint64 epochId, bytes32 randomnessCommitment) external override {
+    function commitResolverEpochRandomness(uint64 epochId, bytes32 randomnessCommitment) external {
         if (randomnessCommitment == bytes32(0)) {
             revert Errors.InvalidConfigValue("randomnessCommitment");
         }
@@ -207,7 +207,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         randomness.hasCommitted = true;
     }
 
-    function closeResolverEpochRandomnessCommit(uint64 epochId) external override {
+    function closeResolverEpochRandomnessCommit(uint64 epochId) external {
         LibResolverJury.ResolverEpoch storage epoch = LibResolverJury.store().resolverEpochs[epochId];
         if (epoch.rotationOpenedAt == 0 || block.timestamp <= epoch.commitDeadline) {
             revert Errors.ResolverEpochNotReady(epochId);
@@ -219,10 +219,10 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
         epoch.randomnessReferenceBlock = uint64(block.number + 1);
         epoch.revealDeadline = uint64(block.timestamp + config.epochRandomnessRevealDuration);
-        epoch.selectionDeadline = uint64(uint256(epoch.revealDeadline) + config.epochSelectionDuration);
+        epoch.selectionDeadline = 0;
     }
 
-    function revealResolverEpochRandomness(uint64 epochId, bytes32 value, bytes32 salt) external override {
+    function revealResolverEpochRandomness(uint64 epochId, bytes32 value, bytes32 salt) external {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         IEveIdentity identityToken = IEveIdentity(_requireEveIdentity(jury));
         uint256 identityId = LibResolverJury.requireIdentityId(address(identityToken), msg.sender);
@@ -254,7 +254,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         emit Events.ResolverEpochRandomnessRevealed(epochId, identityId);
     }
 
-    function finalizeResolverEpochSeed(uint64 epochId) external override returns (bytes32 seed) {
+    function finalizeResolverEpochSeed(uint64 epochId) external returns (bytes32 seed) {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
@@ -265,21 +265,24 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
             revert Errors.ResolverEpochNotReady(epochId);
         }
 
-        if (epoch.seedReferenceBlock == 0) {
-            epoch.seedReferenceBlock = uint64(block.number + 1);
-            emit Events.ResolverEpochSeedReferenceBlockSet(epochId, epoch.seedReferenceBlock);
+        if (
+            epoch.seedReferenceBlock == 0
+                || block.number > uint256(epoch.seedReferenceBlock) + EPOCH_BLOCKHASH_LOOKUP_WINDOW
+        ) {
+            _scheduleResolverEpochSeedReferenceBlock(epoch, epochId);
             return bytes32(0);
         }
         if (block.number <= epoch.seedReferenceBlock) {
-            revert Errors.ResolverEpochNotReady(epochId);
-        }
-        if (block.number > uint256(epoch.seedReferenceBlock) + EPOCH_BLOCKHASH_LOOKUP_WINDOW) {
             revert Errors.ResolverEpochNotReady(epochId);
         }
 
         _slashMissedEpochRandomnessDuties(jury, epoch, epochId, config);
 
         bytes32 referenceHash = blockhash(epoch.seedReferenceBlock);
+        if (referenceHash == bytes32(0)) {
+            _scheduleResolverEpochSeedReferenceBlock(epoch, epochId);
+            return bytes32(0);
+        }
         seed = keccak256(
             abi.encode(
                 epoch.randomnessAccumulator,
@@ -292,15 +295,19 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         );
         epoch.seed = seed;
         epoch.seedFinalized = true;
+        epoch.selectionDeadline = uint64(block.timestamp + config.epochSelectionDuration);
 
         emit Events.ResolverEpochSeedFinalized(epochId, seed, epoch.validRevealCount);
     }
 
-    function submitResolverEpochCandidateScore(uint64 epochId, uint256 identityId)
-        external
-        override
-        returns (uint256 score)
+    function _scheduleResolverEpochSeedReferenceBlock(LibResolverJury.ResolverEpoch storage epoch, uint64 epochId)
+        internal
     {
+        epoch.seedReferenceBlock = uint64(block.number + 1);
+        emit Events.ResolverEpochSeedReferenceBlockSet(epochId, epoch.seedReferenceBlock);
+    }
+
+    function submitResolverEpochCandidateScore(uint64 epochId, uint256 identityId) external returns (uint256 score) {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
         LibEveMarket.ResolverJuryConfig storage config = LibEveMarket.store().config.resolverJuryConfig;
@@ -329,7 +336,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         emit Events.ResolverEpochCandidateScoreSubmitted(epochId, identityId, score);
     }
 
-    function finalizeResolverEpochSelection(uint64 epochId) external override {
+    function finalizeResolverEpochSelection(uint64 epochId) external {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[epochId];
         if (!epoch.seedFinalized || block.timestamp <= epoch.selectionDeadline) {
@@ -359,7 +366,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         }
     }
 
-    function activateFinalizedResolverEpoch(uint64 epochId) external override {
+    function activateFinalizedResolverEpoch(uint64 epochId) external {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         if (epochId != jury.currentResolverEpoch + 1) {
             revert Errors.ResolverEpochNotReady(epochId);
@@ -374,29 +381,6 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
             revert Errors.ResolverEpochNotReady(epochId);
         }
         _activateResolverEpoch(jury, epoch, epochId);
-    }
-
-    function finalizeResolverTradingRewards(uint64 epochId, address token)
-        external
-        override
-        nonReentrant
-        returns (uint128 amount)
-    {
-        amount = LibResolverRewards.finalizeTradingRewards(epochId, token);
-    }
-
-    function claimResolverRewards(address token) external override nonReentrant returns (uint128 amount) {
-        if (token == address(0)) {
-            revert Errors.ZeroAddress();
-        }
-
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        uint256 identityId = LibResolverJury.requireIdentityId(_requireEveIdentity(jury), msg.sender);
-        (,, amount) = LibResolverRewards.claimable(identityId, token);
-        LibResolverRewards.recordClaim(identityId, token, amount);
-        IERC20(token).safeTransfer(msg.sender, amount);
-
-        emit Events.ResolverRewardsClaimed(identityId, msg.sender, token, amount);
     }
 
     function _requireResolverCandidate(
@@ -414,7 +398,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         }
     }
 
-    function requestResolverExit() external override {
+    function requestResolverExit() external {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         IEveIdentity identityToken = IEveIdentity(_requireEveIdentity(jury));
         uint256 identityId = LibResolverJury.requireIdentityId(address(identityToken), msg.sender);
@@ -439,7 +423,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         emit Events.ResolverExitRequested(identityId, record.exitTimestamp);
     }
 
-    function withdrawResolverStake() external override nonReentrant {
+    function withdrawResolverStake() external nonReentrant {
         LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
         IEveIdentity identityToken = IEveIdentity(_requireEveIdentity(jury));
         uint256 identityId = LibResolverJury.requireIdentityId(address(identityToken), msg.sender);
@@ -477,223 +461,6 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
         IERC20(eveToken).safeTransfer(msg.sender, stake);
 
         emit Events.ResolverStakeWithdrawn(identityId, msg.sender, stake);
-    }
-
-    function eveIdentity() external view override returns (address) {
-        return LibResolverJury.store().eveIdentity;
-    }
-
-    function resolverDashboard(address owner)
-        external
-        view
-        override
-        returns (
-            IResolverRegistryFacet.ResolverIdentityView memory identity,
-            IResolverRegistryFacet.ResolverJuryConfigView memory config,
-            IResolverRegistryFacet.ResolverEpochPoolView memory epochPool
-        )
-    {
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        uint256 identityId;
-        if (jury.eveIdentity != address(0)) {
-            identityId = IEveIdentity(jury.eveIdentity).identityOf(owner);
-        }
-
-        identity = _resolverIdentityView(jury, state, identityId);
-        config = _resolverJuryConfigView(jury.eveIdentity, state.config.resolverJuryConfig);
-        epochPool = _resolverEpochPoolView(jury, state);
-    }
-
-    function resolverIdentity(uint256 identityId)
-        external
-        view
-        override
-        returns (IResolverRegistryFacet.ResolverIdentityView memory view_)
-    {
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        view_ = _resolverIdentityView(jury, LibEveMarket.store(), identityId);
-    }
-
-    function resolverIdentityByOwner(address owner)
-        external
-        view
-        override
-        returns (IResolverRegistryFacet.ResolverIdentityView memory view_)
-    {
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        uint256 identityId;
-        if (jury.eveIdentity != address(0)) {
-            identityId = IEveIdentity(jury.eveIdentity).identityOf(owner);
-        }
-
-        view_ = _resolverIdentityView(jury, LibEveMarket.store(), identityId);
-    }
-
-    function resolverJuryConfig()
-        external
-        view
-        override
-        returns (IResolverRegistryFacet.ResolverJuryConfigView memory view_)
-    {
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        view_ = _resolverJuryConfigView(jury.eveIdentity, LibEveMarket.store().config.resolverJuryConfig);
-    }
-
-    function identityByOwner(address owner) external view override returns (uint256 identityId) {
-        address identityContract = LibResolverJury.store().eveIdentity;
-        if (identityContract == address(0)) {
-            return 0;
-        }
-
-        return IEveIdentity(identityContract).identityOf(owner);
-    }
-
-    function isEligibleResolver(uint256 identityId, bytes32 disputeId) external view override returns (bool) {
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        return _isEligibleResolver(jury, LibEveMarket.store(), identityId, disputeId);
-    }
-
-    function hasConflict(uint256 identityId, bytes32 marketId) external view override returns (bool) {
-        return _hasConflict(LibResolverJury.store(), LibEveMarket.store(), identityId, marketId);
-    }
-
-    function resolverLifecycleState(uint256 identityId) external view override returns (uint8) {
-        LibResolverJury.ResolverIdentityRecord storage record = LibResolverJury.store().identities[identityId];
-        return uint8(_effectiveLifecycle(record, LibEveMarket.store().config.resolverJuryConfig));
-    }
-
-    function creatorReputation(uint256 identityId) external view override returns (CreatorReputationView memory view_) {
-        LibResolverJury.CreatorReputation storage rep = LibResolverJury.store().creatorRep[identityId];
-        view_ = CreatorReputationView({
-            marketsCreated: rep.marketsCreated,
-            marketsResolved: rep.marketsResolved,
-            disputesRaised: rep.disputesRaised,
-            outcomesUpheld: rep.outcomesUpheld,
-            outcomesOverturned: rep.outcomesOverturned,
-            totalVolume: rep.totalVolume,
-            cumulativeSettleDelay: rep.cumulativeSettleDelay
-        });
-    }
-
-    function resolverReputation(uint256 identityId)
-        external
-        view
-        override
-        returns (ResolverReputationView memory view_)
-    {
-        LibResolverJury.ResolverReputation storage rep = LibResolverJury.store().resolverRep[identityId];
-        view_ = ResolverReputationView({
-            activationTimestamp: rep.activationTimestamp,
-            totalSelections: rep.totalSelections,
-            commitCount: rep.commitCount,
-            revealCount: rep.revealCount,
-            missedCommitCount: rep.missedCommitCount,
-            missedRevealCount: rep.missedRevealCount,
-            invalidRevealCount: rep.invalidRevealCount,
-            finalAgreementCount: rep.finalAgreementCount,
-            slashCount: rep.slashCount,
-            minorityUpheldCount: rep.minorityUpheldCount
-        });
-    }
-
-    function eligibleResolverCount() external view override returns (uint256 count) {
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        return _eligibleResolverCount(jury, state);
-    }
-
-    function activeResolverCount() external view override returns (uint256) {
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        return jury.resolverEpochs[jury.currentResolverEpoch].activeSet.length;
-    }
-
-    function activeResolverEpochSize() external view override returns (uint16) {
-        return LibEveMarket.store().config.resolverJuryConfig.activeEpochSize;
-    }
-
-    function activeResolverAt(uint256 index) external view override returns (uint256 identityId) {
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        return jury.resolverEpochs[jury.currentResolverEpoch].activeSet[index];
-    }
-
-    function currentResolverEpoch() external view override returns (uint64) {
-        return LibResolverJury.store().currentResolverEpoch;
-    }
-
-    function resolverEpoch(uint64 epochId)
-        external
-        view
-        override
-        returns (IResolverRegistryFacet.ResolverEpochView memory view_)
-    {
-        LibResolverJury.ResolverEpoch storage epoch = LibResolverJury.store().resolverEpochs[epochId];
-        view_ = IResolverRegistryFacet.ResolverEpochView({
-            epochId: epoch.epochId,
-            startTime: epoch.startTime,
-            endTime: epoch.endTime,
-            rotationOpenedAt: epoch.rotationOpenedAt,
-            commitDeadline: epoch.commitDeadline,
-            revealDeadline: epoch.revealDeadline,
-            selectionDeadline: epoch.selectionDeadline,
-            seedReferenceBlock: epoch.seedReferenceBlock,
-            validRevealCount: epoch.validRevealCount,
-            seed: epoch.seed,
-            seedFinalized: epoch.seedFinalized,
-            selectionFinalized: epoch.selectionFinalized,
-            candidateCount: epoch.candidates.length,
-            scoreSubmittedCount: epoch.scoreSubmittedCount,
-            selectedCount: epoch.selected.length,
-            activeCount: epoch.activeSet.length
-        });
-    }
-
-    function resolverEpochCandidate(uint64 epochId, uint256 identityId)
-        external
-        view
-        override
-        returns (IResolverRegistryFacet.ResolverEpochCandidateView memory view_)
-    {
-        LibResolverJury.ResolverEpochCandidate storage candidate =
-            LibResolverJury.store().resolverEpochs[epochId].candidateByIdentity[identityId];
-        view_ = IResolverRegistryFacet.ResolverEpochCandidateView({
-            optedIn: candidate.optedIn,
-            selected: candidate.selected,
-            scoreSubmitted: candidate.scoreSubmitted,
-            score: candidate.score,
-            hasCommitted: candidate.randomness.hasCommitted,
-            hasRevealed: candidate.randomness.hasRevealed
-        });
-    }
-
-    function previewResolverRewards(uint256 identityId, address token)
-        external
-        view
-        override
-        returns (uint128 accrued, uint128 claimed, uint128 claimable)
-    {
-        return LibResolverRewards.claimable(identityId, token);
-    }
-
-    function applyFinalityReputation(bytes32 disputeId, uint8 finalResult) external override {
-        if (msg.sender != address(this)) {
-            revert Errors.InternalCallOnly(msg.sender);
-        }
-
-        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
-        LibResolverJury.Dispute storage dispute = jury.disputes[disputeId];
-        if (dispute.reputationApplied) {
-            return;
-        }
-        if (dispute.marketId == bytes32(0)) {
-            revert Errors.MarketNotFound(dispute.marketId);
-        }
-
-        dispute.reputationApplied = true;
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-
-        _applyCreatorFinalityReputation(jury, state, dispute.marketId, finalResult);
-        _applyResolverFinalityReputation(jury, dispute, finalResult);
     }
 
     function _collectMintFee(address mintFeeToken, address treasury, uint128 mintFee) internal {
@@ -1067,23 +834,7 @@ contract ResolverRegistryFacet is IResolverRegistryFacet {
             return false;
         }
 
-        uint256 escrowed;
-        uint256[] storage curveIds = state.bookCurveIds[bookId];
-        uint256 length = curveIds.length;
-        for (uint256 index; index < length; ++index) {
-            LibEveMarket.StoredCurve storage curve = state.curves[curveIds[index]];
-            if (
-                curve.active && curve.bookId == bookId && curve.maker == owner
-                    && curve.curveSide == LibEveMarket.CurveSide.ASK
-            ) {
-                escrowed += curve.remainingVolume;
-                if (escrowed > threshold) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        return state.bookMakerAskExposure[bookId][owner] > threshold;
     }
 
     function _marketBookId(LibEveMarket.Market storage market, bytes32 marketId, bool isYesSide)

@@ -21,6 +21,7 @@ import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibReentrancy} from "../../src/libraries/LibReentrancy.sol";
 import {MarketFactoryFacet} from "../../src/facets/MarketFactoryFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 
 import {CurveTradingFixture, ResolutionHarnessFacet, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 import {MockConditionalTokens} from "../helpers/MockConditionalTokens.sol";
@@ -246,8 +247,10 @@ contract CurveCLOBTest is CurveTradingFixture {
         MarketFactoryFacet(address(diamond)).syncMarketState(marketId);
 
         bytes32 yesBookId = IBookAdminFacet(address(diamond)).getMarketSideBook(marketId, true);
-        (uint128 bestAskPrice,,,) = IBookViewFacet(address(diamond)).getBookTopOfBook(yesBookId);
+        (uint128 bestAskPrice, bool hasAsk,,,,,) =
+            IBookViewFacet(address(diamond)).getBookTopOfBookPage(yesBookId, 0, 128);
         assertEq(bestAskPrice, 0);
+        assertFalse(hasAsk);
 
         vm.startPrank(taker);
         collateralToken.approve(address(diamond), 50);
@@ -316,7 +319,7 @@ contract CurveCLOBTest is CurveTradingFixture {
         _postCurveFromMaker(marketId, false, 150, 12, 12, 120, 0);
 
         (uint128 bestYesPrice, uint128 bestNoPrice, uint128 midpointPrice,, uint128 displayPrice) =
-            ICurveViewFacet(address(diamond)).getMarketTopOfBook(marketId);
+            _marketTopOfBook(marketId);
 
         assertEq(bestYesPrice, 100);
         assertEq(bestNoPrice, 60);
@@ -358,7 +361,7 @@ contract CurveCLOBTest is CurveTradingFixture {
         _approvePositions(maker);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         uint256 curveId = _postCurveFromMaker(marketId, true, 5_000, 400_000_000, 400_000_000, 120, 0);
         (uint32 generation,) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
@@ -976,7 +979,7 @@ contract CurveCLOBTest is CurveTradingFixture {
 
     function test_FillCurveTransfersInventoryAndAccruesFees() public {
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(500);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(500);
 
         (bytes32 marketId,,) = _createTradingMarket("Fill curve", "curve", 7 days);
         _splitFrom(maker, marketId, 10_000);
@@ -1082,7 +1085,7 @@ contract CurveCLOBTest is CurveTradingFixture {
         _approvePositions(trader);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         uint256 firstCurveId = _postCurveFromMaker(marketId, true, 3_000, 400_000_000, 400_000_000, 120, 0);
 
@@ -1174,7 +1177,7 @@ contract CurveCLOBTest is CurveTradingFixture {
         _approvePositions(maker);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         uint256 curveId = _postCurveFromMaker(marketId, true, 1_000, 500_000_000, 500_000_000, 120, 0);
         (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
@@ -1253,7 +1256,7 @@ contract CurveCLOBTest is CurveTradingFixture {
         _approvePositions(trader);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         uint256 yesCurveId = _postCurveFromMaker(marketId, true, 2_000, 400_000_000, 400_000_000, 180, 0);
 
@@ -1272,7 +1275,7 @@ contract CurveCLOBTest is CurveTradingFixture {
             uint128 midpointPrice,
             uint128 lastTradePrice,
             uint128 displayPrice
-        ) = ICurveViewFacet(address(diamond)).getMarketTopOfBook(marketId);
+        ) = _marketTopOfBook(marketId);
 
         assertEq(sharesOut, 2_000);
         assertEq(fee, 0);
@@ -1523,6 +1526,37 @@ contract CurveCLOBTest is CurveTradingFixture {
 
     function _captureCurveCommitment(uint256 curveId) internal view returns (CommitmentSnapshot memory snapshot) {
         (snapshot.generation, snapshot.commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
+    }
+
+    function _marketTopOfBook(bytes32 marketId)
+        internal
+        view
+        returns (
+            uint128 bestYesPrice,
+            uint128 bestNoPrice,
+            uint128 midpointPrice,
+            uint128 lastTradePrice,
+            uint128 displayPrice
+        )
+    {
+        bytes32 yesBookId = IBookAdminFacet(address(diamond)).getMarketSideBook(marketId, true);
+        bytes32 noBookId = IBookAdminFacet(address(diamond)).getMarketSideBook(marketId, false);
+        bool hasYes;
+        bool hasNo;
+        (bestYesPrice, hasYes,,, lastTradePrice,,) =
+            IBookViewFacet(address(diamond)).getBookTopOfBookPage(yesBookId, 0, 128);
+        (bestNoPrice, hasNo,,,,,) = IBookViewFacet(address(diamond)).getBookTopOfBookPage(noBookId, 0, 128);
+        uint128 denominator = IBookAdminFacet(address(diamond)).getBookInfo(noBookId).priceDenominator;
+        if (hasYes && hasNo) {
+            midpointPrice = uint128((uint256(bestYesPrice) + uint256(denominator - bestNoPrice)) / 2);
+            displayPrice = midpointPrice;
+        } else if (hasYes) {
+            displayPrice = bestYesPrice;
+        } else if (hasNo) {
+            displayPrice = denominator - bestNoPrice;
+        } else {
+            displayPrice = lastTradePrice;
+        }
     }
 
     function _captureBalanceSnapshot(bytes32 marketId) internal view returns (BalanceSnapshot memory snapshot) {

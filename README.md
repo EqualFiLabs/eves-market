@@ -1,8 +1,8 @@
 # Eves Market
 
-On-chain prediction market protocol built on Base, implemented as an EIP-2535 Diamond with modular facets and a shared storage layout. It supports binary CLOB markets, parimutuel pools, N-way multi-outcome orderbook markets, native combinatorial (parlay-style) positions, peer-to-peer parlays, standalone spot books, and MEV-resistant delayed taker orders. Disputes settle through an Optimistic Bond-based Resolution (OBR) system backed by a staked commit-reveal Resolver Jury.
+Onchain prediction market protocol targeting Robinhood Chain, implemented as an EIP-2535 Diamond with modular facets and a shared storage layout. It supports binary CLOB markets, parimutuel pools, N-way multi-outcome orderbook markets, native combinatorial (parlay-style) positions, peer-to-peer parlays, standalone spot books, and MEV-resistant delayed taker orders. Disputes settle through an Optimistic Bond-based Resolution (OBR) system backed by a staked commit-reveal Resolver Jury.
 
-For the full protocol design — data models, math, fee splits, resolution flow, and correctness properties — see [`EvePredict-Design.md`](./EvePredict-Design.md).
+For market data models, math, and resolution flows, see [`EvePredict-Design.md`](./EvePredict-Design.md). Its historical collateral chapters are superseded by the current [launch collateral direction](./docs/launch-collateral-direction-change.md).
 
 ---
 
@@ -30,13 +30,13 @@ For the full protocol design — data models, math, fee splits, resolution flow,
 |---|---|
 | **Diamond architecture** | EIP-2535 proxy; facets share `LibEveMarket.EveMarketStorage`. Parimutuel, parlay, and resolver-jury state use isolated storage slots. |
 | **Market types** | `CLOB` (binary curve order book), `PARIMUTUEL` (pooled entry), `MULTI_OUTCOME_ORDERBOOK` (N-way). |
-| **Position tokens** | Gnosis CTF (binary), `ParimutuelShareToken`, and native `EvesPositionManager` (multi-outcome + combinatorial). |
+| **Position tokens** | Gnosis CTF (binary + NegRisk multi-outcome), `ParimutuelShareToken`, and native `EvesPositionManager` (binary + combinatorial). |
 | **Combinatorial markets** | Native AND-of-legs combo conditions with split / merge / branch / compress / redeem. |
 | **Parlays** | Peer-to-peer underwritten multi-leg tiered-payout bets with shared budgets and tradable tickets. |
 | **Delayed orders** | Block-delayed taker orders with committed routes and protocol/permissionless processing. |
-| **Collateral profiles** | Pluggable collateral (eveUSDC, eveETH, …) selected per product via `…WithCollateralProfile`. |
-| **eveUSDC** | 18-decimal USDC wrapper (minted at a `1e12` scale over 6-decimal USDC). |
-| **Senior capital pool** | eveUSDC capital pool for protocol revenue, reserved capital, and loss accounting. |
+| **Collateral profiles** | Pluggable product collateral, with Statics Dollar as the launch default through a pegged USDC profile. |
+| **USDC entry** | Exact Statics Dollar mint-and-buy through the shared `StaticsDiamond`; pegged mint fees remain isolated Statics protocol revenue. |
+| **Senior capital** | Non-transferable Statics Dollar principal accounting inside the Eve Diamond, with indexed fees, bounded activation, FIFO exits, MLO reservations, and pro-rata loss accounting. |
 | **OBR + Resolver Jury** | Optimistic bond resolution escalating to a staked, soulbound-identity commit-reveal jury. |
 
 ---
@@ -44,11 +44,15 @@ For the full protocol design — data models, math, fee splits, resolution flow,
 ## Architecture at a Glance
 
 ```text
+   USDC ── pegged mint ──▶ StaticsDiamond ──▶ StaticsDollarCoreDiamond
+                               │                        │
+                               └── Statics Dollar ─────┘
+                                          │
+                                          ▼
                         ┌─────────────────────────────┐
-   USDC ── wrap ──▶ eveUSDC ──▶  EveMarketDiamond (EIP-2535)  ──▶ Gnosis CTF / EvesPositionManager
-   WETH ── wrap ──▶ eveETH       │  facets share storage         ParimutuelShareToken
-                        │        │                               ParlayTicketToken
-   eveUSDC ─ deposit ─▶ SeniorCapitalPool
+   Statics Dollar ─────▶│ EveMarketDiamond (EIP-2535) ──▶ Gnosis CTF + NegRisk adapter
+   Senior deposit ─────▶│ facets share storage             ParimutuelShareToken
+                        │                                   EvesPositionManager / ParlayTicketToken
                         │        ├─ Market creation / metadata / groups
                         │        ├─ Curve CLOB engine + books (spot)
                         │        ├─ Parimutuel pools (epoch multiplier)
@@ -59,7 +63,7 @@ For the full protocol design — data models, math, fee splits, resolution flow,
                         │        └─ Fee routing + maker rewards
 ```
 
-Standalone contracts (`EveUSDC`, `EveETH`, `SeniorCapitalPool`, `Faucet`) live outside the Diamond and interact with it through their public interfaces.
+Local standalone contracts (`MLOInsuranceFund`, `Faucet`) live outside the Eve Diamond. Senior capital is held and accounted for by the Eve Diamond itself; no external pool, share token, or replaceable pool address exists. The pinned Statics dependency supplies `StaticsDollarCoreDiamond`, the shared `StaticsDiamond` gateway/position address, and `StaticsDollar`. Eve derives the Diamond and token from an already bootstrapped Core with an active pegged USDC profile; mutable profile policy remains authoritative in Statics.
 
 ---
 
@@ -69,10 +73,11 @@ Standalone contracts (`EveUSDC`, `EveETH`, `SeniorCapitalPool`, `Faucet`) live o
 eve-predict/
 ├── src/
 │   ├── EveMarketDiamond.sol          # EIP-2535 proxy
-│   ├── EveUSDC.sol                    # USDC wrapper (18 decimals)
-│   ├── SeniorCapitalPool.sol          # Senior eveUSDC capital pool
+│   ├── MLOInsuranceFund.sol           # Dedicated Statics Dollar insurance reserve
 │   ├── Faucet.sol                    # Multi-token testnet faucet
 │   ├── facets/                       # Diamond facets
+│   │   ├── SeniorCapitalFacet.sol     # Deposit, activation, exit, fee claims
+│   │   ├── SeniorCapitalViewFacet.sol # Senior state, accounts, exits, buckets
 │   │   ├── native/                   # Native binary + combinatorial facets
 │   │   └── parlay/                   # Parlay facets
 │   ├── tokens/                       # ERC-1155 / identity / wrapper tokens
@@ -81,6 +86,7 @@ eve-predict/
 │   ├── libraries/                    # Storage + math + helper libraries
 │   ├── init/                         # Diamond initializers
 │   └── mocks/                        # Test mocks (WETH9, USDC, etc.)
+├── lib/statics/                      # Pinned canonical Statics submodule
 ├── script/                           # Foundry deploy + upgrade scripts
 ├── scripts/                          # Operational shell scripts (seeding, markets)
 ├── test/
@@ -88,8 +94,10 @@ eve-predict/
 │   ├── properties/                   # Invariant / fuzz / property tests
 │   └── helpers/                      # Test fixtures and helpers
 ├── docs/                             # Specs and deep-dive design notes
+├── conditional-tokens/               # Canonical Gnosis Conditional Tokens submodule
 ├── EvePredict-Design.md              # Full protocol design document
 ├── foundry.toml
+├── conditional-tokens-build/         # Isolated Solidity 0.5 CTF artifact build config
 └── remappings.txt
 ```
 
@@ -104,18 +112,24 @@ eve-predict/
 
 ## Setup
 
-The `lib/` directory is intentionally git-ignored and kept local, matching sibling Foundry repos. Install dependencies after cloning:
+OpenZeppelin Contracts, Gnosis Conditional Tokens, and Statics are tracked as pinned git submodules for reproducible builds and audits. Initialize them after cloning:
 
 ```shell
+git submodule update --init --recursive
 forge install foundry-rs/forge-std --no-git
-forge install OpenZeppelin/openzeppelin-contracts --no-git
 ```
 
-Remappings (also in `remappings.txt`):
+Main protocol remappings are defined in `foundry.toml`:
 
 ```
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 forge-std/=lib/forge-std/src/
+```
+
+The Conditional Tokens artifact is built from the canonical Solidity 0.5 submodule with a separate pinned OpenZeppelin 2.3 dependency:
+
+```shell
+forge build --config-path conditional-tokens-build/foundry.toml
 ```
 
 ---
@@ -123,6 +137,7 @@ forge-std/=lib/forge-std/src/
 ## Build
 
 ```shell
+forge build --config-path conditional-tokens-build/foundry.toml
 forge build
 ```
 
@@ -163,10 +178,10 @@ Fuzz runs are configured low (`runs = 12`) in `foundry.toml` for speed; raise lo
 
 ## Deploy
 
-The deployment entry point is `script/Deploy.s.sol`. It deploys the standalone tokens/vault/router contracts, cuts every facet into the Diamond, and initializes protocol config from environment variables. Environment templates are provided:
+The deployment entry point is `script/Deploy.s.sol`. It deploys Eve's standalone contracts, cuts every facet into the Eve Diamond, attaches the configured Statics Dollar Core, and initializes protocol config from environment variables. Build `out/conditional-tokens/ConditionalTokens.sol/ConditionalTokens.json` before running deploys that auto-deploy Gnosis CTF. Environment templates are provided:
 
 - `.env.anvil` — local Anvil defaults
-- `.env.base-sepolia` — Base Sepolia testnet
+- `.env.base-sepolia` — historical Base Sepolia testing
 
 Example (local Anvil):
 
@@ -179,7 +194,7 @@ forge script script/Deploy.s.sol:Deploy \
   --broadcast
 ```
 
-Example (Base Sepolia):
+Historical Base Sepolia example (not the active launch target):
 
 ```shell
 source .env.base-sepolia
@@ -188,7 +203,7 @@ forge script script/Deploy.s.sol:Deploy \
   --broadcast --verify
 ```
 
-Upgrade scripts (each performs a targeted DiamondCut) live alongside `Deploy.s.sol`, e.g. `UpgradeOBRResolutionFacet.s.sol`, `UpgradeSpotCurveFacets.s.sol`, `UpgradeBookDecommission.s.sol`, `UpgradeEveUSDC18.s.sol`, `UpgradeBaseSepoliaTradingRewards.s.sol`.
+Upgrade scripts (each performs a targeted DiamondCut) live alongside `Deploy.s.sol`, e.g. `UpgradeOBRResolutionFacet.s.sol`, `UpgradeSpotCurveFacets.s.sol`, and `UpgradeBookDecommission.s.sol`.
 
 Operational helper scripts (market seeding, demo markets) are under `scripts/`.
 
@@ -202,7 +217,7 @@ Each market declares a `MarketType` and a `PositionTokenType` at creation:
 
 - **Binary CLOB** → Gnosis CTF positions; makers split collateral into YES/NO and post curves.
 - **Parimutuel** → `ParimutuelShareToken`; bettors buy single-side shares into a pooled payout with an epoch-based share multiplier.
-- **Multi-Outcome Orderbook** → native `EvesPositionManager` positions; users split collateral into a full outcome set and trade per-outcome books.
+- **Multi-Outcome Orderbook** → canonical one-vs-rest Gnosis CTF positions produced by `EvesNegRiskAdapter`; users split collateral into a full YES-outcome set and trade per-outcome books.
 
 Market IDs fold in the type, position-token type, and collateral (plus the profile `payoutUnit` for non-default collateral) so variants never collide.
 
@@ -220,7 +235,7 @@ After expiry the creator may settle; otherwise the community proposes outcomes w
 
 ### Collateral rail
 
-`eveUSDC` (18-decimal USDC wrapper) is the default collateral. `eveETH` (1:1 WETH wrapper) and other tokens are added through collateral profiles. `SeniorCapitalPool` is the active senior eveUSDC capital surface for eligible protocol revenue and margin-layer accounting.
+Statics Dollar is the launch collateral, bond, Senior-capital, and MLO-insurance rail. Users can supply existing Statics Dollar directly or call `mintAndBuyWithUSDC`, which mints exact Statics Dollar through the configured pegged USDC profile. Pegged profiles have no Risk Share receiver; their static mint fee is retained as isolated Statics protocol revenue. Other collateral can still be added through generic collateral profiles. Senior principal is non-transferable internal Diamond accounting: deposits wait 24 hours before activation, active principal earns indexed protocol and MLO funding fees, and withdrawals use a FIFO exit queue constrained by unreserved liquidity.
 
 ---
 
@@ -245,7 +260,7 @@ bytes32 marketId = marketFactory.createMarket(
 **Make a market (split + post + top up)**
 
 ```solidity
-IERC20(eveUSDC).approve(diamond, 5000e18);
+IERC20(staticsDollar).approve(diamond, 5000e18);
 curveInventory.splitInventory(marketId, 5000e18);
 IERC1155(ctf).setApprovalForAll(diamond, true);
 
@@ -257,17 +272,17 @@ curveLifecycle.topUpCurvesBatch(marketId, topUps);
 feeRouter.claimMakerFees(marketId);
 ```
 
-**Take (buy with USDC via the router)**
+**Take (mint Statics Dollar from USDC and buy via the router)**
 
 ```solidity
 IERC20(usdc).approve(diamond, 500e6);
-FillBestResult memory result = tradeRouter.buyWithUSDC(fillBestParams);
+FillBestResult memory result = tradeRouter.mintAndBuyWithUSDC(buyWithUSDCParams);
 ```
 
 **Bet a parimutuel market**
 
 ```solidity
-IERC20(eveUSDC).approve(diamond, 100e18);
+IERC20(staticsDollar).approve(diamond, 100e18);
 uint128 minOut = parimutuel.previewParimutuelEntry(marketId, true, 100e18).sharesMinted;
 parimutuel.buyShares(marketId, true, 100e18, msg.sender, minOut);
 // after resolution
@@ -277,9 +292,12 @@ parimutuel.claimPayout(marketId);
 **Provide senior capital**
 
 ```solidity
-IERC20(eveUSDC).approve(address(seniorCapitalPool), 10_000e18);
-uint256 shares = seniorCapitalPool.deposit(10_000e18, msg.sender);
-uint256 assets = seniorCapitalPool.redeem(shares, msg.sender, msg.sender);
+IERC20(staticsDollar).approve(diamond, 10_000e18);
+seniorCapital.depositSeniorCapital(10_000e18);
+// after the 24-hour activation gate
+seniorCapital.activateSeniorCapital();
+seniorCapital.requestSeniorCapitalExit(10_000e18, msg.sender);
+seniorCapital.processSeniorCapitalExits(1);
 ```
 
 ---
@@ -293,6 +311,11 @@ Deployment reads protocol parameters from environment variables (see `.env.anvil
 | `PRIVATE_KEY` | Deployer key |
 | `INITIAL_OWNER` | Diamond owner |
 | `EVE_TREASURY` | Protocol treasury recipient |
+| `USDC_TOKEN` | Pegged collateral used by the Statics Dollar rail |
+| `STATICS_DOLLAR_CORE_ADDRESS` | Bootstrapped canonical Statics Dollar Core |
+| `STATICS_DOLLAR_USDC_PROFILE_ID` | Pegged USDC profile selected for Eve entry |
+| `ROBINHOOD_RPC_URL` | Robinhood Chain RPC used only by local fork verification |
+| `ROBINHOOD_FORK_BLOCK` | Must match the pinned launch verification block |
 | `PERMISSIONLESS_CREATION_ENABLED` | Allow non-owner market creation |
 | `MARKET_CREATION_FEE` | Collateral fee to create a market |
 | `MARKET_CREATION_BOND_EVE` | Creation bond amount (bond token) |

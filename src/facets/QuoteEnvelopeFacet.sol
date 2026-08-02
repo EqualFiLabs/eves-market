@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IQuoteEnvelopeFacet} from "../interfaces/IQuoteEnvelopeFacet.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
+import {LibCurveIndex} from "../libraries/LibCurveIndex.sol";
 import {LibQuoteEnvelope} from "../libraries/LibQuoteEnvelope.sol";
 import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 import {QuoteEnvelopeTypes} from "../types/QuoteEnvelopeTypes.sol";
@@ -26,7 +27,9 @@ contract QuoteEnvelopeFacet is IQuoteEnvelopeFacet {
         external
         returns (uint32 generation)
     {
-        generation = LibQuoteEnvelope.updateEnvelope(LibEveMarket.store(), envelopeId, update);
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibQuoteEnvelope.requireUnbound(state, envelopeId);
+        generation = LibQuoteEnvelope.updateEnvelope(state, envelopeId, update);
     }
 
     function cancelQuoteEnvelope(uint256 envelopeId) external {
@@ -48,12 +51,22 @@ contract QuoteEnvelopeFacet is IQuoteEnvelopeFacet {
         envelope = LibQuoteEnvelope.viewEnvelope(LibEveMarket.store(), envelopeId);
     }
 
-    function getOperatorQuoteEnvelopes(address operator) external view returns (uint256[] memory envelopeIds) {
-        envelopeIds = LibEveMarket.store().operatorQuoteEnvelopeIds[operator];
+    function getOperatorQuoteEnvelopesPage(address operator, uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory envelopeIds, uint256 nextCursor, uint256 total)
+    {
+        uint256[] storage stored = LibEveMarket.store().operatorQuoteEnvelopeIds[operator];
+        return _page(stored, cursor, limit);
     }
 
-    function getBookQuoteEnvelopes(bytes32 bookId) external view returns (uint256[] memory envelopeIds) {
-        envelopeIds = LibEveMarket.store().bookQuoteEnvelopeIds[bookId];
+    function getBookQuoteEnvelopesPage(bytes32 bookId, uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory envelopeIds, uint256 nextCursor, uint256 total)
+    {
+        uint256[] storage stored = LibEveMarket.store().bookQuoteEnvelopeIds[bookId];
+        return _page(stored, cursor, limit);
     }
 
     function previewQuoteEnvelopeRisk(QuoteEnvelopeTypes.CreateQuoteEnvelopeParams calldata params)
@@ -66,5 +79,18 @@ contract QuoteEnvelopeFacet is IQuoteEnvelopeFacet {
 
     function canUpdateQuoteEnvelope(uint256 envelopeId) external view returns (bool canUpdate) {
         canUpdate = LibQuoteEnvelope.canUpdate(LibEveMarket.store(), envelopeId);
+    }
+
+    function _page(uint256[] storage stored, uint256 cursor, uint256 limit)
+        private
+        view
+        returns (uint256[] memory ids, uint256 nextCursor, uint256 total)
+    {
+        total = stored.length;
+        nextCursor = LibCurveIndex.validatePage(cursor, limit, total);
+        ids = new uint256[](nextCursor - cursor);
+        for (uint256 i; i < ids.length; ++i) {
+            ids[i] = stored[cursor + i];
+        }
     }
 }

@@ -5,6 +5,7 @@ import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IER
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IBondManagerFacet} from "../interfaces/IBondManagerFacet.sol";
+import {IEvesNegRiskAdapter} from "../interfaces/IEvesNegRiskAdapter.sol";
 import {IBondTokenGateFacet} from "../interfaces/IBondTokenGateFacet.sol";
 import {IOBRResolutionFacet} from "../interfaces/IOBRResolutionFacet.sol";
 import {IResolverJuryFacet} from "../interfaces/IResolverJuryFacet.sol";
@@ -555,6 +556,7 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
         multi.invalid = outcome == LibMultiOutcome.OUTCOME_INVALID;
         multi.resolvedOutcome = outcome;
         multi.payoutDenominator = multi.invalid ? multi.outcomeCount : 1;
+        IEvesNegRiskAdapter(multi.adapter).resolveEvent(multi.conditionId, outcome);
 
         emit Events.MultiOutcomeResolved(marketId, outcome, multi.invalid, multi.payoutDenominator);
         emit Events.PayoutReported(marketId, outcome, keccak256(abi.encode(multi.outcomeCount, outcome)));

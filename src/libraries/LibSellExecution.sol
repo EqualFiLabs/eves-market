@@ -6,7 +6,9 @@ import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/
 
 import {IGnosisConditionalTokens} from "../interfaces/IGnosisConditionalTokens.sol";
 import {ITradeRouter} from "../interfaces/ITradeRouter.sol";
+import {IMLOPredictionAdapterFacet} from "../interfaces/IMLOPredictionAdapterFacet.sol";
 import {CurveCLOBTypes} from "../types/CurveCLOBTypes.sol";
+import {MLOPredictionTypes} from "../types/MLOPredictionTypes.sol";
 import {Errors} from "./Errors.sol";
 import {Events} from "./Events.sol";
 import {LibBookAccess} from "./LibBookAccess.sol";
@@ -15,11 +17,13 @@ import {LibBookPricing} from "./LibBookPricing.sol";
 import {LibCLOBBook} from "./LibCLOBBook.sol";
 import {LibCTF} from "./LibCTF.sol";
 import {LibCurveEscrow} from "./LibCurveEscrow.sol";
+import {LibCurveIndex} from "./LibCurveIndex.sol";
 import {LibCurveMath} from "./LibCurveMath.sol";
 import {LibCurvePacking} from "./LibCurvePacking.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
 import {LibMarkOracle} from "./LibMarkOracle.sol";
 import {LibMarketAccess} from "./LibMarketAccess.sol";
+import {LibMLORecovery} from "./LibMLORecovery.sol";
 import {LibProductAdapter} from "./LibProductAdapter.sol";
 
 library LibSellExecution {
@@ -62,6 +66,14 @@ library LibSellExecution {
         CurveCLOBTypes.SellBookParams memory params,
         CurveCLOBTypes.SellExecutionContext memory context
     ) internal returns (CurveCLOBTypes.SellBookResult memory result) {
+        return sellBookBest(params, context, DirectBidSettlement.TransferToReceiver);
+    }
+
+    function sellBookBest(
+        CurveCLOBTypes.SellBookParams memory params,
+        CurveCLOBTypes.SellExecutionContext memory context,
+        DirectBidSettlement settlement
+    ) internal returns (CurveCLOBTypes.SellBookResult memory result) {
         if (params.maxBaseIn == 0) {
             revert Errors.InvalidAmount(0);
         }
@@ -76,6 +88,7 @@ library LibSellExecution {
         }
 
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibMLORecovery.maintainCurves(state, params.curveIds);
         LibEveMarket.Book storage book = LibBookAccess.requireExecutableBook(state, params.bookId);
         if (!LibCLOBBook.canExecute(book)) {
             revert Errors.MarketNotTrading(book.marketId);
@@ -90,9 +103,8 @@ library LibSellExecution {
                 break;
             }
             consumed[index] = true;
-            SellQuote memory executedQuote = executeSelectedBidRoute(
-                state, book, params, context, index, remainingBase, DirectBidSettlement.TransferToReceiver
-            );
+            SellQuote memory executedQuote =
+                executeSelectedBidRoute(state, book, params, context, index, remainingBase, settlement);
             if (executedQuote.sharesOut == 0) {
                 continue;
             }
@@ -168,6 +180,7 @@ library LibSellExecution {
         }
 
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibMLORecovery.maintainCurves(state, params.curveIds);
         LibEveMarket.Market storage market = LibMarketAccess.requireTradingMarket(state, params.marketId);
         validatePositionIdsIfCTF(market);
 
@@ -230,7 +243,7 @@ library LibSellExecution {
         );
 
         SellQuote memory quote = curve.curveSide == LibEveMarket.CurveSide.BID
-            ? quoteDirectBidCurve(state, book, curve, totals.remainingShares)
+            ? quoteDirectBidCurve(state, book, curve, totals.remainingShares, curveId)
             : quoteComplementSellCurve(state, curve, totals.remainingShares);
         if (quote.sharesOut == 0) {
             return totals;
@@ -262,7 +275,7 @@ library LibSellExecution {
         }
 
         SellQuote memory quote = curve.curveSide == LibEveMarket.CurveSide.BID
-            ? quoteDirectBidCurve(state, state.books[curve.bookId], curve, totals.remainingShares)
+            ? quoteDirectBidCurve(state, state.books[curve.bookId], curve, totals.remainingShares, curveId)
             : quoteComplementSellCurve(state, curve, totals.remainingShares);
         if (quote.sharesOut == 0) {
             return totals;
@@ -311,7 +324,7 @@ library LibSellExecution {
             revert Errors.SelfFillNotAllowed(curveId, curve.maker, context.seller);
         }
 
-        SellQuote memory quote = quoteBookBidCurve(book, curve, remainingBase);
+        SellQuote memory quote = quoteBookBidCurve(state, book, curve, remainingBase, curveId);
         if (quote.sharesOut == 0) {
             return executedQuote;
         }
@@ -335,11 +348,15 @@ library LibSellExecution {
             LibEveMarket.StoredCurve storage curve = state.curves[curveId];
             if (
                 curve.bookId != bookId || !curve.active || curve.curveSide != LibEveMarket.CurveSide.BID
-                    || curve.remainingVolume == 0 || curve.quoteEscrowRemaining == 0
-                    || LibCurveMath.isExpired(state, curve)
+                    || curve.remainingVolume == 0 || LibCurveMath.isExpired(state, curve)
             ) {
                 continue;
             }
+            bool escrowBacked = LibProductAdapter.isEscrowBackedCurve(state, curveId);
+            if (
+                (escrowBacked && curve.quoteEscrowRemaining == 0)
+                    || (!escrowBacked && state.mloCurveSeniorReserved[curveId] == 0)
+            ) continue;
             uint128 price = LibCurveMath.currentPrice(state, curve);
             if (!found || price > bestPrice || (price == bestPrice && curveId < bestCurveId)) {
                 bestIndex = index;
@@ -420,13 +437,14 @@ library LibSellExecution {
         }
     }
 
-    function quoteBookBidCurve(LibEveMarket.Book storage book, LibEveMarket.StoredCurve storage curve, uint128 baseIn)
-        internal
-        view
-        returns (SellQuote memory quote)
-    {
-        (quote.sharesOut, quote.fee, quote.price, quote.grossCost) =
-            LibCurveMath.quoteBid(book, LibEveMarket.store(), curve, baseIn);
+    function quoteBookBidCurve(
+        LibEveMarket.EveMarketStorage storage state,
+        LibEveMarket.Book storage book,
+        LibEveMarket.StoredCurve storage curve,
+        uint128 baseIn,
+        uint256 curveId
+    ) internal view returns (SellQuote memory quote) {
+        quote = _quoteBidCurve(state, book, curve, baseIn, curveId);
         if (quote.fee > quote.grossCost) {
             revert ITradeRouter.SellProceedsInsufficient(quote.grossCost, quote.fee);
         }
@@ -437,9 +455,10 @@ library LibSellExecution {
         LibEveMarket.EveMarketStorage storage state,
         LibEveMarket.Book storage book,
         LibEveMarket.StoredCurve storage curve,
-        uint128 sharesIn
+        uint128 sharesIn,
+        uint256 curveId
     ) internal view returns (SellQuote memory quote) {
-        (quote.sharesOut, quote.fee, quote.price, quote.grossCost) = LibCurveMath.quoteBid(book, state, curve, sharesIn);
+        quote = _quoteBidCurve(state, book, curve, sharesIn, curveId);
         if (quote.fee > quote.grossCost) {
             revert ITradeRouter.SellProceedsInsufficient(quote.grossCost, quote.fee);
         }
@@ -479,6 +498,29 @@ library LibSellExecution {
         CurveCLOBTypes.SellExecutionContext memory context,
         DirectBidSettlement settlement
     ) internal returns (SellQuote memory executedQuote) {
+        if (!LibProductAdapter.isEscrowBackedCurve(state, curveId)) {
+            address receiver = settlement == DirectBidSettlement.TransferToReceiver ? context.receiver : address(this);
+            MLOPredictionTypes.MLOBidFillResult memory mloResult = IMLOPredictionAdapterFacet(address(this))
+                .executeMLOBidFromRoute(
+                    MLOPredictionTypes.MLOBidFillRequest({
+                        curveId: curveId,
+                        sharesIn: quote.sharesOut,
+                        minCollateralOut: quote.collateralOut,
+                        expectedGeneration: curve.generation,
+                        expectedCommitment: LibCurveMath.curveCommitment(curve.packed),
+                        source: context.source,
+                        seller: context.seller,
+                        receiver: receiver
+                    })
+                );
+            return SellQuote({
+                sharesOut: mloResult.fill.baseSold,
+                grossCost: mloResult.fill.quoteOut + mloResult.fill.feePaid,
+                fee: mloResult.fill.feePaid,
+                collateralOut: mloResult.fill.quoteOut,
+                price: LibCurveMath.currentPrice(state, curve)
+            });
+        }
         LibProductAdapter.requireEscrowBackedCurve(state, curveId);
         uint128 actualBaseSold = context.useEscrowedBase
             ? LibCurveEscrow.transferBaseFromEscrow(book, curve.maker, quote.sharesOut)
@@ -500,7 +542,7 @@ library LibSellExecution {
 
         LibBookAccounting.FeeShares memory fees = LibBookAccounting.feeSharesForBook(state, book, quote.fee);
 
-        curve.remainingVolume -= quote.sharesOut;
+        LibCurveIndex.decreaseBidRemaining(state, curveId, quote.sharesOut);
         curve.quoteEscrowRemaining -= quote.grossCost;
         LibBookAccounting.recordBookAndMarketFill(
             state, book, curve.maker, quote.price, quote.grossCost, quote.fee, fees
@@ -514,6 +556,28 @@ library LibSellExecution {
 
         emit Events.CurveFilled(curveId, curve.maker, context.seller, quote.grossCost, quote.sharesOut, quote.fee);
         executedQuote = quote;
+    }
+
+    function _quoteBidCurve(
+        LibEveMarket.EveMarketStorage storage state,
+        LibEveMarket.Book storage book,
+        LibEveMarket.StoredCurve storage curve,
+        uint128 baseIn,
+        uint256 curveId
+    ) private view returns (SellQuote memory quote) {
+        if (LibProductAdapter.isEscrowBackedCurve(state, curveId)) {
+            (quote.sharesOut, quote.fee, quote.price, quote.grossCost) =
+                LibCurveMath.quoteBid(book, state, curve, baseIn);
+        } else {
+            quote.sharesOut = baseIn < curve.remainingVolume ? baseIn : curve.remainingVolume;
+            quote.price = LibCurveMath.currentPrice(state, curve);
+            quote.grossCost = LibBookPricing.grossCostFor(book, quote.sharesOut, quote.price);
+            quote.fee = LibCurveMath.feeFor(quote.grossCost, book.feeConfig.entryFeeBps);
+        }
+        if (quote.fee > quote.grossCost) {
+            revert ITradeRouter.SellProceedsInsufficient(quote.grossCost, quote.fee);
+        }
+        quote.collateralOut = quote.grossCost - quote.fee;
     }
 
     function executeComplementSellFill(
@@ -545,7 +609,7 @@ library LibSellExecution {
         }
 
         uint128 collateralUsed = quote.grossCost + quote.fee;
-        curve.remainingVolume -= quote.sharesOut;
+        LibCurveIndex.decreaseAskRemaining(state, curveId, quote.sharesOut);
         LibBookAccounting.recordMarketOnlyFill(
             market, curve.maker, uint128(PRICE_SCALE - quote.price), collateralUsed, quote.fee, fees
         );

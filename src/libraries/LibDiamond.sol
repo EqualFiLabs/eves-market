@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Errors} from "./Errors.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
+import {LibGovernanceDelay} from "./LibGovernanceDelay.sol";
 
 library LibDiamond {
     function contractOwner() internal view returns (address) {
@@ -13,7 +14,14 @@ library LibDiamond {
         LibEveMarket.store().contractOwner = newOwner;
     }
 
-    function enforceIsContractOwner() internal view {
+    function enforceIsContractOwner() internal {
+        enforceIsContractOwnerRaw();
+        if (LibGovernanceDelay.s().finalized) {
+            LibGovernanceDelay.consume(LibGovernanceDelay.operationId(msg.data));
+        }
+    }
+
+    function enforceIsContractOwnerRaw() internal view {
         if (msg.sender != contractOwner()) {
             revert Errors.NotContractOwner(msg.sender);
         }
@@ -28,7 +36,9 @@ library LibDiamond {
     }
 
     function freezeSelector(bytes4 selector) internal {
-        LibEveMarket.store().frozenSelectors[selector] = true;
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        if (state.selectorToFacet[selector] == address(0)) revert Errors.SelectorMissing(selector);
+        state.frozenSelectors[selector] = true;
     }
 
     function addFunctions(address facet, bytes4[] memory selectors) internal {
@@ -43,6 +53,8 @@ library LibDiamond {
 
         for (uint256 index = 0; index < selectors.length; ++index) {
             bytes4 selector = selectors[index];
+
+            _enforceSelectorNotFrozen(state, selector);
 
             if (state.selectorToFacet[selector] != address(0)) {
                 revert Errors.SelectorAlreadyExists(selector);
@@ -65,6 +77,7 @@ library LibDiamond {
 
         for (uint256 index = 0; index < selectors.length; ++index) {
             bytes4 selector = selectors[index];
+            _enforceSelectorNotFrozen(state, selector);
             address oldFacet = state.selectorToFacet[selector];
 
             if (oldFacet == address(0)) {
@@ -87,6 +100,7 @@ library LibDiamond {
 
         for (uint256 index = 0; index < selectors.length; ++index) {
             bytes4 selector = selectors[index];
+            _enforceSelectorNotFrozen(state, selector);
             address oldFacet = state.selectorToFacet[selector];
 
             if (oldFacet == address(0)) {
@@ -183,5 +197,9 @@ library LibDiamond {
         if (selectors.length == 0) {
             revert Errors.SelectorsEmpty();
         }
+    }
+
+    function _enforceSelectorNotFrozen(LibEveMarket.EveMarketStorage storage state, bytes4 selector) private view {
+        if (state.frozenSelectors[selector]) revert Errors.SelectorFrozen(selector);
     }
 }

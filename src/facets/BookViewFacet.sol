@@ -3,6 +3,9 @@ pragma solidity ^0.8.28;
 
 import {CurveCLOBTypes} from "../types/CurveCLOBTypes.sol";
 import {LibCLOBView} from "../libraries/LibCLOBView.sol";
+import {LibCLOBBook} from "../libraries/LibCLOBBook.sol";
+import {LibCurveIndex} from "../libraries/LibCurveIndex.sol";
+import {LibCurveMath} from "../libraries/LibCurveMath.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 
 contract BookViewFacet is CurveCLOBTypes {
@@ -16,11 +19,78 @@ contract BookViewFacet is CurveCLOBTypes {
         );
     }
 
-    function getBookTopOfBook(bytes32 bookId)
+    function getBookCurveIdsPage(bytes32 bookId, uint256 cursor, uint256 limit)
         external
         view
-        returns (uint128 bestAskPrice, uint128 bestBidPrice, uint128 midpointPrice, uint128 lastTradePrice)
+        returns (uint256[] memory curveIds, uint256 nextCursor, uint256 total)
     {
-        return LibCLOBView.bookTopOfBook(LibEveMarket.store(), bookId);
+        uint256[] storage stored = LibEveMarket.store().bookCurveIds[bookId];
+        total = stored.length;
+        nextCursor = LibCurveIndex.validatePage(cursor, limit, total);
+        curveIds = new uint256[](nextCursor - cursor);
+        for (uint256 i; i < curveIds.length; ++i) {
+            curveIds[i] = stored[cursor + i];
+        }
+    }
+
+    function getActiveBookCurveIdsPage(bytes32 bookId, uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory curveIds, uint256 nextCursor, uint256 total)
+    {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        uint256[] storage stored = state.activeBookCurveIds[bookId];
+        total = stored.length;
+        nextCursor = LibCurveIndex.validatePage(cursor, limit, total);
+        curveIds = new uint256[](nextCursor - cursor);
+        bool bookExecutable = LibCLOBBook.canExecute(state.books[bookId]);
+        uint256 count;
+        for (uint256 i = cursor; i < nextCursor; ++i) {
+            uint256 curveId = stored[i];
+            if (!bookExecutable || !LibCurveIndex.isExecutableCandidate(state, curveId, state.curves[curveId])) {
+                continue;
+            }
+            curveIds[count++] = curveId;
+        }
+        assembly ("memory-safe") {
+            mstore(curveIds, count)
+        }
+    }
+
+    function getBookTopOfBookPage(bytes32 bookId, uint256 cursor, uint256 limit)
+        external
+        view
+        returns (
+            uint128 bestAskPrice,
+            bool hasAsk,
+            uint128 bestBidPrice,
+            bool hasBid,
+            uint128 lastTradePrice,
+            uint256 nextCursor,
+            uint256 total
+        )
+    {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibEveMarket.Book storage book = state.books[bookId];
+        uint256[] storage stored = state.activeBookCurveIds[bookId];
+        total = stored.length;
+        nextCursor = LibCurveIndex.validatePage(cursor, limit, total);
+        lastTradePrice = uint128(book.lastTradePrice);
+        if (!LibCLOBBook.canExecute(book)) return (0, false, 0, false, lastTradePrice, nextCursor, total);
+        for (uint256 i = cursor; i < nextCursor; ++i) {
+            uint256 curveId = stored[i];
+            LibEveMarket.StoredCurve storage curve = state.curves[curveId];
+            if (!LibCurveIndex.isExecutableCandidate(state, curveId, curve)) continue;
+            uint128 price = LibCurveMath.currentPrice(state, curve);
+            if (curve.curveSide == LibEveMarket.CurveSide.ASK) {
+                if (!hasAsk || price < bestAskPrice) {
+                    hasAsk = true;
+                    bestAskPrice = price;
+                }
+            } else if (!hasBid || price > bestBidPrice) {
+                hasBid = true;
+                bestBidPrice = price;
+            }
+        }
     }
 }

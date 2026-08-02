@@ -11,11 +11,21 @@ import {LibResolverJury} from "src/libraries/LibResolverJury.sol";
 import {BondManagerFacet} from "src/facets/BondManagerFacet.sol";
 import {ResolverJuryFacet} from "src/facets/ResolverJuryFacet.sol";
 import {ResolverRegistryFacet} from "src/facets/ResolverRegistryFacet.sol";
+import {ResolverRegistryReputationFacet} from "src/facets/ResolverRegistryReputationFacet.sol";
+import {ResolverRegistryRewardsFacet} from "src/facets/ResolverRegistryRewardsFacet.sol";
+import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
 import {MockUSDC} from "test/helpers/MockUSDC.sol";
 
-contract ResolverJuryHarness is ResolverJuryFacet, ResolverRegistryFacet, BondManagerFacet {
+contract ResolverJuryHarness is
+    ResolverJuryFacet,
+    ResolverRegistryFacet,
+    ResolverRegistryViewFacet,
+    ResolverRegistryRewardsFacet,
+    ResolverRegistryReputationFacet,
+    BondManagerFacet
+{
     function configureIdentityAndRandomness(
         address eveIdentity,
         address mintFeeToken,
@@ -452,17 +462,22 @@ contract ResolverJuryTest is Test {
         vm.prank(bob);
         jury.commitRandomness(disputeId, keccak256(abi.encode(disputeId, bobId, bobValue, bobSalt)));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRandomnessCommit(disputeId);
-        uint256 referenceBlock = block.number + 1;
 
         vm.prank(alice);
         jury.revealRandomness(disputeId, aliceValue, aliceSalt);
         vm.prank(bob);
         jury.revealRandomness(disputeId, bobValue, bobSalt);
 
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        uint256 referenceBlock = vm.getBlockNumber() + 1;
+        vm.expectEmit(true, true, false, true);
+        emit Events.RandomnessSeedReferenceBlockSet(disputeId, 0, uint64(referenceBlock));
+        jury.closeRandomnessReveal(disputeId);
+        assertEq(jury.disputeView(disputeId).seed, bytes32(0));
+
         vm.roll(referenceBlock + 1);
-        vm.warp(block.timestamp + 1 hours);
         jury.closeRandomnessReveal(disputeId);
 
         IResolverJuryFacet.DisputeView memory view_ = jury.disputeView(disputeId);
@@ -476,6 +491,48 @@ contract ResolverJuryTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(Errors.RandomnessNotReady.selector, disputeId));
         jury.openRandomnessCommit(disputeId);
+    }
+
+    function test_ExpiredRandomnessReferenceReschedulesAndFinalizes() public {
+        uint256 aliceId = _activateResolver(alice);
+        uint256 bobId = _activateResolver(bob);
+        bytes32 disputeId = _initiateDisputedMarket(keccak256("randomness-reschedule-market"));
+        bytes32 aliceValue = keccak256("reschedule-alice-value");
+        bytes32 bobValue = keccak256("reschedule-bob-value");
+        bytes32 aliceSalt = keccak256("reschedule-alice-salt");
+        bytes32 bobSalt = keccak256("reschedule-bob-salt");
+
+        jury.openRandomnessCommit(disputeId);
+        vm.prank(alice);
+        jury.commitRandomness(disputeId, keccak256(abi.encode(disputeId, aliceId, aliceValue, aliceSalt)));
+        vm.prank(bob);
+        jury.commitRandomness(disputeId, keccak256(abi.encode(disputeId, bobId, bobValue, bobSalt)));
+
+        vm.warp(jury.disputeView(disputeId).randomnessCommitDeadline);
+        jury.closeRandomnessCommit(disputeId);
+        vm.prank(alice);
+        jury.revealRandomness(disputeId, aliceValue, aliceSalt);
+        vm.prank(bob);
+        jury.revealRandomness(disputeId, bobValue, bobSalt);
+
+        vm.warp(jury.disputeView(disputeId).randomnessRevealDeadline);
+        uint256 firstReferenceBlock = vm.getBlockNumber() + 1;
+        jury.closeRandomnessReveal(disputeId);
+        assertEq(jury.disputeView(disputeId).randomnessReferenceBlock, firstReferenceBlock);
+
+        vm.roll(firstReferenceBlock + 257);
+        uint256 replacementReferenceBlock = vm.getBlockNumber() + 1;
+        vm.expectEmit(true, true, false, true);
+        emit Events.RandomnessSeedReferenceBlockSet(disputeId, 0, uint64(replacementReferenceBlock));
+        jury.closeRandomnessReveal(disputeId);
+
+        IResolverJuryFacet.DisputeView memory rescheduled = jury.disputeView(disputeId);
+        assertEq(rescheduled.randomnessReferenceBlock, replacementReferenceBlock);
+        assertEq(rescheduled.seed, bytes32(0));
+
+        vm.roll(replacementReferenceBlock + 1);
+        jury.closeRandomnessReveal(disputeId);
+        assertGt(uint256(jury.disputeView(disputeId).seed), 0);
     }
 
     function test_RandomnessRejectsDuplicateAndMismatchedReveal() public {
@@ -493,7 +550,7 @@ contract ResolverJuryTest is Test {
         vm.prank(alice);
         jury.commitRandomness(disputeId, commitment);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRandomnessCommit(disputeId);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.JuryCommitmentMismatch.selector, aliceId));
@@ -513,14 +570,14 @@ contract ResolverJuryTest is Test {
         bytes32 disputeId = _initiateDisputedMarket(keccak256("randomness-retry-market"));
 
         jury.openRandomnessCommit(disputeId);
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRandomnessCommit(disputeId);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.RandomnessNotReady.selector, disputeId));
         jury.applyRandomnessFallback(disputeId);
 
-        vm.roll(block.number + 2);
-        vm.warp(block.timestamp + 1 hours);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
 
         vm.expectEmit(true, true, false, true);
         emit Events.RandomnessFailure(disputeId, 0, uint8(LibEveMarket.RandomnessFailureMode.Retry), 0);
@@ -530,7 +587,7 @@ contract ResolverJuryTest is Test {
         assertEq(view_.randomnessAttempt, 2);
         assertEq(view_.validRevealCount, 0);
         assertEq(view_.randomnessRevealDeadline, 0);
-        assertGt(view_.randomnessCommitDeadline, block.timestamp);
+        assertGt(view_.randomnessCommitDeadline, vm.getBlockTimestamp());
         assertEq(view_.marketId, jury.disputeView(disputeId).marketId);
     }
 
@@ -549,10 +606,10 @@ contract ResolverJuryTest is Test {
         );
 
         jury.openRandomnessCommit(disputeId);
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRandomnessCommit(disputeId);
-        vm.roll(block.number + 2);
-        vm.warp(block.timestamp + 1 hours);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
 
         vm.expectEmit(true, true, false, true);
         emit Events.RandomnessFailure(disputeId, 0, uint8(LibEveMarket.RandomnessFailureMode.AllEligible), 0);
@@ -564,10 +621,10 @@ contract ResolverJuryTest is Test {
         _activateResolver(bob);
         bytes32 cappedDisputeId = _initiateDisputedMarket(keccak256("randomness-all-eligible-capped-market"));
         jury.openRandomnessCommit(cappedDisputeId);
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRandomnessCommit(cappedDisputeId);
-        vm.roll(block.number + 2);
-        vm.warp(block.timestamp + 1 hours);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.RandomnessFallbackUnavailable.selector, cappedDisputeId));
         jury.closeRandomnessReveal(cappedDisputeId);
@@ -597,7 +654,7 @@ contract ResolverJuryTest is Test {
         IResolverJuryFacet.DisputeView memory view_ = jury.disputeView(disputeId);
         assertEq(view_.state, uint8(LibResolverJury.DisputeState.CommitOpen));
         assertEq(view_.committeeSize, 3);
-        assertEq(view_.commitDeadline, block.timestamp + 1 hours);
+        assertEq(view_.commitDeadline, vm.getBlockTimestamp() + 1 hours);
         assertEq(jury.resolverReputation(aliceId).totalSelections, 1);
     }
 
@@ -716,12 +773,12 @@ contract ResolverJuryTest is Test {
         vm.expectRevert(abi.encodeWithSelector(Errors.CommitPhaseClosed.selector, disputeId));
         jury.closeCommit(disputeId);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
 
         IResolverJuryFacet.DisputeView memory view_ = jury.disputeView(disputeId);
         assertEq(view_.state, uint8(LibResolverJury.DisputeState.RevealOpen));
-        assertEq(view_.revealDeadline, block.timestamp + 1 hours);
+        assertEq(view_.revealDeadline, vm.getBlockTimestamp() + 1 hours);
     }
 
     function test_CloseCommitSlashesMissedCommit() public {
@@ -737,7 +794,7 @@ contract ResolverJuryTest is Test {
         vm.prank(bob);
         jury.commitVote(disputeId, keccak256("bob-commit"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.expectEmit(true, true, true, true);
         emit Events.ResolverSlashed(disputeId, 0, carolId, 10e18);
         jury.closeCommit(disputeId);
@@ -745,7 +802,7 @@ contract ResolverJuryTest is Test {
         (uint128 stake, bool slashLockActive, uint64 slashLockUntil) = jury.resolverSlashState(carolId);
         assertEq(stake, 90e18);
         assertTrue(slashLockActive);
-        assertEq(slashLockUntil, block.timestamp + 1 days);
+        assertEq(slashLockUntil, vm.getBlockTimestamp() + 1 days);
         assertEq(jury.disputeView(disputeId).rewardPoolBond, 0);
         _assertResolverReward(aliceId, address(eveToken), 5e18);
         _assertResolverReward(bobId, address(eveToken), 5e18);
@@ -773,7 +830,7 @@ contract ResolverJuryTest is Test {
         vm.prank(bob);
         jury.commitVote(disputeId, keccak256(abi.encode(disputeId, bobId, noOutcome, bobSalt)));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
 
         vm.expectEmit(true, true, true, true);
@@ -817,7 +874,7 @@ contract ResolverJuryTest is Test {
         vm.prank(bob);
         jury.commitVote(disputeId, keccak256(abi.encode(disputeId, bobId, uint8(9), bobSalt)));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.JuryCommitmentMismatch.selector, carolId));
@@ -850,7 +907,7 @@ contract ResolverJuryTest is Test {
         _assertResolverReward(bobId, address(eveToken), 35e18);
         _assertResolverReward(carolId, address(eveToken), 0);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.expectRevert(abi.encodeWithSelector(Errors.RevealPhaseClosed.selector, disputeId));
         vm.prank(alice);
         jury.revealVote(disputeId, yesOutcome, aliceSalt);
@@ -874,12 +931,12 @@ contract ResolverJuryTest is Test {
         _commitVote(disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-missed"));
         _commitVote(disputeId, bob, bobId, uint8(LibEveMarket.MarketOutcome.No), keccak256("bob-missed"));
         _commitVote(disputeId, carol, carolId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("carol-missed"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-missed"));
         _revealVote(disputeId, bob, uint8(LibEveMarket.MarketOutcome.No), keccak256("bob-missed"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.expectEmit(true, true, true, true);
         emit Events.ResolverSlashed(disputeId, 0, carolId, 20e18);
         jury.closeRevealAndTally(disputeId);
@@ -918,20 +975,20 @@ contract ResolverJuryTest is Test {
         _commitVote(disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-tally"));
         _commitVote(disputeId, bob, bobId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-tally"));
         _commitVote(disputeId, carol, carolId, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-tally"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-tally"));
         _revealVote(disputeId, bob, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-tally"));
         _revealVote(disputeId, carol, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-tally"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
         IResolverJuryFacet.DisputeView memory view_ = jury.disputeView(disputeId);
         assertEq(view_.state, uint8(LibResolverJury.DisputeState.AppealOpen));
         assertEq(view_.provisionalResult, uint8(LibEveMarket.MarketOutcome.Yes));
         assertTrue(view_.hasProvisional);
-        assertEq(view_.appealDeadline, block.timestamp + 2 hours);
+        assertEq(view_.appealDeadline, vm.getBlockTimestamp() + 2 hours);
     }
 
     function test_CloseRevealAndTallyResolvesTieToInvalidWhenConfigured() public {
@@ -951,12 +1008,12 @@ contract ResolverJuryTest is Test {
 
         _commitVote(disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-tie"));
         _commitVote(disputeId, bob, bobId, uint8(LibEveMarket.MarketOutcome.No), keccak256("bob-tie"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-tie"));
         _revealVote(disputeId, bob, uint8(LibEveMarket.MarketOutcome.No), keccak256("bob-tie"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
         IResolverJuryFacet.DisputeView memory view_ = jury.disputeView(disputeId);
@@ -980,11 +1037,11 @@ contract ResolverJuryTest is Test {
         jury.selectCommittee(disputeId);
 
         _commitVote(disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-low"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-low"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
         IResolverJuryFacet.DisputeView memory view_ = jury.disputeView(disputeId);
@@ -1004,11 +1061,11 @@ contract ResolverJuryTest is Test {
         jury.selectCommittee(disputeId);
 
         _commitVote(disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-redraw"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-redraw"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
         IResolverJuryFacet.DisputeView memory view_ = jury.disputeView(disputeId);
@@ -1019,7 +1076,7 @@ contract ResolverJuryTest is Test {
         assertEq(jury.committeeMembers(disputeId, 0).length, 0);
 
         jury.openRandomnessCommit(disputeId);
-        assertGt(jury.disputeView(disputeId).randomnessCommitDeadline, block.timestamp);
+        assertGt(jury.disputeView(disputeId).randomnessCommitDeadline, vm.getBlockTimestamp());
     }
 
     function test_OpenAppealCollectsBondTokenAndAdvancesRound() public {
@@ -1362,13 +1419,13 @@ contract ResolverJuryTest is Test {
             _commitVoteByIdentity(disputeId, members[index], outcome, salt);
         }
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         for (uint256 index; index < members.length; ++index) {
             _revealVoteByIdentity(disputeId, members[index], outcome, salt);
         }
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
     }
 
@@ -1390,12 +1447,12 @@ contract ResolverJuryTest is Test {
         _commitVote(disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-appeal"));
         _commitVote(disputeId, bob, bobId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-appeal"));
         _commitVote(disputeId, carol, carolId, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-appeal"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-appeal"));
         _revealVote(disputeId, bob, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-appeal"));
         _revealVote(disputeId, carol, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-appeal"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
     }
 
@@ -1420,11 +1477,11 @@ contract ResolverJuryTest is Test {
         _commitVote(disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-finality"));
         _commitVote(disputeId, bob, bobId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-finality"));
         _commitVote(disputeId, carol, carolId, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-finality"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-finality"));
         _revealVote(disputeId, bob, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-finality"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
     }
 
@@ -1442,9 +1499,9 @@ contract ResolverJuryTest is Test {
         );
         jury.seedSelectionReady(disputeId, keccak256("finality-no-reveal-seed"), false);
         jury.selectCommittee(disputeId);
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
     }
 

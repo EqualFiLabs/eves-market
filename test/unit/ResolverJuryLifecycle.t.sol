@@ -6,9 +6,12 @@ import {MarketFactoryFacet} from "../../src/facets/MarketFactoryFacet.sol";
 import {MultiOutcomeOrderbookFacet} from "../../src/facets/MultiOutcomeOrderbookFacet.sol";
 import {MultiOutcomeOrderbookViewFacet} from "../../src/facets/MultiOutcomeOrderbookViewFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
 import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {ResolverRegistryFacet} from "../../src/facets/ResolverRegistryFacet.sol";
+import {ResolverRegistryReputationFacet} from "../../src/facets/ResolverRegistryReputationFacet.sol";
+import {ResolverRegistryViewFacet} from "../../src/facets/ResolverRegistryViewFacet.sol";
 import {ResolverJuryInit} from "../../src/init/ResolverJuryInit.sol";
 import {IMultiOutcomeOrderbookFacet} from "../../src/interfaces/IMultiOutcomeOrderbookFacet.sol";
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
@@ -40,6 +43,8 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
     EveIdentity internal identity;
     ParimutuelShareToken internal parimutuelShareToken;
     EvesPositionManager internal outcomePositions;
+    ResolverRegistryViewFacet internal registryViewFacet;
+    ResolverRegistryReputationFacet internal registryReputationFacet;
 
     function setUp() public override {
         super.setUp();
@@ -57,7 +62,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         _configureResolverJury();
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500, 0, 0);
+        FeeConfigFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500, 0);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(parimutuelShareToken), 250, 1e6);
         OwnershipFacet(address(diamond)).setParimutuelCreationSeedAmount(0);
         OwnershipFacet(address(diamond)).setEvesPositionManager(address(outcomePositions));
@@ -92,14 +97,14 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         _commitVote(disputeId, bobResolver, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-lifecycle-vote"));
         _commitVote(disputeId, carolResolver, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-lifecycle-vote"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeCommit(disputeId);
 
         _revealVote(disputeId, aliceResolver, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-lifecycle-vote"));
         _revealVote(disputeId, bobResolver, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-lifecycle-vote"));
         _revealVote(disputeId, carolResolver, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-lifecycle-vote"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRevealAndTally(disputeId);
 
         IResolverJuryFacet.DisputeView memory appealView = IResolverJuryFacet(address(diamond)).disputeView(disputeId);
@@ -132,10 +137,82 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         assertEq(StateProbeFacet(address(diamond)).getBondedTotals(challengerThree), 0);
     }
 
-    function test_OwnerCanEnableObrJuryModeAfterFullHealthyResolverSet() public {
-        ResolutionHarnessFacet(address(diamond)).setResolutionMode(
-            uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap)
+    function test_GenesisEpochFlowsIntoCLOBDisputeSettlement() public {
+        ResolverAccount memory aliceResolver = _registerResolverCandidate(alice);
+        ResolverAccount memory bobResolver = _registerResolverCandidate(bob);
+        ResolverAccount memory carolResolver = _registerResolverCandidate(carol);
+        ResolverAccount[3] memory candidates = [aliceResolver, bobResolver, carolResolver];
+
+        vm.prank(owner);
+        uint64 epochId = IResolverRegistryFacet(address(diamond)).openResolverEpochRotation();
+        for (uint256 index; index < candidates.length; ++index) {
+            ResolverAccount memory candidate = candidates[index];
+            vm.prank(candidate.owner);
+            IResolverRegistryFacet(address(diamond))
+                .optIntoResolverEpoch(
+                    keccak256(
+                        abi.encode(
+                            epochId,
+                            candidate.identityId,
+                            _epochRandomnessValue(candidate.identityId),
+                            _epochRandomnessSalt(candidate.identityId)
+                        )
+                    )
+                );
+        }
+
+        IResolverRegistryFacet.ResolverEpochView memory epoch =
+            IResolverRegistryFacet(address(diamond)).resolverEpoch(epochId);
+        vm.warp(epoch.commitDeadline + 1);
+        IResolverRegistryFacet(address(diamond)).closeResolverEpochRandomnessCommit(epochId);
+        for (uint256 index; index < candidates.length; ++index) {
+            ResolverAccount memory candidate = candidates[index];
+            vm.prank(candidate.owner);
+            IResolverRegistryFacet(address(diamond))
+                .revealResolverEpochRandomness(
+                    epochId, _epochRandomnessValue(candidate.identityId), _epochRandomnessSalt(candidate.identityId)
+                );
+        }
+
+        epoch = IResolverRegistryFacet(address(diamond)).resolverEpoch(epochId);
+        vm.warp(epoch.revealDeadline + 1);
+        assertEq(IResolverRegistryFacet(address(diamond)).finalizeResolverEpochSeed(epochId), bytes32(0));
+        epoch = IResolverRegistryFacet(address(diamond)).resolverEpoch(epochId);
+        vm.roll(uint256(epoch.seedReferenceBlock) + 1);
+        assertGt(uint256(IResolverRegistryFacet(address(diamond)).finalizeResolverEpochSeed(epochId)), 0);
+
+        for (uint256 index; index < candidates.length; ++index) {
+            IResolverRegistryFacet(address(diamond))
+                .submitResolverEpochCandidateScore(epochId, candidates[index].identityId);
+        }
+        epoch = IResolverRegistryFacet(address(diamond)).resolverEpoch(epochId);
+        vm.warp(epoch.selectionDeadline + 1);
+        IResolverRegistryFacet(address(diamond)).finalizeResolverEpochSelection(epochId);
+        assertEq(IResolverRegistryFacet(address(diamond)).activeResolverCount(), 3);
+
+        (bytes32 marketId,) = _createPendingMarket("Genesis epoch lifecycle", "resolver", 9 days);
+        ExpectedMarketData memory expected = _expectedFromStored(marketId);
+        _openJuryDispute(
+            marketId,
+            uint8(LibEveMarket.MarketOutcome.No),
+            uint8(LibEveMarket.MarketOutcome.Yes),
+            uint8(LibEveMarket.MarketOutcome.Invalid),
+            uint8(LibEveMarket.MarketOutcome.No)
         );
+        bytes32 disputeId = _disputeIdForMarket(marketId);
+        _runRandomness(disputeId, aliceResolver, bobResolver);
+        _resolveSelectedCommittee(disputeId, uint8(LibEveMarket.MarketOutcome.No), keccak256("genesis-vote"));
+
+        IResolverJuryFacet.DisputeView memory appeal = IResolverJuryFacet(address(diamond)).disputeView(disputeId);
+        vm.warp(appeal.appealDeadline);
+        IResolverJuryFacet(address(diamond)).finalizeDispute(disputeId);
+        _assertResolvedStatus(marketId, expected.marketId, uint8(LibEveMarket.MarketOutcome.No));
+        _assertPayout(expected.conditionId, 0, 1, 1);
+    }
+
+    function test_OwnerCanEnableObrJuryModeAfterFullHealthyResolverSet() public {
+        ResolutionHarnessFacet(address(diamond))
+            .setResolutionMode(uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap));
         _activateResolver(alice);
         _activateResolver(bob);
         _activateResolver(carol);
@@ -287,11 +364,11 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
 
         IResolverJuryFacet(address(diamond)).openRandomnessCommit(retryDisputeId);
         _commitRandomness(retryDisputeId, aliceResolver, keccak256("retry-value"), keccak256("retry-salt"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessCommit(retryDisputeId);
         _revealRandomness(retryDisputeId, aliceResolver, keccak256("retry-value"), keccak256("retry-salt"));
-        vm.roll(block.number + 2);
-        vm.warp(block.timestamp + 1 hours);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessReveal(retryDisputeId);
 
         IResolverJuryFacet.DisputeView memory retryView =
@@ -299,7 +376,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         assertEq(retryView.randomnessAttempt, 2);
         assertEq(retryView.validRevealCount, 0);
         assertEq(retryView.seed, bytes32(0));
-        assertGt(retryView.randomnessCommitDeadline, block.timestamp);
+        assertGt(retryView.randomnessCommitDeadline, vm.getBlockTimestamp());
 
         _finishOpenRandomnessAttempt(retryDisputeId, aliceResolver, bobResolver);
         retryView = IResolverJuryFacet(address(diamond)).disputeView(retryDisputeId);
@@ -318,9 +395,9 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         bytes32 allEligibleDisputeId = _disputeIdForMarket(allEligibleMarketId);
 
         IResolverJuryFacet(address(diamond)).openRandomnessCommit(allEligibleDisputeId);
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessCommit(allEligibleDisputeId);
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessReveal(allEligibleDisputeId);
 
         IResolverJuryFacet.DisputeView memory fallbackView =
@@ -356,16 +433,19 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         _commitRandomness(disputeId, aliceResolver, keccak256("read-alice-random"), keccak256("read-alice-salt"));
         _commitRandomness(disputeId, bobResolver, keccak256("read-bob-random"), keccak256("read-bob-salt"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessCommit(disputeId);
-        uint256 referenceBlock = block.number + 1;
         vm.expectEmit(true, true, true, true);
         emit Events.RandomnessRevealed(disputeId, 0, aliceResolver.identityId);
         _revealRandomness(disputeId, aliceResolver, keccak256("read-alice-random"), keccak256("read-alice-salt"));
         _revealRandomness(disputeId, bobResolver, keccak256("read-bob-random"), keccak256("read-bob-salt"));
 
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        uint256 referenceBlock = vm.getBlockNumber() + 1;
+        vm.expectEmit(true, true, false, true);
+        emit Events.RandomnessSeedReferenceBlockSet(disputeId, 0, uint64(referenceBlock));
+        IResolverJuryFacet(address(diamond)).closeRandomnessReveal(disputeId);
         vm.roll(referenceBlock + 1);
-        vm.warp(block.timestamp + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessReveal(disputeId);
 
         vm.expectEmit(true, true, false, false);
@@ -380,7 +460,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         _commitVote(disputeId, bobResolver, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("read-bob-vote"));
         _commitVote(disputeId, carolResolver, uint8(LibEveMarket.MarketOutcome.No), keccak256("read-carol-vote"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeCommit(disputeId);
 
         vm.expectEmit(true, true, true, true);
@@ -388,7 +468,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         _revealVote(disputeId, aliceResolver, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("read-alice-vote"));
         _revealVote(disputeId, bobResolver, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("read-bob-vote"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.expectEmit(true, true, true, true);
         emit Events.ResolverSlashed(disputeId, 0, carolResolver.identityId, 20e18);
         IResolverJuryFacet(address(diamond)).closeRevealAndTally(disputeId);
@@ -398,7 +478,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         assertEq(appealView.committeeSize, 3);
         assertEq(appealView.validRevealCount, 2);
         assertEq(appealView.provisionalResult, uint8(LibEveMarket.MarketOutcome.Yes));
-        assertGt(appealView.appealDeadline, block.timestamp);
+        assertGt(appealView.appealDeadline, vm.getBlockTimestamp());
 
         (bool revealed, uint8 revealedOutcome) =
             IResolverJuryFacet(address(diamond)).revealedVote(disputeId, 0, aliceResolver.identityId);
@@ -433,13 +513,25 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
 
     function _addResolverRegistryAndIdentity() internal {
         registryFacet = new ResolverRegistryFacet();
+        registryViewFacet = new ResolverRegistryViewFacet();
+        registryReputationFacet = new ResolverRegistryReputationFacet();
         identity = new EveIdentity(address(diamond), "Eve Identity", "EVE-ID");
 
-        DiamondCutFacet.FacetCut[] memory cuts = new DiamondCutFacet.FacetCut[](1);
+        DiamondCutFacet.FacetCut[] memory cuts = new DiamondCutFacet.FacetCut[](3);
         cuts[0] = DiamondCutFacet.FacetCut({
             facetAddress: address(registryFacet),
             action: DiamondCutFacet.FacetCutAction.Add,
             functionSelectors: _resolverRegistrySelectors()
+        });
+        cuts[1] = DiamondCutFacet.FacetCut({
+            facetAddress: address(registryViewFacet),
+            action: DiamondCutFacet.FacetCutAction.Add,
+            functionSelectors: _resolverRegistryViewSelectors()
+        });
+        cuts[2] = DiamondCutFacet.FacetCut({
+            facetAddress: address(registryReputationFacet),
+            action: DiamondCutFacet.FacetCutAction.Add,
+            functionSelectors: _resolverRegistryReputationSelectors()
         });
 
         ResolverJuryInit init = new ResolverJuryInit();
@@ -601,6 +693,11 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
     }
 
     function _activateResolver(address account) internal returns (ResolverAccount memory resolver) {
+        resolver = _registerResolverCandidate(account);
+        _seedActiveResolverEpochMember(resolver.identityId);
+    }
+
+    function _registerResolverCandidate(address account) internal returns (ResolverAccount memory resolver) {
         resolver.owner = account;
 
         vm.prank(account);
@@ -615,8 +712,14 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
 
         vm.prank(account);
         IResolverRegistryFacet(address(diamond)).depositResolverStake(100e18);
+    }
 
-        _seedActiveResolverEpochMember(resolver.identityId);
+    function _epochRandomnessValue(uint256 identityId) internal pure returns (bytes32) {
+        return keccak256(abi.encode("lifecycle-epoch-value", identityId));
+    }
+
+    function _epochRandomnessSalt(uint256 identityId) internal pure returns (bytes32) {
+        return keccak256(abi.encode("lifecycle-epoch-salt", identityId));
     }
 
     function _seedActiveResolverEpochMember(uint256 identityId) internal {
@@ -675,14 +778,14 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         _commitVote(disputeId, bobResolver, finalOutcome, keccak256("bob-lifecycle-vote"));
         _commitVote(disputeId, carolResolver, firstCounterOutcome, keccak256("carol-lifecycle-vote"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeCommit(disputeId);
 
         _revealVote(disputeId, aliceResolver, finalOutcome, keccak256("alice-lifecycle-vote"));
         _revealVote(disputeId, bobResolver, finalOutcome, keccak256("bob-lifecycle-vote"));
         _revealVote(disputeId, carolResolver, firstCounterOutcome, keccak256("carol-lifecycle-vote"));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRevealAndTally(disputeId);
 
         IResolverJuryFacet.DisputeView memory appealView = IResolverJuryFacet(address(diamond)).disputeView(disputeId);
@@ -728,7 +831,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
             );
         }
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeCommit(disputeId);
 
         for (uint256 index; index < members.length; ++index) {
@@ -740,7 +843,7 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
             );
         }
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRevealAndTally(disputeId);
     }
 
@@ -760,9 +863,8 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         IResolverJuryFacet(address(diamond))
             .commitRandomness(disputeId, keccak256(abi.encode(disputeId, second.identityId, secondValue, secondSalt)));
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessCommit(disputeId);
-        uint256 referenceBlock = block.number + 1;
 
         vm.prank(first.owner);
         IResolverJuryFacet(address(diamond)).revealRandomness(disputeId, firstValue, firstSalt);
@@ -770,8 +872,10 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         vm.prank(second.owner);
         IResolverJuryFacet(address(diamond)).revealRandomness(disputeId, secondValue, secondSalt);
 
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        uint256 referenceBlock = vm.getBlockNumber() + 1;
+        IResolverJuryFacet(address(diamond)).closeRandomnessReveal(disputeId);
         vm.roll(referenceBlock + 1);
-        vm.warp(block.timestamp + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessReveal(disputeId);
 
         IResolverJuryFacet.DisputeView memory view_ = IResolverJuryFacet(address(diamond)).disputeView(disputeId);
@@ -792,15 +896,16 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
         _commitRandomness(disputeId, first, firstValue, firstSalt);
         _commitRandomness(disputeId, second, secondValue, secondSalt);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessCommit(disputeId);
-        uint256 referenceBlock = block.number + 1;
 
         _revealRandomness(disputeId, first, firstValue, firstSalt);
         _revealRandomness(disputeId, second, secondValue, secondSalt);
 
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        uint256 referenceBlock = vm.getBlockNumber() + 1;
+        IResolverJuryFacet(address(diamond)).closeRandomnessReveal(disputeId);
         vm.roll(referenceBlock + 1);
-        vm.warp(block.timestamp + 1 hours);
         IResolverJuryFacet(address(diamond)).closeRandomnessReveal(disputeId);
     }
 
@@ -909,40 +1014,57 @@ contract ResolverJuryLifecycleTest is ResolutionFixture {
     }
 
     function _multiOutcomeViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](5);
         selectors[0] = IMultiOutcomeOrderbookFacet.getMultiOutcomeMarket.selector;
         selectors[1] = IMultiOutcomeOrderbookFacet.getMultiOutcomeOutcomes.selector;
         selectors[2] = IMultiOutcomeOrderbookFacet.getOutcomePositionId.selector;
         selectors[3] = IMultiOutcomeOrderbookFacet.getMultiOutcomeBooks.selector;
-        selectors[4] = IMultiOutcomeOrderbookFacet.getMultiOutcomeTopOfBook.selector;
-        selectors[5] = IMultiOutcomeOrderbookFacet.getMultiOutcomeDisplay.selector;
+        selectors[4] = IMultiOutcomeOrderbookFacet.getMultiOutcomeDisplay.selector;
     }
 
     function _resolverRegistrySelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](13);
         selectors[0] = IResolverRegistryFacet.mintIdentity.selector;
         selectors[1] = IResolverRegistryFacet.setCreatorRole.selector;
         selectors[2] = IResolverRegistryFacet.setResolverRole.selector;
         selectors[3] = IResolverRegistryFacet.depositResolverStake.selector;
         selectors[4] = IResolverRegistryFacet.openResolverEpochRotation.selector;
-        selectors[5] = IResolverRegistryFacet.requestResolverExit.selector;
-        selectors[6] = IResolverRegistryFacet.withdrawResolverStake.selector;
-        selectors[7] = IResolverRegistryFacet.eveIdentity.selector;
-        selectors[8] = IResolverRegistryFacet.resolverDashboard.selector;
-        selectors[9] = IResolverRegistryFacet.resolverIdentity.selector;
-        selectors[10] = IResolverRegistryFacet.resolverIdentityByOwner.selector;
-        selectors[11] = IResolverRegistryFacet.resolverJuryConfig.selector;
-        selectors[12] = IResolverRegistryFacet.identityByOwner.selector;
-        selectors[13] = IResolverRegistryFacet.isEligibleResolver.selector;
-        selectors[14] = IResolverRegistryFacet.hasConflict.selector;
-        selectors[15] = IResolverRegistryFacet.resolverLifecycleState.selector;
-        selectors[16] = IResolverRegistryFacet.creatorReputation.selector;
-        selectors[17] = IResolverRegistryFacet.resolverReputation.selector;
-        selectors[18] = IResolverRegistryFacet.eligibleResolverCount.selector;
-        selectors[19] = IResolverRegistryFacet.activeResolverCount.selector;
-        selectors[20] = IResolverRegistryFacet.activeResolverEpochSize.selector;
-        selectors[21] = IResolverRegistryFacet.activeResolverAt.selector;
-        selectors[22] = IResolverRegistryFacet.applyFinalityReputation.selector;
+        selectors[5] = IResolverRegistryFacet.optIntoResolverEpoch.selector;
+        selectors[6] = IResolverRegistryFacet.closeResolverEpochRandomnessCommit.selector;
+        selectors[7] = IResolverRegistryFacet.revealResolverEpochRandomness.selector;
+        selectors[8] = IResolverRegistryFacet.finalizeResolverEpochSeed.selector;
+        selectors[9] = IResolverRegistryFacet.submitResolverEpochCandidateScore.selector;
+        selectors[10] = IResolverRegistryFacet.finalizeResolverEpochSelection.selector;
+        selectors[11] = IResolverRegistryFacet.requestResolverExit.selector;
+        selectors[12] = IResolverRegistryFacet.withdrawResolverStake.selector;
+    }
+
+    function _resolverRegistryViewSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](19);
+        selectors[0] = IResolverRegistryFacet.eveIdentity.selector;
+        selectors[1] = IResolverRegistryFacet.resolverDashboard.selector;
+        selectors[2] = IResolverRegistryFacet.resolverIdentity.selector;
+        selectors[3] = IResolverRegistryFacet.resolverIdentityByOwner.selector;
+        selectors[4] = IResolverRegistryFacet.resolverJuryConfig.selector;
+        selectors[5] = IResolverRegistryFacet.identityByOwner.selector;
+        selectors[6] = IResolverRegistryFacet.isEligibleResolver.selector;
+        selectors[7] = IResolverRegistryFacet.hasConflict.selector;
+        selectors[8] = IResolverRegistryFacet.resolverLifecycleState.selector;
+        selectors[9] = IResolverRegistryFacet.creatorReputation.selector;
+        selectors[10] = IResolverRegistryFacet.resolverReputation.selector;
+        selectors[11] = IResolverRegistryFacet.eligibleResolverCount.selector;
+        selectors[12] = IResolverRegistryFacet.activeResolverCount.selector;
+        selectors[13] = IResolverRegistryFacet.activeResolverEpochSize.selector;
+        selectors[14] = IResolverRegistryFacet.activeResolverAt.selector;
+        selectors[15] = IResolverRegistryFacet.currentResolverEpoch.selector;
+        selectors[16] = IResolverRegistryFacet.resolverEpoch.selector;
+        selectors[17] = IResolverRegistryFacet.resolverEpochCandidate.selector;
+        selectors[18] = IResolverRegistryFacet.previewResolverRewards.selector;
+    }
+
+    function _resolverRegistryReputationSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = IResolverRegistryFacet.applyFinalityReputation.selector;
     }
 
     function _disputeIdForMarket(bytes32 marketId) internal pure returns (bytes32 disputeId) {

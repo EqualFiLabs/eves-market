@@ -3,10 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-
-import {IEveUSDC} from "../interfaces/IEveUSDC.sol";
 import {ITradeRouter} from "../interfaces/ITradeRouter.sol";
-import {LibEveUSDCUnits} from "./LibEveUSDCUnits.sol";
 import {LibReentrancy} from "./LibReentrancy.sol";
 
 library LibRouter {
@@ -33,6 +30,15 @@ library LibRouter {
         }
     }
 
+    function adjustForSeniorExposure(uint256 expectedBalance, uint256 exposureBefore, uint256 exposureAfter)
+        internal
+        pure
+        returns (uint256 adjusted)
+    {
+        if (exposureAfter >= exposureBefore) return expectedBalance - (exposureAfter - exposureBefore);
+        adjusted = expectedBalance + (exposureBefore - exposureAfter);
+    }
+
     function balanceDelta(address token, uint256 baseline) internal view returns (uint256 delta) {
         uint256 balance = IERC20(token).balanceOf(address(this));
         if (balance > baseline) {
@@ -40,17 +46,13 @@ library LibRouter {
         }
     }
 
-    function unwrapConvertibleEveUSDC(address eveUSDC, uint256 amount, address receiver)
-        internal
-        returns (uint256 usdcOut)
-    {
-        uint256 convertible = LibEveUSDCUnits.convertibleEveUSDC(amount);
-        uint256 dust = amount - convertible;
-        if (convertible != 0) {
-            usdcOut = IEveUSDC(eveUSDC).unwrap(convertible, receiver);
-        }
-        if (dust != 0) {
-            IERC20(eveUSDC).safeTransfer(receiver, dust);
-        }
+    function transferExact(address tokenAddress, address receiver, uint256 amount) internal {
+        if (amount == 0) return;
+        IERC20 token = IERC20(tokenAddress);
+        uint256 receiverBefore = token.balanceOf(receiver);
+        token.safeTransfer(receiver, amount);
+        uint256 receiverAfter = token.balanceOf(receiver);
+        uint256 received = receiverAfter >= receiverBefore ? receiverAfter - receiverBefore : 0;
+        if (received != amount) revert ITradeRouter.NonExactRouterTransfer();
     }
 }

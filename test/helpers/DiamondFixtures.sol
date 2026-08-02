@@ -5,7 +5,7 @@ import {Test} from "../../lib/forge-std/src/Test.sol";
 import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 import {EveMarketDiamond} from "../../src/EveMarketDiamond.sol";
-import {EveUSDC} from "../../src/EveUSDC.sol";
+import {EvesNegRiskAdapter} from "../../src/EvesNegRiskAdapter.sol";
 import {BondManagerFacet} from "../../src/facets/BondManagerFacet.sol";
 import {BondTokenGateFacet} from "../../src/facets/BondTokenGateFacet.sol";
 import {CurveCLOBFacet} from "../../src/facets/CurveCLOBFacet.sol";
@@ -16,17 +16,25 @@ import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {DiamondLoupeFacet} from "../../src/facets/DiamondLoupeFacet.sol";
 import {FeeRouterFacet} from "../../src/facets/FeeRouterFacet.sol";
 import {MarketFactoryFacet} from "../../src/facets/MarketFactoryFacet.sol";
+import {MarketGroupFacet} from "../../src/facets/MarketGroupFacet.sol";
 import {MarketSettlementFacet} from "../../src/facets/MarketSettlementFacet.sol";
 import {MarketViewFacet} from "../../src/facets/MarketViewFacet.sol";
+import {NegRiskConfigFacet} from "../../src/facets/NegRiskConfigFacet.sol";
 import {OBRResolutionFacet} from "../../src/facets/OBRResolutionFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 import {ResolverJuryFacet} from "../../src/facets/ResolverJuryFacet.sol";
+import {SeniorCapitalFacet} from "../../src/facets/SeniorCapitalFacet.sol";
+import {SeniorCapitalViewFacet} from "../../src/facets/SeniorCapitalViewFacet.sol";
 import {BookFacet} from "../../src/facets/BookFacet.sol";
 import {BookOrderFacet} from "../../src/facets/BookOrderFacet.sol";
 import {BookTradeFacet} from "../../src/facets/BookTradeFacet.sol";
+import {BookSellFacet} from "../../src/facets/BookSellFacet.sol";
 import {BookViewFacet} from "../../src/facets/BookViewFacet.sol";
-import {TradeRouterFacet} from "../../src/facets/TradeRouterFacet.sol";
-import {TradeRouterSellFacet} from "../../src/facets/TradeRouterSellFacet.sol";
+import {CollateralTradeRouterFacet} from "../../src/facets/CollateralTradeRouterFacet.sol";
+import {CollateralTradeRouterExactFacet} from "../../src/facets/CollateralTradeRouterExactFacet.sol";
+import {CollateralTradeRouterSellFacet} from "../../src/facets/CollateralTradeRouterSellFacet.sol";
+import {CollateralTradeRouterPreviewFacet} from "../../src/facets/CollateralTradeRouterPreviewFacet.sol";
 import {IBondManagerFacet} from "../../src/interfaces/IBondManagerFacet.sol";
 import {IBondTokenGateFacet} from "../../src/interfaces/IBondTokenGateFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
@@ -40,9 +48,12 @@ import {ICurveViewFacet} from "../../src/interfaces/ICurveViewFacet.sol";
 import {IFeeRouterFacet} from "../../src/interfaces/IFeeRouterFacet.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
 import {IMarketSettlementFacet} from "../../src/interfaces/IMarketSettlementFacet.sol";
+import {IEvesNegRiskAdapter} from "../../src/interfaces/IEvesNegRiskAdapter.sol";
+import {INegRiskConfigFacet} from "../../src/interfaces/INegRiskConfigFacet.sol";
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
 import {IParimutuelFacet} from "../../src/interfaces/IParimutuelFacet.sol";
 import {IResolverJuryFacet} from "../../src/interfaces/IResolverJuryFacet.sol";
+import {ISeniorCapitalFacet} from "../../src/interfaces/ISeniorCapitalFacet.sol";
 import {ITradeRouter} from "../../src/interfaces/ITradeRouter.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
@@ -53,6 +64,7 @@ import {LibParimutuel} from "../../src/libraries/LibParimutuel.sol";
 import {ERC1155ReceiverHarness} from "./ERC1155ReceiverHarness.sol";
 import {MockConditionalTokens} from "./MockConditionalTokens.sol";
 import {MockCurveProfile} from "./MockCurveProfile.sol";
+import {MockCollateral} from "./MockCollateral.sol";
 import {MockEveToken} from "./MockEveToken.sol";
 import {MockUSDC} from "./MockUSDC.sol";
 
@@ -133,12 +145,8 @@ contract StateProbeFacet {
         return LibEveMarket.store().config.collateralToken;
     }
 
-    function seniorCapitalPool() external view returns (address) {
-        return LibEveMarket.store().config.seniorCapitalPool;
-    }
-
-    function vaultRevenueBps() external view returns (uint16) {
-        return LibEveMarket.store().config.orderbookFeeConfig.vaultFeeBps;
+    function seniorPoolRevenueBps() external view returns (uint16) {
+        return LibEveMarket.store().config.orderbookFeeConfig.seniorPoolFeeBps;
     }
 
     function parimutuelShareToken() external view returns (address) {
@@ -532,10 +540,19 @@ contract ResolutionHarnessFacet {
         market.positionTokenType = LibEveMarket.PositionTokenType.CTF;
         market.positionToken = positionToken;
 
+        address adapterAddress = state.negRiskAdapter;
+        if (adapterAddress == address(0)) revert Errors.ZeroAddress();
+        IEvesNegRiskAdapter adapter = IEvesNegRiskAdapter(adapterAddress);
+        bytes32 eventId = adapter.prepareEvent(marketId, outcomeCount);
+        market.conditionId = eventId;
+
         LibEveMarket.MultiOutcomeMarket storage multi = state.multiOutcomeMarkets[marketId];
         multi.marketId = marketId;
+        multi.conditionId = eventId;
         multi.outcomeCount = uint8(outcomeCount);
         multi.exists = true;
+        multi.adapter = adapterAddress;
+        multi.wrappedCollateral = adapter.wrappedCollateral();
     }
 
     function setParimutuelPool(
@@ -573,17 +590,20 @@ contract ResolutionHarnessFacet {
         config.parimutuelMinEntry = uint128(minEntry);
     }
 
-    function setSeniorCapitalPool(address seniorCapitalPool) external {
-        LibEveMarket.store().config.seniorCapitalPool = seniorCapitalPool;
+    function setMarginAssetFixture(address marginAsset) external {
+        LibEveMarket.store().marginAsset = marginAsset;
     }
 
-    function setFeeSplitConfig(uint256 makerFeeBps, uint256 creatorFeeBps, uint256 protocolFeeBps, uint256 vaultFeeBps)
-        external
-    {
+    function setFeeSplitConfig(
+        uint256 makerFeeBps,
+        uint256 creatorFeeBps,
+        uint256 protocolFeeBps,
+        uint256 seniorPoolFeeBps
+    ) external {
         if (makerFeeBps > type(uint16).max) revert Errors.InvalidAmount(makerFeeBps);
         if (creatorFeeBps > type(uint16).max) revert Errors.InvalidAmount(creatorFeeBps);
         if (protocolFeeBps > type(uint16).max) revert Errors.InvalidAmount(protocolFeeBps);
-        if (vaultFeeBps > type(uint16).max) revert Errors.InvalidAmount(vaultFeeBps);
+        if (seniorPoolFeeBps > type(uint16).max) revert Errors.InvalidAmount(seniorPoolFeeBps);
 
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
         config.orderbookFeeConfig = LibEveMarket.BookFeeConfig({
@@ -591,22 +611,19 @@ contract ResolutionHarnessFacet {
             makerFeeBps: uint16(makerFeeBps),
             creatorFeeBps: uint16(creatorFeeBps),
             protocolFeeBps: uint16(protocolFeeBps),
-            vaultFeeBps: uint16(vaultFeeBps),
-            resolverFeeBps: 0,
-            evRiskFeeBps: 0
+            seniorPoolFeeBps: uint16(seniorPoolFeeBps),
+            resolverFeeBps: 0
         });
         config.spotFeeConfig = LibEveMarket.SpotFeeConfig({
             tradeFeeBps: config.spotFeeConfig.tradeFeeBps,
             makerFeeBps: uint16(makerFeeBps),
             protocolFeeBps: uint16(protocolFeeBps),
-            vaultFeeBps: uint16(vaultFeeBps),
-            resolverFeeBps: 0,
-            evRiskFeeBps: 0
+            seniorPoolFeeBps: uint16(seniorPoolFeeBps),
+            resolverFeeBps: 0
         });
         config.parimutuelFeeConfig.creatorFeeBps = uint16(creatorFeeBps);
         config.parimutuelFeeConfig.protocolFeeBps = uint16(protocolFeeBps);
-        config.parimutuelFeeConfig.vaultFeeBps = uint16(vaultFeeBps);
-        config.parimutuelFeeConfig.evRiskFeeBps = 0;
+        config.parimutuelFeeConfig.seniorPoolFeeBps = uint16(seniorPoolFeeBps);
     }
 }
 
@@ -620,6 +637,7 @@ abstract contract DiamondFixture is Test, ERC1155ReceiverHarness {
     DiamondCutFacet internal cutFacet;
     DiamondLoupeFacet internal loupeFacet;
     OwnershipFacet internal ownershipFacet;
+    FeeConfigFacet internal feeConfigFacet;
     RoutingProbeFacet internal routingProbe;
     RoutingProbeFacetV2 internal routingProbeV2;
     StateProbeFacet internal stateProbe;
@@ -631,6 +649,7 @@ abstract contract DiamondFixture is Test, ERC1155ReceiverHarness {
         cutFacet = new DiamondCutFacet();
         loupeFacet = new DiamondLoupeFacet();
         ownershipFacet = new OwnershipFacet();
+        feeConfigFacet = new FeeConfigFacet();
         routingProbe = new RoutingProbeFacet();
         routingProbeV2 = new RoutingProbeFacetV2();
         stateProbe = new StateProbeFacet();
@@ -639,6 +658,7 @@ abstract contract DiamondFixture is Test, ERC1155ReceiverHarness {
 
         _addFacet(address(loupeFacet), _loupeSelectors());
         _addFacet(address(ownershipFacet), _ownershipSelectors());
+        _addFacet(address(feeConfigFacet), _feeConfigSelectors());
         _addFacet(address(routingProbe), _routingProbeSelectors());
         _addFacet(address(stateProbe), _stateProbeSelectors());
     }
@@ -682,49 +702,55 @@ abstract contract DiamondFixture is Test, ERC1155ReceiverHarness {
     }
 
     function _ownershipSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](42);
+        selectors = new bytes4[](37);
         selectors[0] = OwnershipFacet.transferOwnership.selector;
         selectors[1] = OwnershipFacet.owner.selector;
-        selectors[2] = OwnershipFacet.setOrderbookEntryFeeBps.selector;
-        selectors[3] = OwnershipFacet.setResolutionBondConfig.selector;
-        selectors[4] = OwnershipFacet.setMarketCreationFee.selector;
-        selectors[5] = OwnershipFacet.setMarketCreationBond.selector;
-        selectors[6] = OwnershipFacet.setPermissionlessCreationEnabled.selector;
-        selectors[7] = OwnershipFacet.setDefaultConditionalTokens.selector;
-        selectors[8] = OwnershipFacet.setCollateralToken.selector;
-        selectors[9] = OwnershipFacet.setEveToken.selector;
-        selectors[10] = OwnershipFacet.setEveTreasury.selector;
-        selectors[11] = OwnershipFacet.setOrderbookFeeSplit.selector;
-        selectors[12] = OwnershipFacet.setParimutuelFeeSplit.selector;
-        selectors[13] = OwnershipFacet.setParimutuelConfig.selector;
-        selectors[14] = OwnershipFacet.setDurationParams.selector;
-        selectors[15] = OwnershipFacet.setDisputeWindow.selector;
-        selectors[16] = OwnershipFacet.setCreatorSettleGrace.selector;
-        selectors[17] = OwnershipFacet.setOpenResolutionTimeout.selector;
-        selectors[18] = OwnershipFacet.setMaxEscalation.selector;
-        selectors[19] = OwnershipFacet.registerCurveProfile.selector;
-        selectors[20] = OwnershipFacet.setSpotBookCreationFee.selector;
-        selectors[21] = OwnershipFacet.setParimutuelEpochWindowCap.selector;
-        selectors[22] = OwnershipFacet.setParimutuelEpochMultipliers.selector;
-        selectors[23] = OwnershipFacet.setSpotTradeFeeBps.selector;
-        selectors[24] = OwnershipFacet.setSpotFeeSplit.selector;
-        selectors[25] = OwnershipFacet.setMarketCreationBatchCap.selector;
-        selectors[26] = OwnershipFacet.setParimutuelCreationSeedAmount.selector;
-        selectors[27] = OwnershipFacet.setCollateralProfile.selector;
-        selectors[28] = OwnershipFacet.setCollateralProfileEnabled.selector;
-        selectors[29] = OwnershipFacet.setCollateralProfilePayoutUnit.selector;
-        selectors[30] = OwnershipFacet.setCollateralProfileMarketCreationFee.selector;
-        selectors[31] = OwnershipFacet.setCollateralProfileParimutuelCreationSeedAmount.selector;
-        selectors[32] = OwnershipFacet.setCollateralProfileParimutuelMinEntry.selector;
-        selectors[33] = OwnershipFacet.setCollateralProfileParlayUnderwritingFee.selector;
-        selectors[34] = OwnershipFacet.setDelayedOrderConfig.selector;
-        selectors[35] = OwnershipFacet.setDelayedOrderProcessing.selector;
-        selectors[36] = OwnershipFacet.setDelayedOrderGuards.selector;
-        selectors[37] = OwnershipFacet.setDelayedOrderProtocolProcessor.selector;
-        selectors[38] = OwnershipFacet.setMarketDelayedExecution.selector;
-        selectors[39] = OwnershipFacet.setBookDelayedExecution.selector;
-        selectors[40] = OwnershipFacet.setResolutionMode.selector;
-        selectors[41] = OwnershipFacet.setEvRiskStakingRewards.selector;
+        selectors[2] = OwnershipFacet.setResolutionBondConfig.selector;
+        selectors[3] = OwnershipFacet.setMarketCreationFee.selector;
+        selectors[4] = OwnershipFacet.setMarketCreationBond.selector;
+        selectors[5] = OwnershipFacet.setPermissionlessCreationEnabled.selector;
+        selectors[6] = OwnershipFacet.setDefaultConditionalTokens.selector;
+        selectors[7] = OwnershipFacet.setCollateralToken.selector;
+        selectors[8] = OwnershipFacet.setEveToken.selector;
+        selectors[9] = OwnershipFacet.setEveTreasury.selector;
+        selectors[10] = OwnershipFacet.setParimutuelConfig.selector;
+        selectors[11] = OwnershipFacet.setDurationParams.selector;
+        selectors[12] = OwnershipFacet.setDisputeWindow.selector;
+        selectors[13] = OwnershipFacet.setCreatorSettleGrace.selector;
+        selectors[14] = OwnershipFacet.setOpenResolutionTimeout.selector;
+        selectors[15] = OwnershipFacet.setMaxEscalation.selector;
+        selectors[16] = OwnershipFacet.registerCurveProfile.selector;
+        selectors[17] = OwnershipFacet.setSpotBookCreationFee.selector;
+        selectors[18] = OwnershipFacet.setParimutuelEpochWindowCap.selector;
+        selectors[19] = OwnershipFacet.setParimutuelEpochMultipliers.selector;
+        selectors[20] = OwnershipFacet.setMarketCreationBatchCap.selector;
+        selectors[21] = OwnershipFacet.setParimutuelCreationSeedAmount.selector;
+        selectors[22] = OwnershipFacet.setCollateralProfile.selector;
+        selectors[23] = OwnershipFacet.setCollateralProfileEnabled.selector;
+        selectors[24] = OwnershipFacet.setCollateralProfilePayoutUnit.selector;
+        selectors[25] = OwnershipFacet.setCollateralProfileMarketCreationFee.selector;
+        selectors[26] = OwnershipFacet.setCollateralProfileParimutuelCreationSeedAmount.selector;
+        selectors[27] = OwnershipFacet.setCollateralProfileParimutuelMinEntry.selector;
+        selectors[28] = OwnershipFacet.setCollateralProfileParlayUnderwritingFee.selector;
+        selectors[29] = OwnershipFacet.setDelayedOrderConfig.selector;
+        selectors[30] = OwnershipFacet.setDelayedOrderProcessing.selector;
+        selectors[31] = OwnershipFacet.setDelayedOrderGuards.selector;
+        selectors[32] = OwnershipFacet.setDelayedOrderProtocolProcessor.selector;
+        selectors[33] = OwnershipFacet.setMarketDelayedExecution.selector;
+        selectors[34] = OwnershipFacet.setBookDelayedExecution.selector;
+        selectors[35] = OwnershipFacet.setResolutionMode.selector;
+        selectors[36] = OwnershipFacet.setStaticsDollarRail.selector;
+    }
+
+    function _feeConfigSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](7);
+        selectors[0] = FeeConfigFacet.setOrderbookEntryFeeBps.selector;
+        selectors[1] = FeeConfigFacet.setSpotTradeFeeBps.selector;
+        selectors[2] = FeeConfigFacet.setComboTradeFeeBps.selector;
+        selectors[3] = FeeConfigFacet.setOrderbookFeeSplit.selector;
+        selectors[4] = FeeConfigFacet.setSpotFeeSplit.selector;
+        selectors[5] = FeeConfigFacet.setComboFeeSplit.selector;
+        selectors[6] = FeeConfigFacet.setParimutuelFeeSplit.selector;
     }
 
     function _routingProbeSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -742,37 +768,36 @@ abstract contract DiamondFixture is Test, ERC1155ReceiverHarness {
         selectors[3] = StateProbeFacet.spotBookCreationFee.selector;
         selectors[4] = StateProbeFacet.marketCreationBond.selector;
         selectors[5] = StateProbeFacet.collateralToken.selector;
-        selectors[6] = StateProbeFacet.seniorCapitalPool.selector;
-        selectors[7] = StateProbeFacet.vaultRevenueBps.selector;
-        selectors[8] = StateProbeFacet.minMarketDuration.selector;
-        selectors[9] = StateProbeFacet.maxMarketDuration.selector;
-        selectors[10] = StateProbeFacet.curveProfile.selector;
-        selectors[11] = StateProbeFacet.nextCurveId.selector;
-        selectors[12] = StateProbeFacet.getStoredMarketCore.selector;
-        selectors[13] = StateProbeFacet.getStoredMarketStatus.selector;
-        selectors[14] = StateProbeFacet.getStoredCurve.selector;
-        selectors[15] = StateProbeFacet.getStoredMarketFees.selector;
-        selectors[16] = StateProbeFacet.getStoredCreationBond.selector;
-        selectors[17] = StateProbeFacet.getStoredResolution.selector;
-        selectors[18] = StateProbeFacet.getResolutionHistoryLength.selector;
-        selectors[19] = StateProbeFacet.getResolutionHistoryEntry.selector;
-        selectors[20] = StateProbeFacet.getBondedTotals.selector;
-        selectors[21] = StateProbeFacet.getBondedForMarket.selector;
-        selectors[22] = StateProbeFacet.getStoredMarketTrading.selector;
-        selectors[23] = StateProbeFacet.getStoredMakerAccounting.selector;
-        selectors[24] = StateProbeFacet.getStoredMarketTypeAndPositionToken.selector;
-        selectors[25] = StateProbeFacet.getStoredMarketResolutionId.selector;
-        selectors[26] = StateProbeFacet.getStoredParimutuelPool.selector;
-        selectors[27] = StateProbeFacet.parimutuelShareToken.selector;
-        selectors[28] = StateProbeFacet.parimutuelEntryFeeBps.selector;
-        selectors[29] = StateProbeFacet.parimutuelMinEntry.selector;
-        selectors[30] = StateProbeFacet.getStoredCreatorStatus.selector;
-        selectors[31] = StateProbeFacet.getStoredParimutuelFinalization.selector;
-        selectors[32] = StateProbeFacet.setBookPricingFixture.selector;
-        selectors[33] = StateProbeFacet.spotTradeFeeBps.selector;
-        selectors[34] = StateProbeFacet.materializeMarketSideBookFixture.selector;
-        selectors[35] = StateProbeFacet.isBookMaterializedFixture.selector;
-        selectors[36] = StateProbeFacet.parimutuelCreationSeedAmount.selector;
+        selectors[6] = StateProbeFacet.seniorPoolRevenueBps.selector;
+        selectors[7] = StateProbeFacet.minMarketDuration.selector;
+        selectors[8] = StateProbeFacet.maxMarketDuration.selector;
+        selectors[9] = StateProbeFacet.curveProfile.selector;
+        selectors[10] = StateProbeFacet.nextCurveId.selector;
+        selectors[11] = StateProbeFacet.getStoredMarketCore.selector;
+        selectors[12] = StateProbeFacet.getStoredMarketStatus.selector;
+        selectors[13] = StateProbeFacet.getStoredCurve.selector;
+        selectors[14] = StateProbeFacet.getStoredMarketFees.selector;
+        selectors[15] = StateProbeFacet.getStoredCreationBond.selector;
+        selectors[16] = StateProbeFacet.getStoredResolution.selector;
+        selectors[17] = StateProbeFacet.getResolutionHistoryLength.selector;
+        selectors[18] = StateProbeFacet.getResolutionHistoryEntry.selector;
+        selectors[19] = StateProbeFacet.getBondedTotals.selector;
+        selectors[20] = StateProbeFacet.getBondedForMarket.selector;
+        selectors[21] = StateProbeFacet.getStoredMarketTrading.selector;
+        selectors[22] = StateProbeFacet.getStoredMakerAccounting.selector;
+        selectors[23] = StateProbeFacet.getStoredMarketTypeAndPositionToken.selector;
+        selectors[24] = StateProbeFacet.getStoredMarketResolutionId.selector;
+        selectors[25] = StateProbeFacet.getStoredParimutuelPool.selector;
+        selectors[26] = StateProbeFacet.parimutuelShareToken.selector;
+        selectors[27] = StateProbeFacet.parimutuelEntryFeeBps.selector;
+        selectors[28] = StateProbeFacet.parimutuelMinEntry.selector;
+        selectors[29] = StateProbeFacet.getStoredCreatorStatus.selector;
+        selectors[30] = StateProbeFacet.getStoredParimutuelFinalization.selector;
+        selectors[31] = StateProbeFacet.setBookPricingFixture.selector;
+        selectors[32] = StateProbeFacet.spotTradeFeeBps.selector;
+        selectors[33] = StateProbeFacet.materializeMarketSideBookFixture.selector;
+        selectors[34] = StateProbeFacet.isBookMaterializedFixture.selector;
+        selectors[35] = StateProbeFacet.parimutuelCreationSeedAmount.selector;
     }
 
     function _resolutionHarnessSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -789,9 +814,9 @@ abstract contract DiamondFixture is Test, ERC1155ReceiverHarness {
         selectors[9] = ResolutionHarnessFacet.setParimutuelConfig.selector;
         selectors[10] = ResolutionHarnessFacet.setFeeSplitConfig.selector;
         selectors[11] = ResolutionHarnessFacet.harnessFinalizeFromJury.selector;
-        selectors[12] = ResolutionHarnessFacet.setSeniorCapitalPool.selector;
-        selectors[13] = ResolutionHarnessFacet.setResolutionMode.selector;
-        selectors[14] = ResolutionHarnessFacet.setMultiOutcomeResolutionMarket.selector;
+        selectors[12] = ResolutionHarnessFacet.setResolutionMode.selector;
+        selectors[13] = ResolutionHarnessFacet.setMultiOutcomeResolutionMarket.selector;
+        selectors[14] = ResolutionHarnessFacet.setMarginAssetFixture.selector;
     }
 
     function _parimutuelSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -848,6 +873,7 @@ abstract contract MarketFactoryFixture is DiamondFixture {
     MockUSDC internal collateralToken;
     MockEveToken internal eveToken;
     MarketFactoryFacet internal marketFactoryFacet;
+    MarketGroupFacet internal marketGroupFacet;
     MarketViewFacet internal marketViewFacet;
 
     function setUp() public virtual override {
@@ -861,9 +887,11 @@ abstract contract MarketFactoryFixture is DiamondFixture {
         collateralToken = new MockUSDC();
         eveToken = new MockEveToken();
         marketFactoryFacet = new MarketFactoryFacet();
+        marketGroupFacet = new MarketGroupFacet();
         marketViewFacet = new MarketViewFacet();
 
         _addFacet(address(marketFactoryFacet), _marketFactorySelectors());
+        _addFacet(address(marketGroupFacet), _marketGroupSelectors());
         _addFacet(address(marketViewFacet), _marketViewSelectors());
 
         collateralToken.mint(creator, 10_000_000e6);
@@ -886,39 +914,43 @@ abstract contract MarketFactoryFixture is DiamondFixture {
     }
 
     function _marketFactorySelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](6);
         selectors[0] = bytes4(
             keccak256(
                 "createMarket((string,string,string,uint64,uint64,uint128,bool,(string,string,string,string,string,string,string,string),(uint8,string,string,string,string,bytes32)))"
             )
         );
         selectors[1] = IMarketFactoryFacet.createMarkets.selector;
-        selectors[2] = bytes4(
-            keccak256(
-                "createMarketGroup(((string,string,uint8,string,(uint8,string,string,string,string,bytes32)),((string,string,string,uint64,uint64,uint128,bool,(string,string,string,string,string,string,string,string),(uint8,string,string,string,string,bytes32)),(string,string,int32,uint8))[]))"
-            )
-        );
-        selectors[3] = MarketFactoryFacet.syncMarketState.selector;
-        selectors[4] = bytes4(
+        selectors[2] = MarketFactoryFacet.syncMarketState.selector;
+        selectors[3] = bytes4(
             keccak256(
                 "createMarketWithCollateralProfile(uint8,(string,string,string,uint64,uint64,uint128,bool,(string,string,string,string,string,string,string,string),(uint8,string,string,string,string,bytes32)))"
             )
         );
-        selectors[5] = bytes4(keccak256("createMarket(string,string,string,uint64,uint64,uint128,bool)"));
-        selectors[6] = bytes4(
+        selectors[4] = bytes4(keccak256("createMarket(string,string,string,uint64,uint64,uint128,bool)"));
+        selectors[5] = bytes4(
+            keccak256("createMarketWithCollateralProfile(uint8,string,string,string,uint64,uint64,uint128,bool)")
+        );
+    }
+
+    function _marketGroupSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = bytes4(
+            keccak256(
+                "createMarketGroup(((string,string,uint8,string,(uint8,string,string,string,string,bytes32)),((string,string,string,uint64,uint64,uint128,bool,(string,string,string,string,string,string,string,string),(uint8,string,string,string,string,bytes32)),(string,string,int32,uint8))[]))"
+            )
+        );
+        selectors[1] = bytes4(
             keccak256(
                 "createMarketGroup(string,(string,string,string,uint64,uint64,uint128,bool,(string,string,string,string,string,string,string,string),(uint8,string,string,string,string,bytes32))[])"
             )
         );
-        selectors[7] = bytes4(
-            keccak256("createMarketWithCollateralProfile(uint8,string,string,string,uint64,uint64,uint128,bool)")
-        );
-        selectors[8] = bytes4(
+        selectors[2] = bytes4(
             keccak256(
                 "createMarketGroupFromExisting(((string,string,uint8,string,(uint8,string,string,string,string,bytes32)),(bytes32,(string,string,int32,uint8))[]))"
             )
         );
-        selectors[9] = bytes4(keccak256("addMarketsToGroup(bytes32,(bytes32,(string,string,int32,uint8))[])"));
+        selectors[3] = bytes4(keccak256("addMarketsToGroup(bytes32,(bytes32,(string,string,int32,uint8))[])"));
     }
 
     function _marketViewSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -1049,8 +1081,8 @@ abstract contract CurveTradingFixture is MarketFactoryFixture {
         collateralToken.mint(taker, 10_000_000e6);
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 500, 1_000, 0, 0, 0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookFeeSplit(8_500, 500, 1_000, 0, 0);
         OwnershipFacet(address(diamond)).registerCurveProfile(3, address(curveProfile));
         vm.stopPrank();
     }
@@ -1064,6 +1096,7 @@ abstract contract CurveTradingFixture is MarketFactoryFixture {
         _addFacet(address(new BookFacet()), _bookSelectors());
         _addFacet(address(new BookOrderFacet()), _bookOrderSelectors());
         _addFacet(address(new BookTradeFacet()), _bookTradeSelectors());
+        _addFacet(address(new BookSellFacet()), _bookSellSelectors());
         _addFacet(address(new BookViewFacet()), _bookViewSelectors());
     }
 
@@ -1074,24 +1107,23 @@ abstract contract CurveTradingFixture is MarketFactoryFixture {
     }
 
     function _curveLifecycleSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](16);
         selectors[0] = ICurveLifecycleFacet.postCurve.selector;
         selectors[1] = ICurveLifecycleFacet.postCurvesBatch.selector;
         selectors[2] = ICurveLifecycleFacet.postBidCurve.selector;
         selectors[3] = ICurveLifecycleFacet.postBidCurvesBatch.selector;
         selectors[4] = ICurveLifecycleFacet.postCurvesMultiMarket.selector;
         selectors[5] = ICurveLifecycleFacet.postBidCurvesMultiMarket.selector;
-        selectors[6] = ICurveLifecycleFacet.postBidCurveWithUSDC.selector;
-        selectors[7] = ICurveLifecycleFacet.updateCurve.selector;
-        selectors[8] = ICurveLifecycleFacet.updateCurvesBatch.selector;
-        selectors[9] = ICurveLifecycleFacet.updateCurveFromNow.selector;
-        selectors[10] = ICurveLifecycleFacet.updateCurvesFromNowBatch.selector;
-        selectors[11] = ICurveLifecycleFacet.topUpCurvesBatch.selector;
-        selectors[12] = ICurveLifecycleFacet.splitAndTopUpCurvesBatch.selector;
-        selectors[13] = ICurveLifecycleFacet.topUpCurvesMultiMarket.selector;
-        selectors[14] = ICurveLifecycleFacet.splitAndTopUpCurvesMultiMarket.selector;
-        selectors[15] = ICurveLifecycleFacet.cancelCurve.selector;
-        selectors[16] = ICurveLifecycleFacet.cancelCurvesBatch.selector;
+        selectors[6] = ICurveLifecycleFacet.updateCurve.selector;
+        selectors[7] = ICurveLifecycleFacet.updateCurvesBatch.selector;
+        selectors[8] = ICurveLifecycleFacet.updateCurveFromNow.selector;
+        selectors[9] = ICurveLifecycleFacet.updateCurvesFromNowBatch.selector;
+        selectors[10] = ICurveLifecycleFacet.topUpCurvesBatch.selector;
+        selectors[11] = ICurveLifecycleFacet.splitAndTopUpCurvesBatch.selector;
+        selectors[12] = ICurveLifecycleFacet.topUpCurvesMultiMarket.selector;
+        selectors[13] = ICurveLifecycleFacet.splitAndTopUpCurvesMultiMarket.selector;
+        selectors[14] = ICurveLifecycleFacet.cancelCurve.selector;
+        selectors[15] = ICurveLifecycleFacet.cancelCurvesBatch.selector;
     }
 
     function _curveTradeSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -1101,12 +1133,11 @@ abstract contract CurveTradingFixture is MarketFactoryFixture {
     }
 
     function _curveViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](4);
         selectors[0] = ICurveViewFacet.getCurveInfo.selector;
         selectors[1] = ICurveViewFacet.getCurveCommitment.selector;
         selectors[2] = ICurveViewFacet.previewCurveQuote.selector;
         selectors[3] = ICurveViewFacet.previewBestExecution.selector;
-        selectors[4] = ICurveViewFacet.getMarketTopOfBook.selector;
     }
 
     function _bookSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -1121,25 +1152,32 @@ abstract contract CurveTradingFixture is MarketFactoryFixture {
     }
 
     function _bookOrderSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = IBookOrderFacet.postBookCurve.selector;
         selectors[1] = IBookOrderFacet.postBookCurvesBatch.selector;
         selectors[2] = IBookOrderFacet.topUpBookCurvesBatch.selector;
         selectors[3] = IBookOrderFacet.reactivateBookCurve.selector;
+        selectors[4] = IBookOrderFacet.pruneBookCurves.selector;
     }
 
     function _bookTradeSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](2);
         selectors[0] = IBookTradeFacet.fillBookBest.selector;
         selectors[1] = IBookTradeFacet.fillBookBestFor.selector;
-        selectors[2] = IBookTradeFacet.sellBookBest.selector;
-        selectors[3] = IBookTradeFacet.sellBookBestFor.selector;
+    }
+
+    function _bookSellSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = IBookTradeFacet.sellBookBest.selector;
+        selectors[1] = IBookTradeFacet.sellBookBestFor.selector;
     }
 
     function _bookViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](4);
         selectors[0] = IBookViewFacet.previewBookExecution.selector;
-        selectors[1] = IBookViewFacet.getBookTopOfBook.selector;
+        selectors[1] = IBookViewFacet.getBookCurveIdsPage.selector;
+        selectors[2] = IBookViewFacet.getActiveBookCurveIdsPage.selector;
+        selectors[3] = IBookViewFacet.getBookTopOfBookPage.selector;
     }
 
     function _createTradingMarket(string memory question, string memory category, uint64 duration)
@@ -1209,6 +1247,7 @@ abstract contract ResolutionFixture is MarketFactoryFixture {
     OBRResolutionFacet internal obrResolutionFacet;
     ResolverJuryFacet internal resolverJuryFacet;
     ResolutionHarnessFacet internal resolutionHarness;
+    EvesNegRiskAdapter internal negRiskAdapter;
 
     function setUp() public virtual override {
         super.setUp();
@@ -1225,12 +1264,16 @@ abstract contract ResolutionFixture is MarketFactoryFixture {
         obrResolutionFacet = new OBRResolutionFacet();
         resolverJuryFacet = new ResolverJuryFacet();
         resolutionHarness = new ResolutionHarnessFacet();
+        negRiskAdapter = new EvesNegRiskAdapter(address(conditionalTokens), address(collateralToken), address(diamond));
 
         _addFacet(address(bondManagerFacet), _bondManagerSelectors());
         _addFacet(address(bondTokenGateFacet), _bondTokenGateSelectors());
         _addFacet(address(obrResolutionFacet), _obrResolutionSelectors());
         _addFacet(address(resolverJuryFacet), _resolverJurySelectors());
         _addFacet(address(resolutionHarness), _resolutionHarnessSelectors());
+        _addFacet(address(new NegRiskConfigFacet()), _negRiskConfigSelectors());
+        _addFacet(address(new SeniorCapitalFacet()), _seniorCapitalSelectors());
+        _addFacet(address(new SeniorCapitalViewFacet()), _seniorCapitalViewSelectors());
 
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setEveToken(address(eveToken));
@@ -1240,8 +1283,10 @@ abstract contract ResolutionFixture is MarketFactoryFixture {
         OwnershipFacet(address(diamond)).setOpenResolutionTimeout(24 hours);
         OwnershipFacet(address(diamond)).setMaxEscalation(2);
         OwnershipFacet(address(diamond)).setParimutuelEpochWindowCap(30 days);
+        INegRiskConfigFacet(address(diamond)).setNegRiskAdapter(address(negRiskAdapter));
         vm.stopPrank();
         ResolutionHarnessFacet(address(diamond)).setResolutionMode(uint8(LibEveMarket.ResolutionMode.ObrJury));
+        ResolutionHarnessFacet(address(diamond)).setMarginAssetFixture(address(collateralToken));
 
         _mintAndApproveEve(creator, 20_000e18);
         _mintAndApproveEve(challengerOne, 20_000e18);
@@ -1260,6 +1305,35 @@ abstract contract ResolutionFixture is MarketFactoryFixture {
         selectors[0] = IBondManagerFacet.slashBond.selector;
         selectors[1] = IBondManagerFacet.returnBond.selector;
         selectors[2] = IBondManagerFacet.routeBond.selector;
+    }
+
+    function _negRiskConfigSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = INegRiskConfigFacet.setNegRiskAdapter.selector;
+        selectors[1] = INegRiskConfigFacet.negRiskAdapter.selector;
+    }
+
+    function _seniorCapitalSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](9);
+        selectors[0] = ISeniorCapitalFacet.depositSeniorCapital.selector;
+        selectors[1] = ISeniorCapitalFacet.withdrawPendingSeniorCapital.selector;
+        selectors[2] = ISeniorCapitalFacet.activateSeniorCapital.selector;
+        selectors[3] = ISeniorCapitalFacet.requestSeniorCapitalExit.selector;
+        selectors[4] = ISeniorCapitalFacet.cancelSeniorCapitalExit.selector;
+        selectors[5] = ISeniorCapitalFacet.processSeniorCapitalExits.selector;
+        selectors[6] = ISeniorCapitalFacet.claimSeniorCapitalFees.selector;
+        selectors[7] = ISeniorCapitalFacet.donateSeniorCapitalFees.selector;
+        selectors[8] = ISeniorCapitalFacet.claimSeniorCapitalExit.selector;
+    }
+
+    function _seniorCapitalViewSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](6);
+        selectors[0] = ISeniorCapitalFacet.seniorCapitalState.selector;
+        selectors[1] = ISeniorCapitalFacet.seniorCapitalAccount.selector;
+        selectors[2] = ISeniorCapitalFacet.seniorCapitalExit.selector;
+        selectors[3] = ISeniorCapitalFacet.seniorCapitalBucket.selector;
+        selectors[4] = ISeniorCapitalFacet.pendingSeniorCapitalFees.selector;
+        selectors[5] = ISeniorCapitalFacet.claimableSeniorCapitalExit.selector;
     }
 
     function _bondTokenGateSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -1357,15 +1431,17 @@ abstract contract SettlementFeeFixture is ResolutionFixture {
         _addSettlementCurveFacets();
         _addFacet(address(feeRouterFacet), _feeRouterSelectors());
         _addFacet(address(marketSettlementFacet), _marketSettlementSelectors());
-        _addFacet(address(new TradeRouterFacet()), _tradeRouterSelectors());
-        _addFacet(address(new TradeRouterSellFacet()), _tradeRouterSellSelectors());
+        _addFacet(address(new CollateralTradeRouterFacet()), _tradeRouterSelectors());
+        _addFacet(address(new CollateralTradeRouterExactFacet()), _tradeRouterExactSelectors());
+        _addFacet(address(new CollateralTradeRouterSellFacet()), _tradeRouterSellSelectors());
+        _addFacet(address(new CollateralTradeRouterPreviewFacet()), _tradeRouterPreviewSelectors());
 
         collateralToken.mint(maker, 10_000_000e6);
         collateralToken.mint(taker, 10_000_000e6);
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 500, 1_000, 0, 0, 0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookFeeSplit(8_500, 500, 1_000, 0, 0);
         OwnershipFacet(address(diamond)).registerCurveProfile(3, address(curveProfile));
         vm.stopPrank();
     }
@@ -1407,16 +1483,15 @@ abstract contract SettlementFeeFixture is ResolutionFixture {
     }
 
     function _settlementCurveViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](4);
         selectors[0] = ICurveViewFacet.getCurveInfo.selector;
         selectors[1] = ICurveViewFacet.getCurveCommitment.selector;
         selectors[2] = ICurveViewFacet.previewCurveQuote.selector;
         selectors[3] = ICurveViewFacet.previewBestExecution.selector;
-        selectors[4] = ICurveViewFacet.getMarketTopOfBook.selector;
     }
 
     function _feeRouterSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](12);
         selectors[0] = IFeeRouterFacet.claimCreatorFees.selector;
         selectors[1] = IFeeRouterFacet.claimMakerFees.selector;
         selectors[2] = IFeeRouterFacet.previewMakerFees.selector;
@@ -1425,6 +1500,10 @@ abstract contract SettlementFeeFixture is ResolutionFixture {
         selectors[5] = IFeeRouterFacet.fundMarketMakerRewards.selector;
         selectors[6] = IFeeRouterFacet.claimMarketMakerRewards.selector;
         selectors[7] = IFeeRouterFacet.previewMarketMakerRewards.selector;
+        selectors[8] = IFeeRouterFacet.claimBookCreatorFees.selector;
+        selectors[9] = IFeeRouterFacet.claimBookMakerFees.selector;
+        selectors[10] = IFeeRouterFacet.previewBookMakerFees.selector;
+        selectors[11] = IFeeRouterFacet.getMakerBookAccounting.selector;
     }
 
     function _marketSettlementSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -1436,19 +1515,24 @@ abstract contract SettlementFeeFixture is ResolutionFixture {
     }
 
     function _tradeRouterSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
-        selectors[0] = ITradeRouter.buyWithEveUSDC.selector;
-        selectors[1] = ITradeRouter.buyWithUSDC.selector;
-        selectors[2] = ITradeRouter.splitWithUSDC.selector;
-        selectors[3] = ITradeRouter.buyWithCollateral.selector;
+        selectors = new bytes4[](1);
+        selectors[0] = ITradeRouter.buyWithCollateral.selector;
+    }
+
+    function _tradeRouterExactSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = ITradeRouter.buyWithCollateralExact.selector;
     }
 
     function _tradeRouterSellSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
-        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[1] = ITradeRouter.sellWithUSDC.selector;
-        selectors[2] = ITradeRouter.previewSellBest.selector;
-        selectors[3] = ITradeRouter.sellWithCollateral.selector;
+        selectors = new bytes4[](1);
+        selectors[0] = ITradeRouter.sellWithCollateral.selector;
+    }
+
+    function _tradeRouterPreviewSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = ITradeRouter.previewSellBest.selector;
+        selectors[1] = ITradeRouter.executeExactRouterTransfer.selector;
     }
 
     function _createTradingMarket(string memory question, string memory category, uint64 duration)
@@ -1543,7 +1627,7 @@ abstract contract SettlementFeeFixture is ResolutionFixture {
         )
     {
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
 
         (marketId, expected, expiryTime) = _createTradingMarket(question, category, duration);
         _splitFrom(maker, marketId, makerInventory);
@@ -1567,7 +1651,7 @@ abstract contract SettlementFeeFixture is ResolutionFixture {
         uint128 sharesOut;
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
 
         (marketId, expected, expiryTime) = _createTradingMarket(question, category, duration);
         _splitFrom(maker, marketId, makerInventory);
@@ -1622,8 +1706,7 @@ abstract contract SettlementFeeFixture is ResolutionFixture {
     }
 }
 
-abstract contract EveUSDCRouterFixture is DiamondFixture {
-    uint256 internal constant USDC_TO_EVEUSDC_SCALE = 1e12;
+abstract contract CollateralRouterFixture is DiamondFixture {
     uint16 internal constant DEFAULT_FILL_FEE_RATE = 0;
     uint72 internal constant DEFAULT_FLAT_PRICE = 500_000_000;
 
@@ -1640,9 +1723,8 @@ abstract contract EveUSDCRouterFixture is DiamondFixture {
     address internal treasury;
 
     MockConditionalTokens internal conditionalTokens;
-    MockUSDC internal usdc;
     MockEveToken internal eveToken;
-    EveUSDC internal eveUSDC;
+    MockCollateral internal routerCollateral;
     MockCurveProfile internal curveProfile;
 
     function setUp() public virtual override {
@@ -1654,9 +1736,8 @@ abstract contract EveUSDCRouterFixture is DiamondFixture {
         treasury = makeAddr("treasury");
 
         conditionalTokens = new MockConditionalTokens();
-        usdc = new MockUSDC();
         eveToken = new MockEveToken();
-        eveUSDC = new EveUSDC(address(usdc), address(this), address(this));
+        routerCollateral = new MockCollateral();
         curveProfile = new MockCurveProfile();
 
         _addFacet(address(new MarketFactoryFacet()), _marketFactorySelectors());
@@ -1666,17 +1747,14 @@ abstract contract EveUSDCRouterFixture is DiamondFixture {
         _addFacet(address(new CurveCLOBFacet()), _curveTradeSelectors());
         _addFacet(address(new CurveViewFacet()), _curveViewSelectors());
 
-        _wrapEveUSDC(creator, 100_000e6);
-        _wrapEveUSDC(maker, 100_000e6);
-        _wrapEveUSDC(taker, 100_000e6);
-        _approveEveUSDC(creator);
-        _approveEveUSDC(maker);
-        _approveEveUSDC(taker);
+        _fundRouterCollateral(creator, 100_000e18);
+        _fundRouterCollateral(maker, 100_000e18);
+        _fundRouterCollateral(taker, 100_000e18);
         eveToken.mint(creator, 20_000e18);
 
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setDefaultConditionalTokens(address(conditionalTokens));
-        OwnershipFacet(address(diamond)).setCollateralToken(address(eveUSDC));
+        OwnershipFacet(address(diamond)).setCollateralToken(address(routerCollateral));
         OwnershipFacet(address(diamond)).setEveToken(address(eveToken));
         OwnershipFacet(address(diamond)).setResolutionBondConfig(address(eveToken), 0, 0);
         OwnershipFacet(address(diamond)).setEveTreasury(treasury);
@@ -1684,23 +1762,16 @@ abstract contract EveUSDCRouterFixture is DiamondFixture {
         OwnershipFacet(address(diamond)).setMarketCreationFee(0);
         OwnershipFacet(address(diamond)).setMarketCreationBond(0);
         OwnershipFacet(address(diamond)).setDurationParams(1 hours, 90 days);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 500, 1_000, 0, 0, 0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookFeeSplit(8_500, 500, 1_000, 0, 0);
         OwnershipFacet(address(diamond)).registerCurveProfile(3, address(curveProfile));
         vm.stopPrank();
     }
 
-    function _wrapEveUSDC(address account, uint256 usdcAmount) internal {
-        usdc.mint(account, usdcAmount);
-        vm.startPrank(account);
-        usdc.approve(address(eveUSDC), usdcAmount);
-        eveUSDC.wrap(usdcAmount, account);
-        vm.stopPrank();
-    }
-
-    function _approveEveUSDC(address account) internal {
+    function _fundRouterCollateral(address account, uint256 amount) internal {
+        routerCollateral.mint(account, amount);
         vm.prank(account);
-        eveUSDC.approve(address(diamond), type(uint256).max);
+        routerCollateral.approve(address(diamond), type(uint256).max);
     }
 
     function _createTradingMarket(string memory question, uint64 duration)
@@ -1721,7 +1792,7 @@ abstract contract EveUSDCRouterFixture is DiamondFixture {
 
     function _splitFromMaker(bytes32 marketId, uint128 collateralAmount) internal returns (uint128 sharesMinted) {
         vm.startPrank(maker);
-        eveUSDC.approve(address(diamond), collateralAmount);
+        routerCollateral.approve(address(diamond), collateralAmount);
         sharesMinted = ICurveInventoryFacet(address(diamond)).splitInventory(marketId, collateralAmount);
         vm.stopPrank();
     }
@@ -1776,12 +1847,11 @@ abstract contract EveUSDCRouterFixture is DiamondFixture {
     }
 
     function _curveLifecycleSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](4);
         selectors[0] = ICurveLifecycleFacet.postCurve.selector;
         selectors[1] = ICurveLifecycleFacet.postBidCurve.selector;
-        selectors[2] = ICurveLifecycleFacet.postBidCurveWithUSDC.selector;
-        selectors[3] = ICurveLifecycleFacet.cancelCurve.selector;
-        selectors[4] = ICurveLifecycleFacet.updateCurve.selector;
+        selectors[2] = ICurveLifecycleFacet.cancelCurve.selector;
+        selectors[3] = ICurveLifecycleFacet.updateCurve.selector;
     }
 
     function _curveTradeSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -1791,11 +1861,10 @@ abstract contract EveUSDCRouterFixture is DiamondFixture {
     }
 
     function _curveViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](4);
         selectors[0] = ICurveViewFacet.getCurveInfo.selector;
         selectors[1] = ICurveViewFacet.getCurveCommitment.selector;
         selectors[2] = ICurveViewFacet.previewCurveQuote.selector;
         selectors[3] = ICurveViewFacet.previewBestExecution.selector;
-        selectors[4] = ICurveViewFacet.getMarketTopOfBook.selector;
     }
 }

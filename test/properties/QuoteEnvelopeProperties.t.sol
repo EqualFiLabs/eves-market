@@ -1,22 +1,26 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
-import {EveUSDC} from "../../src/EveUSDC.sol";
+import {MockCollateral} from "../helpers/MockCollateral.sol";
 import {MarginAccountFacet} from "../../src/facets/MarginAccountFacet.sol";
 import {QuoteEnvelopeFacet} from "../../src/facets/QuoteEnvelopeFacet.sol";
-import {IMarginAccountFacet} from "../../src/interfaces/IMarginAccountFacet.sol";
 import {IQuoteEnvelopeFacet} from "../../src/interfaces/IQuoteEnvelopeFacet.sol";
 import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {MarginTypes} from "../../src/types/MarginTypes.sol";
 import {QuoteEnvelopeTypes} from "../../src/types/QuoteEnvelopeTypes.sol";
 import {ITestStateFacet, TestBase} from "../helpers/TestBase.sol";
+import {
+    IMarginTestFacet as IMarginAccountFacet,
+    MarginAccountingHarnessFacet,
+    MarginAccountingHarnessSelectors
+} from "../helpers/MarginAccountingHarnessFacet.sol";
 
 contract QuoteEnvelopePropertiesTest is TestBase {
     uint128 internal constant MIN_PRICE = 300_000_000;
     uint128 internal constant MAX_PRICE = 700_000_000;
 
-    EveUSDC internal eveUSDC;
+    MockCollateral internal collateral;
     address internal riskManager;
     bytes32 internal marketId;
     bytes32 internal bookId;
@@ -26,15 +30,15 @@ contract QuoteEnvelopePropertiesTest is TestBase {
         super.setUp();
 
         riskManager = makeAddr("riskManager");
-        eveUSDC = new EveUSDC(address(usdc), makeAddr("onramp"), makeAddr("offramp"));
+        collateral = new MockCollateral();
 
         vm.startPrank(owner);
         diamond.registerFacet(address(new MarginAccountFacet()), _marginSelectors());
+        diamond.registerFacet(address(new MarginAccountingHarnessFacet()), MarginAccountingHarnessSelectors.harness());
         diamond.registerFacet(address(new QuoteEnvelopeFacet()), _quoteEnvelopeSelectors());
-        IMarginAccountFacet(address(diamond)).setMarginAsset(address(eveUSDC));
-        IMarginAccountFacet(address(diamond)).setMarginRiskManager(riskManager);
+        IMarginAccountFacet(address(diamond)).setMarginAsset(address(collateral));
         ITestStateFacet(address(diamond))
-            .configure(address(conditionalTokens), address(eveUSDC), address(eveToken), treasury);
+            .configure(address(conditionalTokens), address(collateral), address(eveToken), treasury);
         vm.stopPrank();
 
         (marketId,) = _createMarketFixture("Do quote envelope properties hold?", _expiry(7 days));
@@ -102,11 +106,14 @@ contract QuoteEnvelopePropertiesTest is TestBase {
         assertEq(bucket.openOrderRisk, 0);
     }
 
-    function testFuzz_CreateRiskMatchesPreview(uint256 volumeSeed, uint256 maxPriceSeed) public {
-        uint128 volume = uint128(bound(volumeSeed, 1e18, 250e18));
+    function testFuzz_CreateRiskMatchesPreview(uint256 initialVolumeSeed, uint256 maxVolumeSeed, uint256 maxPriceSeed)
+        public
+    {
+        uint128 initialVolume = uint128(bound(initialVolumeSeed, 1e18, 250e18));
+        uint128 maxVolume = uint128(bound(maxVolumeSeed, initialVolume, 300e18));
         uint128 maxPrice = uint128(bound(maxPriceSeed, MIN_PRICE, MAX_PRICE));
         QuoteEnvelopeTypes.CreateQuoteEnvelopeParams memory params =
-            _envelopeParams(volume, volume, MIN_PRICE, maxPrice);
+            _envelopeParams(maxVolume, initialVolume, MIN_PRICE, maxPrice);
         uint256 previewed = IQuoteEnvelopeFacet(address(diamond)).previewQuoteEnvelopeRisk(params);
 
         vm.prank(maker);
@@ -147,23 +154,18 @@ contract QuoteEnvelopePropertiesTest is TestBase {
     }
 
     function _depositAndAllocate(uint256 assets) internal {
-        _wrapEveUSDC(maker, assets / 1e12);
+        _fundCollateral(maker, assets / 1e12);
 
-        bytes32 riskDomain = IMarginAccountFacet(address(diamond)).riskDomainForMarketBook(marketId, bookId);
+        bytes32 riskDomain = IMarginAccountFacet(address(diamond)).riskDomainForMarket(marketId);
         vm.startPrank(maker);
-        eveUSDC.approve(address(diamond), assets);
+        collateral.approve(address(diamond), assets);
         IMarginAccountFacet(address(diamond)).depositMargin(assets, maker);
-        bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(riskDomain, assets);
+        bucketId = IMarginAccountFacet(address(diamond)).allocateBucketMargin(riskDomain, assets, 1);
         vm.stopPrank();
     }
 
-    function _wrapEveUSDC(address account, uint256 usdcAmount) internal {
-        usdc.mint(account, usdcAmount);
-
-        vm.startPrank(account);
-        usdc.approve(address(eveUSDC), usdcAmount);
-        eveUSDC.wrap(usdcAmount, account);
-        vm.stopPrank();
+    function _fundCollateral(address account, uint256 usdcAmount) internal {
+        collateral.mint(account, usdcAmount * 1e12);
     }
 
     function _expiry(uint256 duration) internal view returns (uint64) {
@@ -171,45 +173,7 @@ contract QuoteEnvelopePropertiesTest is TestBase {
     }
 
     function _marginSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](38);
-        selectors[0] = IMarginAccountFacet.marginConfig.selector;
-        selectors[1] = IMarginAccountFacet.depositMargin.selector;
-        selectors[2] = IMarginAccountFacet.withdrawMargin.selector;
-        selectors[3] = IMarginAccountFacet.allocateBucketMargin.selector;
-        selectors[4] = IMarginAccountFacet.releaseBucketMargin.selector;
-        selectors[5] = IMarginAccountFacet.getMarginAccount.selector;
-        selectors[6] = IMarginAccountFacet.getMarginBucket.selector;
-        selectors[7] = IMarginAccountFacet.bucketIdFor.selector;
-        selectors[8] = IMarginAccountFacet.riskDomainForBook.selector;
-        selectors[9] = IMarginAccountFacet.riskDomainForMarketBook.selector;
-        selectors[10] = IMarginAccountFacet.canBucketIncreaseRisk.selector;
-        selectors[11] = IMarginAccountFacet.setMarginAsset.selector;
-        selectors[12] = IMarginAccountFacet.setMarginRiskManager.selector;
-        selectors[13] = IMarginAccountFacet.setWarningRiskIncreaseAllowed.selector;
-        selectors[14] = IMarginAccountFacet.reserveBucketRisk.selector;
-        selectors[15] = IMarginAccountFacet.releaseReservedBucketRisk.selector;
-        selectors[16] = IMarginAccountFacet.activateReservedBucketRisk.selector;
-        selectors[17] = IMarginAccountFacet.releaseActiveBucketRisk.selector;
-        selectors[18] = IMarginAccountFacet.recordBucketProfit.selector;
-        selectors[19] = IMarginAccountFacet.recordBucketLoss.selector;
-        selectors[20] = IMarginAccountFacet.setBucketState.selector;
-        selectors[21] = IMarginAccountFacet.allocateBucketMarginWithKind.selector;
-        selectors[22] = IMarginAccountFacet.getBucketRisk.selector;
-        selectors[23] = IMarginAccountFacet.bucketLockedRisk.selector;
-        selectors[24] = IMarginAccountFacet.canBucketIncreaseRiskForBook.selector;
-        selectors[25] = IMarginAccountFacet.riskDomainOracleConfig.selector;
-        selectors[26] = IMarginAccountFacet.setRiskDomainOracleConfig.selector;
-        selectors[27] = IMarginAccountFacet.increaseOpenOrderRisk.selector;
-        selectors[28] = IMarginAccountFacet.releaseOpenOrderRisk.selector;
-        selectors[29] = IMarginAccountFacet.moveOpenOrderToPositionRisk.selector;
-        selectors[30] = IMarginAccountFacet.releasePositionRisk.selector;
-        selectors[31] = IMarginAccountFacet.recordBucketDebt.selector;
-        selectors[32] = IMarginAccountFacet.repayBucketDebt.selector;
-        selectors[33] = IMarginAccountFacet.accrueBucketFunding.selector;
-        selectors[34] = IMarginAccountFacet.settleBucketFunding.selector;
-        selectors[35] = IMarginAccountFacet.recordBucketUnrealizedPnl.selector;
-        selectors[36] = IMarginAccountFacet.recordBucketRecoveryPnl.selector;
-        selectors[37] = IMarginAccountFacet.recordBucketBadDebt.selector;
+        selectors = MarginAccountingHarnessSelectors.production();
     }
 
     function _quoteEnvelopeSelectors() internal pure returns (bytes4[] memory selectors) {
@@ -219,8 +183,8 @@ contract QuoteEnvelopePropertiesTest is TestBase {
         selectors[2] = IQuoteEnvelopeFacet.cancelQuoteEnvelope.selector;
         selectors[3] = IQuoteEnvelopeFacet.cancelQuoteEnvelopes.selector;
         selectors[4] = IQuoteEnvelopeFacet.getQuoteEnvelope.selector;
-        selectors[5] = IQuoteEnvelopeFacet.getOperatorQuoteEnvelopes.selector;
-        selectors[6] = IQuoteEnvelopeFacet.getBookQuoteEnvelopes.selector;
+        selectors[5] = IQuoteEnvelopeFacet.getOperatorQuoteEnvelopesPage.selector;
+        selectors[6] = IQuoteEnvelopeFacet.getBookQuoteEnvelopesPage.selector;
         selectors[7] = IQuoteEnvelopeFacet.previewQuoteEnvelopeRisk.selector;
         selectors[8] = IQuoteEnvelopeFacet.canUpdateQuoteEnvelope.selector;
     }

@@ -10,6 +10,13 @@ import {IGnosisConditionalTokens} from "../../src/interfaces/IGnosisConditionalT
 contract PlainGnosisCTFMock is ERC1155, IGnosisConditionalTokens {
     using SafeERC20 for IERC20;
 
+    struct PreparedPartition {
+        uint256 fullIndexSet;
+        uint256 freeIndexSet;
+        uint256[] positionIds;
+        uint256[] amounts;
+    }
+
     mapping(bytes32 conditionId => uint256 outcomeSlotCount) internal _outcomeSlotCounts;
     mapping(bytes32 conditionId => uint256 denominator) public override payoutDenominator;
     mapping(bytes32 conditionId => mapping(uint256 slot => uint256 numerator)) public override payoutNumerators;
@@ -30,10 +37,10 @@ contract PlainGnosisCTFMock is ERC1155, IGnosisConditionalTokens {
         uint256[] calldata partition,
         uint256 amount
     ) external {
-        (uint256 fullIndexSet, uint256 freeIndexSet, uint256[] memory positionIds, uint256[] memory amounts) =
+        PreparedPartition memory prepared =
             _preparePartition(collateralToken, parentCollectionId, conditionId, partition, amount);
 
-        if (freeIndexSet == 0) {
+        if (prepared.freeIndexSet == 0) {
             if (parentCollectionId == bytes32(0)) {
                 collateralToken.safeTransferFrom(msg.sender, address(this), amount);
             } else {
@@ -43,13 +50,14 @@ contract PlainGnosisCTFMock is ERC1155, IGnosisConditionalTokens {
             _burn(
                 msg.sender,
                 getPositionId(
-                    collateralToken, getCollectionId(parentCollectionId, conditionId, fullIndexSet ^ freeIndexSet)
+                    collateralToken,
+                    getCollectionId(parentCollectionId, conditionId, prepared.fullIndexSet ^ prepared.freeIndexSet)
                 ),
                 amount
             );
         }
 
-        _mintBatch(msg.sender, positionIds, amounts, "");
+        _mintBatch(msg.sender, prepared.positionIds, prepared.amounts, "");
     }
 
     function mergePositions(
@@ -59,12 +67,12 @@ contract PlainGnosisCTFMock is ERC1155, IGnosisConditionalTokens {
         uint256[] calldata partition,
         uint256 amount
     ) external {
-        (uint256 fullIndexSet, uint256 freeIndexSet, uint256[] memory positionIds, uint256[] memory amounts) =
+        PreparedPartition memory prepared =
             _preparePartition(collateralToken, parentCollectionId, conditionId, partition, amount);
 
-        _burnBatch(msg.sender, positionIds, amounts);
+        _burnBatch(msg.sender, prepared.positionIds, prepared.amounts);
 
-        if (freeIndexSet == 0) {
+        if (prepared.freeIndexSet == 0) {
             if (parentCollectionId == bytes32(0)) {
                 collateralToken.safeTransfer(msg.sender, amount);
             } else {
@@ -73,7 +81,10 @@ contract PlainGnosisCTFMock is ERC1155, IGnosisConditionalTokens {
         } else {
             _mint(
                 msg.sender,
-                getPositionId(collateralToken, getCollectionId(parentCollectionId, conditionId, fullIndexSet ^ freeIndexSet)),
+                getPositionId(
+                    collateralToken,
+                    getCollectionId(parentCollectionId, conditionId, prepared.fullIndexSet ^ prepared.freeIndexSet)
+                ),
                 amount,
                 ""
             );
@@ -191,23 +202,24 @@ contract PlainGnosisCTFMock is ERC1155, IGnosisConditionalTokens {
     )
         internal
         view
-        returns (uint256 fullIndexSet, uint256 freeIndexSet, uint256[] memory positionIds, uint256[] memory amounts)
+        returns (PreparedPartition memory prepared)
     {
         require(partition.length > 1, "got empty or singleton partition");
         uint256 outcomeSlotCount = _outcomeSlotCounts[conditionId];
         require(outcomeSlotCount != 0, "condition not prepared yet");
 
-        fullIndexSet = (uint256(1) << outcomeSlotCount) - 1;
-        freeIndexSet = fullIndexSet;
-        positionIds = new uint256[](partition.length);
-        amounts = new uint256[](partition.length);
+        prepared.fullIndexSet = (uint256(1) << outcomeSlotCount) - 1;
+        prepared.freeIndexSet = prepared.fullIndexSet;
+        prepared.positionIds = new uint256[](partition.length);
+        prepared.amounts = new uint256[](partition.length);
         for (uint256 index; index < partition.length; ++index) {
             uint256 indexSet = partition[index];
-            require(indexSet > 0 && indexSet < fullIndexSet, "got invalid index set");
-            require((indexSet & freeIndexSet) == indexSet, "partition not disjoint");
-            freeIndexSet ^= indexSet;
-            positionIds[index] = getPositionId(collateralToken, getCollectionId(parentCollectionId, conditionId, indexSet));
-            amounts[index] = amount;
+            require(indexSet > 0 && indexSet < prepared.fullIndexSet, "got invalid index set");
+            require((indexSet & prepared.freeIndexSet) == indexSet, "partition not disjoint");
+            prepared.freeIndexSet ^= indexSet;
+            prepared.positionIds[index] =
+                getPositionId(collateralToken, getCollectionId(parentCollectionId, conditionId, indexSet));
+            prepared.amounts[index] = amount;
         }
     }
 

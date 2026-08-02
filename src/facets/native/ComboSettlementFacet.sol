@@ -3,17 +3,19 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Math} from "../../../lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
+import {IERC1155} from "../../../lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155.sol";
 
 import {IComboSettlementFacet} from "../../interfaces/IComboSettlementFacet.sol";
+import {IEvesCTFSettlementAdapter} from "../../interfaces/IEvesCTFSettlementAdapter.sol";
+import {IEvesNegRiskAdapter} from "../../interfaces/IEvesNegRiskAdapter.sol";
 import {IEvesPositionManager} from "../../interfaces/IEvesPositionManager.sol";
 import {Errors} from "../../libraries/Errors.sol";
 import {Events} from "../../libraries/Events.sol";
 import {LibCombinatorialPosition} from "../../libraries/LibCombinatorialPosition.sol";
 import {LibEveMarket} from "../../libraries/LibEveMarket.sol";
 import {LibNativePosition} from "../../libraries/LibNativePosition.sol";
+import {LibNativeCollateral} from "../../libraries/LibNativeCollateral.sol";
 import {LibReentrancy} from "../../libraries/LibReentrancy.sol";
-import {NativePositionTypes} from "../../types/NativePositionTypes.sol";
 
 contract ComboSettlementFacet is IComboSettlementFacet {
     using SafeERC20 for IERC20;
@@ -22,41 +24,6 @@ contract ComboSettlementFacet is IComboSettlementFacet {
         LibReentrancy.enter();
         _;
         LibReentrancy.exit();
-    }
-
-    function compressCombo(uint256 positionId, uint128 amount, address receiver)
-        external
-        nonReentrant
-        returns (NativePositionTypes.CompressionResult memory result)
-    {
-        if (amount == 0) {
-            revert Errors.InvalidAmount(amount);
-        }
-        if (receiver == address(0)) {
-            revert Errors.ZeroAddress();
-        }
-
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        LibEveMarket.NativePositionMetadata storage metadata =
-            LibCombinatorialPosition.requireComboPosition(state, positionId);
-        address collateralToken = LibCombinatorialPosition.collateralTokenFor(state, metadata.conditionId);
-
-        LibCombinatorialPosition.CompressionPlan memory plan =
-            LibCombinatorialPosition.previewCompressionPlan(state, metadata, amount);
-        result = LibCombinatorialPosition.materializeReducedPosition(state, plan, metadata.outcomeIndex);
-
-        IEvesPositionManager positionManager = IEvesPositionManager(state.config.evesPositionManager);
-        positionManager.burn(msg.sender, positionId, amount);
-        if (result.newPositionId != 0 && result.positionAmount != 0) {
-            positionManager.mint(receiver, result.newPositionId, result.positionAmount);
-        }
-        if (result.collateralOut != 0) {
-            IERC20(collateralToken).safeTransfer(receiver, result.collateralOut);
-        }
-
-        emit Events.ComboCompressed(
-            msg.sender, positionId, result.newPositionId, amount, result.positionAmount, result.collateralOut
-        );
     }
 
     function redeemCombo(uint256 positionId, uint128 amount, address receiver)
@@ -77,14 +44,16 @@ contract ComboSettlementFacet is IComboSettlementFacet {
         address collateralToken = LibCombinatorialPosition.collateralTokenFor(state, metadata.conditionId);
 
         bool redeemable;
-        (redeemable, collateralOut) = _comboPayout(state, metadata, amount);
+        (redeemable, collateralOut) = LibCombinatorialPosition.comboPayout(state, metadata, amount);
         if (!redeemable) {
             revert Errors.ComboPositionNotRedeemable(positionId);
         }
 
         IEvesPositionManager(state.config.evesPositionManager).burn(msg.sender, positionId, amount);
-        if (collateralOut != 0) {
-            IERC20(collateralToken).safeTransfer(receiver, collateralOut);
+        if (state.comboConditions[metadata.conditionId].legCount == 1) {
+            collateralOut = _redeemSingleCTF(state, metadata, amount, receiver);
+        } else if (collateralOut != 0) {
+            LibNativeCollateral.releaseBacking(state, collateralToken, receiver, collateralOut);
         }
 
         emit Events.ComboRedeemed(msg.sender, positionId, amount, collateralOut);
@@ -98,38 +67,45 @@ contract ComboSettlementFacet is IComboSettlementFacet {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
         LibEveMarket.NativePositionMetadata storage metadata =
             LibCombinatorialPosition.requireComboPosition(state, positionId);
-        return _comboPayout(state, metadata, amount);
+        return LibCombinatorialPosition.comboPayout(state, metadata, amount);
     }
 
-    function _comboPayout(
+    function _redeemSingleCTF(
         LibEveMarket.EveMarketStorage storage state,
-        LibEveMarket.NativePositionMetadata storage metadata,
-        uint128 amount
-    ) internal view returns (bool redeemable, uint128 collateralOut) {
-        uint256[] storage legs = state.comboConditionLegs[metadata.conditionId];
-        uint256 payoutFactor = LibNativePosition.PAYOUT_FACTOR_DENOMINATOR;
-        bool hasUnresolved;
-
-        for (uint256 index; index < legs.length; ++index) {
-            (bool resolved, uint256 numerator) = LibCombinatorialPosition.legPayout(state, legs[index]);
-            if (!resolved) {
-                hasUnresolved = true;
-                continue;
-            }
-            if (numerator == 0) {
-                return metadata.outcomeIndex == LibNativePosition.OUTCOME_NO ? (true, amount) : (true, 0);
-            }
-            payoutFactor = Math.mulDiv(payoutFactor, numerator, LibNativePosition.RESULT_DENOMINATOR);
+        LibEveMarket.NativePositionMetadata storage comboMetadata,
+        uint128 amount,
+        address receiver
+    ) internal returns (uint128 payout) {
+        uint256 underlyingPositionId = state.comboConditionLegs[comboMetadata.conditionId][0];
+        if (comboMetadata.outcomeIndex == LibNativePosition.OUTCOME_NO) {
+            underlyingPositionId = LibCombinatorialPosition.flipLeg(state, underlyingPositionId);
         }
 
-        if (hasUnresolved) {
-            return (false, 0);
+        uint256 escrowed = state.ctfComboEscrow[underlyingPositionId];
+        if (escrowed < amount) {
+            revert Errors.ComboCTFEscrowInsufficient(underlyingPositionId, escrowed, amount);
+        }
+        state.ctfComboEscrow[underlyingPositionId] = escrowed - amount;
+
+        LibEveMarket.CTFPositionMetadata storage ctfMetadata = state.ctfPositionMetadata[underlyingPositionId];
+        uint256[] memory amounts = new uint256[](2);
+        if (underlyingPositionId == state.ctfConditionYesPositionId[ctfMetadata.conditionId]) {
+            amounts[0] = amount;
+        } else {
+            amounts[1] = amount;
         }
 
-        uint256 yesPayout = Math.mulDiv(amount, payoutFactor, LibNativePosition.PAYOUT_FACTOR_DENOMINATOR);
-        if (metadata.outcomeIndex == LibNativePosition.OUTCOME_YES) {
-            return (true, uint128(yesPayout));
+        IERC1155(ctfMetadata.positionToken).setApprovalForAll(ctfMetadata.settlementAdapter, true);
+        uint256 actualPayout;
+        if (ctfMetadata.settlementAdapter == state.negRiskAdapter) {
+            actualPayout = IEvesNegRiskAdapter(ctfMetadata.settlementAdapter)
+                .redeemPositions(ctfMetadata.conditionId, amounts, receiver);
+        } else {
+            actualPayout = IEvesCTFSettlementAdapter(ctfMetadata.settlementAdapter)
+                .redeemPositions(ctfMetadata.conditionId, amounts, receiver);
         }
-        return (true, uint128(uint256(amount) - yesPayout));
+        IERC1155(ctfMetadata.positionToken).setApprovalForAll(ctfMetadata.settlementAdapter, false);
+        if (actualPayout > type(uint128).max) revert Errors.InvalidAmount(actualPayout);
+        payout = uint128(actualPayout);
     }
 }

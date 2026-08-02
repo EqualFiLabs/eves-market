@@ -9,16 +9,25 @@ import {Events} from "src/libraries/Events.sol";
 import {LibCLOBBook} from "src/libraries/LibCLOBBook.sol";
 import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibEveMarket} from "src/libraries/LibEveMarket.sol";
+import {LibCurveIndex} from "src/libraries/LibCurveIndex.sol";
 import {LibResolverJury} from "src/libraries/LibResolverJury.sol";
 import {LibResolverRewards} from "src/libraries/LibResolverRewards.sol";
 import {ResolverRegistryFacet} from "src/facets/ResolverRegistryFacet.sol";
+import {ResolverRegistryReputationFacet} from "src/facets/ResolverRegistryReputationFacet.sol";
+import {ResolverRegistryRewardsFacet} from "src/facets/ResolverRegistryRewardsFacet.sol";
+import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {EvesPositionManager} from "src/tokens/EvesPositionManager.sol";
 import {IEvesPositionManager} from "src/interfaces/IEvesPositionManager.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
 import {MockUSDC} from "test/helpers/MockUSDC.sol";
 
-contract ResolverRegistryHarness is ResolverRegistryFacet {
+contract ResolverRegistryHarness is
+    ResolverRegistryFacet,
+    ResolverRegistryViewFacet,
+    ResolverRegistryRewardsFacet,
+    ResolverRegistryReputationFacet
+{
     function configureIdentity(
         address eveIdentity,
         address mintFeeToken,
@@ -155,6 +164,17 @@ contract ResolverRegistryHarness is ResolverRegistryFacet {
 
     function mintPosition(address positionToken, address to, uint256 positionId, uint256 amount) external {
         IEvesPositionManager(positionToken).mint(to, positionId, amount);
+    }
+
+    function seedInactiveCurveHistory(bytes32 bookId, uint256 count) external {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        uint256 firstCurveId = state.nextCurveId;
+        for (uint256 index; index < count; ++index) {
+            uint256 curveId = firstCurveId + index;
+            state.curves[curveId].bookId = bookId;
+            state.bookCurveIds[bookId].push(curveId);
+        }
+        state.nextCurveId = firstCurveId + count;
     }
 
     function seedBinaryCurveInventory(
@@ -303,6 +323,7 @@ contract ResolverRegistryHarness is ResolverRegistryFacet {
         curve.bookId = bookId;
         curve.remainingVolume = uint128(remainingVolume);
         state.bookCurveIds[bookId].push(curveId);
+        LibCurveIndex.registerCreatedCurve(state, curveId);
     }
 }
 
@@ -695,7 +716,7 @@ contract ResolverRegistryTest is Test {
         vm.prank(alice);
         feeToken.approve(address(registry), 5e6);
 
-        vm.warp(block.timestamp + 151 days);
+        vm.warp(vm.getBlockTimestamp() + 151 days);
         uint64 epochId = registry.openResolverEpochRotation();
 
         vm.expectEmit(true, true, true, true);
@@ -713,7 +734,7 @@ contract ResolverRegistryTest is Test {
         feeToken.mint(address(registry), 99e6);
         registry.accrueTradingReward(address(feeToken), 99e6);
 
-        vm.warp(block.timestamp + 181 days);
+        vm.warp(vm.getBlockTimestamp() + 181 days);
         registry.finalizeResolverTradingRewards(1, address(feeToken));
 
         (uint128 accrued, uint128 claimed, uint128 claimable) =
@@ -738,16 +759,16 @@ contract ResolverRegistryTest is Test {
         vm.prank(alice);
         registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         registry.closeResolverEpochRandomnessCommit(epochId);
-        uint256 referenceBlock = block.number + 1;
+        uint256 referenceBlock = vm.getBlockNumber() + 1;
 
         vm.prank(alice);
         registry.revealResolverEpochRandomness(epochId, _epochValue(identityId), _epochSalt(identityId));
 
         vm.roll(referenceBlock + 10);
-        vm.warp(block.timestamp + 1 days + 1);
-        uint64 seedReferenceBlock = uint64(block.number + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
+        uint64 seedReferenceBlock = uint64(vm.getBlockNumber() + 1);
         vm.expectEmit(true, false, false, true);
         emit Events.ResolverEpochSeedReferenceBlockSet(epochId, seedReferenceBlock);
         assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
@@ -774,20 +795,57 @@ contract ResolverRegistryTest is Test {
         vm.prank(bob);
         registry.optIntoResolverEpoch(_epochCommitment(epochId, secondIdentityId));
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         registry.closeResolverEpochRandomnessCommit(epochId);
 
         vm.prank(alice);
         registry.revealResolverEpochRandomness(epochId, _epochValue(firstIdentityId), _epochSalt(firstIdentityId));
 
-        vm.roll(block.number + 2);
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
-        vm.roll(block.number + 2);
+        vm.roll(vm.getBlockNumber() + 2);
         bytes32 seed = registry.finalizeResolverEpochSeed(epochId);
 
         assertGt(uint256(seed), 0);
         assertEq(registry.resolverEpoch(epochId).validRevealCount, 1);
+    }
+
+    function test_ExpiredEpochSeedReferenceReschedulesAndOpensSelectionWindow() public {
+        registry.setResolverPoolCap(1);
+        uint256 identityId = _fundedResolverIdentity(alice, 100e18);
+        uint64 epochId = registry.openResolverEpochRotation();
+
+        vm.prank(alice);
+        registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
+        vm.warp(registry.resolverEpoch(epochId).commitDeadline + 1);
+        registry.closeResolverEpochRandomnessCommit(epochId);
+        vm.prank(alice);
+        registry.revealResolverEpochRandomness(epochId, _epochValue(identityId), _epochSalt(identityId));
+
+        vm.warp(registry.resolverEpoch(epochId).revealDeadline + 1);
+        assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
+        IResolverRegistryFacet.ResolverEpochView memory scheduled = registry.resolverEpoch(epochId);
+        uint256 firstReferenceBlock = scheduled.seedReferenceBlock;
+        assertEq(scheduled.selectionDeadline, 0);
+
+        vm.roll(firstReferenceBlock + 257);
+        uint256 replacementReferenceBlock = vm.getBlockNumber() + 1;
+        vm.expectEmit(true, false, false, true);
+        emit Events.ResolverEpochSeedReferenceBlockSet(epochId, uint64(replacementReferenceBlock));
+        assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
+        assertEq(registry.resolverEpoch(epochId).seedReferenceBlock, replacementReferenceBlock);
+
+        vm.roll(replacementReferenceBlock + 1);
+        bytes32 seed = registry.finalizeResolverEpochSeed(epochId);
+        IResolverRegistryFacet.ResolverEpochView memory finalized = registry.resolverEpoch(epochId);
+        assertGt(uint256(seed), 0);
+        assertEq(finalized.selectionDeadline, vm.getBlockTimestamp() + 1 days);
+
+        registry.submitResolverEpochCandidateScore(epochId, identityId);
+        vm.warp(finalized.selectionDeadline + 1);
+        registry.finalizeResolverEpochSelection(epochId);
+        assertTrue(registry.resolverEpoch(epochId).selectionFinalized);
     }
 
     function test_FinalizeEpochSelectionRejectsPartiallyScoredCandidateSet() public {
@@ -800,20 +858,20 @@ contract ResolverRegistryTest is Test {
         registry.optIntoResolverEpoch(_epochCommitment(epochId, firstIdentityId));
         vm.prank(bob);
         registry.optIntoResolverEpoch(_epochCommitment(epochId, secondIdentityId));
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         registry.closeResolverEpochRandomnessCommit(epochId);
         vm.prank(alice);
         registry.revealResolverEpochRandomness(epochId, _epochValue(firstIdentityId), _epochSalt(firstIdentityId));
         vm.prank(bob);
         registry.revealResolverEpochRandomness(epochId, _epochValue(secondIdentityId), _epochSalt(secondIdentityId));
-        vm.roll(block.number + 2);
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
-        vm.roll(block.number + 2);
+        vm.roll(vm.getBlockNumber() + 2);
         registry.finalizeResolverEpochSeed(epochId);
 
         registry.submitResolverEpochCandidateScore(epochId, firstIdentityId);
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.ResolverEpochUnderfilled.selector, epochId, 1, 2));
         registry.finalizeResolverEpochSelection(epochId);
@@ -830,17 +888,17 @@ contract ResolverRegistryTest is Test {
         vm.prank(bob);
         registry.optIntoResolverEpoch(_epochCommitment(epochId, secondIdentityId));
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         registry.closeResolverEpochRandomnessCommit(epochId);
         vm.prank(alice);
         registry.revealResolverEpochRandomness(epochId, _epochValue(firstIdentityId), _epochSalt(firstIdentityId));
         vm.prank(bob);
         registry.revealResolverEpochRandomness(epochId, _epochValue(secondIdentityId), _epochSalt(secondIdentityId));
 
-        vm.roll(block.number + 2);
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
-        vm.roll(block.number + 2);
+        vm.roll(vm.getBlockNumber() + 2);
         registry.finalizeResolverEpochSeed(epochId);
 
         uint256 firstScore = registry.submitResolverEpochCandidateScore(epochId, firstIdentityId);
@@ -851,7 +909,7 @@ contract ResolverRegistryTest is Test {
         // scored candidates and refill with the non-selected resolver.
         registry.setRecordedStake(selectedIdentityId, 0);
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         vm.expectRevert(abi.encodeWithSelector(Errors.ResolverEpochUnderfilled.selector, epochId, 0, 1));
         registry.finalizeResolverEpochSelection(epochId);
     }
@@ -859,19 +917,19 @@ contract ResolverRegistryTest is Test {
     function test_SlashedEpochCandidateCannotSubmitScoreOrActivate() public {
         uint256 identityId = _activateFundedResolver(alice, 100e18);
 
-        vm.warp(block.timestamp + 151 days);
+        vm.warp(vm.getBlockTimestamp() + 151 days);
         uint64 epochId = registry.openResolverEpochRotation();
         vm.prank(alice);
         registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         registry.closeResolverEpochRandomnessCommit(epochId);
         vm.prank(alice);
         registry.revealResolverEpochRandomness(epochId, _epochValue(identityId), _epochSalt(identityId));
 
-        vm.roll(block.number + 2);
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
-        vm.roll(block.number + 2);
+        vm.roll(vm.getBlockNumber() + 2);
         registry.finalizeResolverEpochSeed(epochId);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.ResolverEpochCandidateIneligible.selector, epochId, identityId));
@@ -933,7 +991,7 @@ contract ResolverRegistryTest is Test {
         vm.prank(alice);
         registry.withdrawResolverStake();
 
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
 
         vm.prank(alice);
         registry.withdrawResolverStake();
@@ -978,6 +1036,23 @@ contract ResolverRegistryTest is Test {
 
         registry.seedBinaryCurveInventory(marketId, true, alice, 3, uint8(LibEveMarket.CurveSide.ASK), 1);
         assertTrue(registry.hasConflict(identityId, marketId));
+    }
+
+    function test_ResolverConflictGasDoesNotGrowWithInactiveCurveHistory() public {
+        uint256 identityId = _fundedResolverIdentity(alice, 100e18);
+        bytes32 marketId = keccak256("binary-history-liveness");
+        registry.setBinaryMarket(marketId, uint8(LibEveMarket.MarketType.CLOB), address(positions), 111, 222);
+        bytes32 yesBookId = LibCLOBBook.marketBookId(marketId, true);
+
+        // Synthetic history isolates the removed scan. Value-moving lifecycle coverage lives in
+        // the Book and MLO adapter suites.
+        registry.seedInactiveCurveHistory(yesBookId, 512);
+
+        (bool ok, bytes memory result) = address(registry).staticcall{gas: 250_000}(
+            abi.encodeWithSignature("hasConflict(uint256,bytes32)", identityId, marketId)
+        );
+        assertTrue(ok);
+        assertFalse(abi.decode(result, (bool)));
     }
 
     function test_HasConflictExcludesDirectParimutuelOutcomeHoldingsAboveThreshold() public {
@@ -1118,7 +1193,7 @@ contract ResolverRegistryTest is Test {
             registry.optIntoResolverEpoch(_epochCommitment(epochId, identityId));
         }
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         registry.closeResolverEpochRandomnessCommit(epochId);
 
         for (uint256 index; index < owners.length; ++index) {
@@ -1127,17 +1202,17 @@ contract ResolverRegistryTest is Test {
             registry.revealResolverEpochRandomness(epochId, _epochValue(identityId), _epochSalt(identityId));
         }
 
-        vm.roll(block.number + 2);
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         assertEq(registry.finalizeResolverEpochSeed(epochId), bytes32(0));
-        vm.roll(block.number + 2);
+        vm.roll(vm.getBlockNumber() + 2);
         registry.finalizeResolverEpochSeed(epochId);
 
         for (uint256 index; index < identityIds.length; ++index) {
             registry.submitResolverEpochCandidateScore(epochId, identityIds[index]);
         }
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(vm.getBlockTimestamp() + 1 days + 1);
         registry.finalizeResolverEpochSelection(epochId);
     }
 

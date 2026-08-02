@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
 import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
@@ -26,9 +27,9 @@ contract ParimutuelViewPropertiesTest is CurveTradingFixture {
         ResolutionHarnessFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 9_500, 0, 0, 0);
+        FeeConfigFacet(address(diamond)).setParimutuelFeeSplit(500, 9_500, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelEpochWindowCap(30 days);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
         vm.stopPrank();
     }
 

@@ -19,7 +19,6 @@ import {IFeeRouterFacet} from "../../src/interfaces/IFeeRouterFacet.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
 import {IMarketSettlementFacet} from "../../src/interfaces/IMarketSettlementFacet.sol";
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
-import {IVotes} from "../../src/interfaces/IVotes.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {Events} from "../../src/libraries/Events.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
@@ -188,7 +187,6 @@ contract ProtocolScaffoldingTest is TestBase {
             ICurveProfile.computePrice.selector,
             bytes4(keccak256("computePrice(uint128,uint128,uint64,uint64,uint64,bytes32)"))
         );
-        assertEq(IVotes.getPastVotes.selector, bytes4(keccak256("getPastVotes(address,uint256)")));
     }
 
     function test_ErrorSelectorsRemainStable() public pure {

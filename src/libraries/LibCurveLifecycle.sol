@@ -12,6 +12,7 @@ import {LibBookAccess} from "./LibBookAccess.sol";
 import {LibBookPricing} from "./LibBookPricing.sol";
 import {LibCLOBBook} from "./LibCLOBBook.sol";
 import {LibCurveEscrow} from "./LibCurveEscrow.sol";
+import {LibCurveIndex} from "./LibCurveIndex.sol";
 import {LibCurveMath} from "./LibCurveMath.sol";
 import {LibCurvePacking} from "./LibCurvePacking.sol";
 import {LibCurveStorage} from "./LibCurveStorage.sol";
@@ -301,7 +302,7 @@ library LibCurveLifecycle {
             CurveCLOBTypes.CurveTopUpParams calldata params_ = params[index];
             LibEveMarket.StoredCurve storage curve = state.curves[params_.curveId];
 
-            curve.remainingVolume += params_.addedVolume;
+            LibCurveIndex.increaseRemaining(state, params_.curveId, params_.addedVolume);
             if (curve.curveSide == LibEveMarket.CurveSide.BID) {
                 curve.quoteEscrowRemaining += LibCurveMath.quoteEscrowRequiredForPacked(
                     state.books[curve.bookId], params_.addedVolume, curve.packed
@@ -319,7 +320,7 @@ library LibCurveLifecycle {
         uint128 actualAddedVolume
     ) internal {
         LibEveMarket.StoredCurve storage curve = state.curves[curveId];
-        curve.remainingVolume += actualAddedVolume;
+        LibCurveIndex.increaseRemaining(state, curveId, actualAddedVolume);
         emit Events.CurveToppedUp(marketId, curveId, maker, actualAddedVolume, curve.remainingVolume);
     }
 
@@ -402,8 +403,7 @@ library LibCurveLifecycle {
         uint128 quoteEscrowRemaining = curve.quoteEscrowRemaining;
         bool wasExpired = LibCurveMath.isExpired(state, curve);
 
-        curve.active = false;
-        curve.remainingVolume = 0;
+        LibCurveIndex.deactivate(state, curveId);
         curve.quoteEscrowRemaining = 0;
 
         if (wasExpired) {

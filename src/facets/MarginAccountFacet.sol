@@ -9,6 +9,7 @@ import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 import {LibRiskEngine} from "../libraries/LibRiskEngine.sol";
 import {MarginTypes} from "../types/MarginTypes.sol";
 import {MarkOracleTypes} from "../types/MarkOracleTypes.sol";
+import {MLOProfitShareTypes} from "../types/MLOProfitShareTypes.sol";
 
 contract MarginAccountFacet is IMarginAccountFacet {
     modifier nonReentrant() {
@@ -29,19 +30,30 @@ contract MarginAccountFacet is IMarginAccountFacet {
         withdrawn = LibMarginAccount.withdraw(LibEveMarket.store(), assets, receiver);
     }
 
-    function allocateBucketMargin(bytes32 riskDomainId, uint256 assets) external returns (bytes32 bucketId) {
-        bucketId = LibMarginAccount.allocateToBucket(LibEveMarket.store(), riskDomainId, assets);
-    }
-
-    function allocateBucketMarginWithKind(bytes32 riskDomainId, uint256 assets, MarginTypes.BucketKind kind)
+    function allocateBucketMargin(bytes32 riskDomainId, uint256 assets, uint256 expectedSplitVersion)
         external
         returns (bytes32 bucketId)
     {
-        bucketId = LibMarginAccount.allocateToBucketWithKind(LibEveMarket.store(), riskDomainId, assets, kind);
+        bucketId = LibMarginAccount.allocateToBucket(LibEveMarket.store(), riskDomainId, assets, expectedSplitVersion);
     }
 
-    function releaseBucketMargin(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.releaseFromBucket(LibEveMarket.store(), bucketId, assets);
+    function allocateBucketMarginWithKind(
+        bytes32 riskDomainId,
+        uint256 assets,
+        MarginTypes.BucketKind kind,
+        uint256 expectedSplitVersion
+    ) external returns (bytes32 bucketId) {
+        bucketId = LibMarginAccount.allocateToBucketWithKind(
+            LibEveMarket.store(), riskDomainId, assets, kind, expectedSplitVersion
+        );
+    }
+
+    function releaseBucketMargin(bytes32 bucketId, uint256 assets)
+        external
+        nonReentrant
+        returns (MLOProfitShareTypes.ProfitRelease memory release)
+    {
+        release = LibMarginAccount.releaseFromBucket(LibEveMarket.store(), bucketId, assets);
     }
 
     function getMarginAccount(address operator) external view returns (MarginTypes.MarginAccount memory account) {
@@ -71,17 +83,22 @@ contract MarginAccountFacet is IMarginAccountFacet {
     {
         params = LibEveMarket.store().marginDefaultRiskParams[uint8(kind)];
         if (params.initialMarginBps == 0 && params.maintenanceMarginBps == 0) {
-            params = MarginTypes.RiskParams({initialMarginBps: 10_000, maintenanceMarginBps: 10_000});
+            params = MarginTypes.RiskParams({
+                initialMarginBps: 10_000, maintenanceMarginBps: kind == MarginTypes.BucketKind.MLO ? 9_000 : 10_000
+            });
         }
     }
 
-    function riskDomainRiskParams(bytes32 riskDomainId) external view returns (MarginTypes.RiskParams memory params) {
-        params = LibEveMarket.store().marginRiskDomainParams[riskDomainId];
+    function riskDomainRiskParams(bytes32 riskDomainId, MarginTypes.BucketKind kind)
+        external
+        view
+        returns (MarginTypes.RiskParams memory params)
+    {
+        params = LibEveMarket.store().marginRiskDomainParams[riskDomainId][uint8(kind)];
     }
 
     function bucketLockedRisk(bytes32 bucketId) external view returns (uint256 locked) {
-        MarginTypes.MarginBucket storage bucket = LibRiskEngine.requireBucket(LibEveMarket.store(), bucketId);
-        locked = LibRiskEngine.lockedRisk(bucket);
+        locked = LibRiskEngine.lockedRisk(LibEveMarket.store(), bucketId);
     }
 
     function bucketIdFor(address operator, bytes32 riskDomainId) external pure returns (bytes32 bucketId) {
@@ -92,8 +109,8 @@ contract MarginAccountFacet is IMarginAccountFacet {
         riskDomainId = LibMarginAccount.riskDomainForBook(bookId);
     }
 
-    function riskDomainForMarketBook(bytes32 marketId, bytes32 bookId) external pure returns (bytes32 riskDomainId) {
-        riskDomainId = LibMarginAccount.riskDomainForMarketBook(marketId, bookId);
+    function riskDomainForMarket(bytes32 marketId) external pure returns (bytes32 riskDomainId) {
+        riskDomainId = LibMarginAccount.riskDomainForMarket(marketId);
     }
 
     function canBucketIncreaseRisk(bytes32 bucketId) external view returns (bool canIncrease) {
@@ -132,14 +149,17 @@ contract MarginAccountFacet is IMarginAccountFacet {
         config = LibEveMarket.store().marginRiskDomainFundingConfigs[riskDomainId];
     }
 
+    function defaultFundingConfig(MarginTypes.BucketKind kind)
+        external
+        view
+        returns (MarginTypes.FundingConfig memory config)
+    {
+        config = LibEveMarket.store().marginDefaultFundingConfigs[uint8(kind)];
+    }
+
     function setMarginAsset(address asset) external {
         LibDiamond.enforceIsContractOwner();
         LibMarginAccount.setMarginAsset(LibEveMarket.store(), asset);
-    }
-
-    function setMarginRiskManager(address riskManager) external {
-        LibDiamond.enforceIsContractOwner();
-        LibMarginAccount.setRiskManager(LibEveMarket.store(), riskManager);
     }
 
     function setWarningRiskIncreaseAllowed(bool allowed) external {
@@ -173,6 +193,15 @@ contract MarginAccountFacet is IMarginAccountFacet {
         LibRiskEngine.configureRiskDomainFunding(LibEveMarket.store(), riskDomainId, mode, ratePerSecondWad);
     }
 
+    function setDefaultFundingConfig(
+        MarginTypes.BucketKind kind,
+        MarginTypes.FundingMode mode,
+        uint128 ratePerSecondWad
+    ) external {
+        LibDiamond.enforceIsContractOwner();
+        LibRiskEngine.configureDefaultFunding(LibEveMarket.store(), kind, mode, ratePerSecondWad);
+    }
+
     function setDefaultRiskParams(MarginTypes.BucketKind kind, uint16 initialMarginBps, uint16 maintenanceMarginBps)
         external
     {
@@ -180,104 +209,24 @@ contract MarginAccountFacet is IMarginAccountFacet {
         LibRiskEngine.configureDefaultRiskParams(LibEveMarket.store(), kind, initialMarginBps, maintenanceMarginBps);
     }
 
-    function setRiskDomainRiskParams(bytes32 riskDomainId, uint16 initialMarginBps, uint16 maintenanceMarginBps)
-        external
-    {
+    function setRiskDomainRiskParams(
+        bytes32 riskDomainId,
+        MarginTypes.BucketKind kind,
+        uint16 initialMarginBps,
+        uint16 maintenanceMarginBps
+    ) external {
         LibDiamond.enforceIsContractOwner();
         LibRiskEngine.configureRiskDomainRiskParams(
-            LibEveMarket.store(), riskDomainId, initialMarginBps, maintenanceMarginBps
+            LibEveMarket.store(), riskDomainId, kind, initialMarginBps, maintenanceMarginBps
         );
     }
 
-    function clearRiskDomainRiskParams(bytes32 riskDomainId) external {
+    function clearRiskDomainRiskParams(bytes32 riskDomainId, MarginTypes.BucketKind kind) external {
         LibDiamond.enforceIsContractOwner();
-        LibRiskEngine.clearRiskDomainRiskParams(LibEveMarket.store(), riskDomainId);
-    }
-
-    function reserveBucketRisk(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.reserveRisk(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function releaseReservedBucketRisk(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.releaseReservedRisk(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function activateReservedBucketRisk(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.activateReservedRisk(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function releaseActiveBucketRisk(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.releaseActiveRisk(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function increaseOpenOrderRisk(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.increaseOpenOrderRisk(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function releaseOpenOrderRisk(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.releaseOpenOrderRisk(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function moveOpenOrderToPositionRisk(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.moveOpenOrderToPositionRisk(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function releasePositionRisk(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.releasePositionRisk(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function recordBucketDebt(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.recordDebt(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function repayBucketDebt(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.repayDebt(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function accrueBucketFunding(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.accrueFunding(LibEveMarket.store(), bucketId, assets);
+        LibRiskEngine.clearRiskDomainRiskParams(LibEveMarket.store(), riskDomainId, kind);
     }
 
     function accrueBucketFundingNow(bytes32 bucketId) external returns (uint256 accrued) {
         accrued = LibRiskEngine.accrueConfiguredFunding(LibEveMarket.store(), bucketId);
-    }
-
-    function settleBucketFunding(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.settleFunding(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function recordBucketUnrealizedPnl(bytes32 bucketId, uint256 profits, uint256 losses) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.recordUnrealizedPnl(LibEveMarket.store(), bucketId, profits, losses);
-    }
-
-    function recordBucketRecoveryPnl(bytes32 bucketId, uint256 profits, uint256 losses) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.recordRecoveryPnl(LibEveMarket.store(), bucketId, profits, losses);
-    }
-
-    function recordBucketBadDebt(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.enforceRiskManager(LibEveMarket.store());
-        LibRiskEngine.recordBadDebt(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function recordBucketProfit(bytes32 bucketId, uint256 assets) external nonReentrant {
-        LibMarginAccount.recordProfit(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function recordBucketLoss(bytes32 bucketId, uint256 assets) external {
-        LibMarginAccount.recordLoss(LibEveMarket.store(), bucketId, assets);
-    }
-
-    function setBucketState(bytes32 bucketId, MarginTypes.BucketState state) external {
-        LibMarginAccount.setBucketState(LibEveMarket.store(), bucketId, state);
     }
 }

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {IMultiOutcomeOrderbookFacet} from "../interfaces/IMultiOutcomeOrderbookFacet.sol";
-import {LibCurveMath} from "../libraries/LibCurveMath.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 import {LibMultiOutcome} from "../libraries/LibMultiOutcome.sol";
 
@@ -65,6 +64,22 @@ contract MultiOutcomeOrderbookViewFacet {
         positionId = state.multiOutcomePositionIds[marketId][outcome];
     }
 
+    function getOutcomeCTFPositions(bytes32 marketId, uint8 outcome)
+        external
+        view
+        returns (IMultiOutcomeOrderbookFacet.OutcomeCTFPositionView memory positions)
+    {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibEveMarket.MultiOutcomeMarket storage market = LibMultiOutcome.requireMultiOutcome(state, marketId);
+        LibMultiOutcome.requireOutcome(market, outcome);
+        positions = IMultiOutcomeOrderbookFacet.OutcomeCTFPositionView({
+            questionId: state.multiOutcomeQuestionIds[marketId][outcome],
+            conditionId: state.multiOutcomeConditionIds[marketId][outcome],
+            yesPositionId: state.multiOutcomePositionIds[marketId][outcome],
+            noPositionId: state.multiOutcomeNoPositionIds[marketId][outcome]
+        });
+    }
+
     function getMultiOutcomeBooks(bytes32 marketId) external view returns (bytes32[] memory bookIds) {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
         LibEveMarket.MultiOutcomeMarket storage multi = LibMultiOutcome.requireMultiOutcome(state, marketId);
@@ -73,61 +88,5 @@ contract MultiOutcomeOrderbookViewFacet {
         for (uint8 outcome; outcome < multi.outcomeCount; ++outcome) {
             bookIds[outcome] = state.multiOutcomeBookIds[marketId][outcome];
         }
-    }
-
-    function getMultiOutcomeTopOfBook(bytes32 marketId)
-        external
-        view
-        returns (
-            uint128[] memory bestAskPrices,
-            uint128[] memory bestBidPrices,
-            uint128[] memory midpointPrices,
-            uint128[] memory lastTradePrices
-        )
-    {
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        LibEveMarket.MultiOutcomeMarket storage multi = LibMultiOutcome.requireMultiOutcome(state, marketId);
-        bestAskPrices = new uint128[](multi.outcomeCount);
-        bestBidPrices = new uint128[](multi.outcomeCount);
-        midpointPrices = new uint128[](multi.outcomeCount);
-        lastTradePrices = new uint128[](multi.outcomeCount);
-
-        for (uint8 outcome; outcome < multi.outcomeCount; ++outcome) {
-            bytes32 bookId = state.multiOutcomeBookIds[marketId][outcome];
-            if (bookId == bytes32(0)) {
-                continue;
-            }
-            LibEveMarket.Book storage book = state.books[bookId];
-            if (book.bookId != bookId) {
-                continue;
-            }
-            (bestAskPrices[outcome], bestBidPrices[outcome], midpointPrices[outcome], lastTradePrices[outcome]) =
-                _bookTopOfBook(state, bookId, book.lastTradePrice);
-        }
-    }
-
-    function _bookTopOfBook(LibEveMarket.EveMarketStorage storage state, bytes32 bookId, uint96 lastTradePrice)
-        internal
-        view
-        returns (uint128 bestAskPrice, uint128 bestBidPrice, uint128 midpointPrice, uint128 lastTradePrice_)
-    {
-        uint256[] storage ids = state.bookCurveIds[bookId];
-        for (uint256 index; index < ids.length; ++index) {
-            LibEveMarket.StoredCurve storage curve = state.curves[ids[index]];
-            if (!curve.active || curve.remainingVolume == 0) {
-                continue;
-            }
-            uint128 price = LibCurveMath.currentPrice(state, curve);
-            if (curve.curveSide == LibEveMarket.CurveSide.ASK) {
-                if (bestAskPrice == 0 || price < bestAskPrice) bestAskPrice = price;
-            } else if (price > bestBidPrice) {
-                bestBidPrice = price;
-            }
-        }
-
-        if (bestAskPrice != 0 && bestBidPrice != 0) {
-            midpointPrice = (bestAskPrice + bestBidPrice) / 2;
-        }
-        lastTradePrice_ = uint128(lastTradePrice);
     }
 }

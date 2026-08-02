@@ -4,14 +4,13 @@ pragma solidity ^0.8.28;
 import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {ISeniorCapitalPool} from "../interfaces/ISeniorCapitalPool.sol";
-import {IEvRiskStakingRewards} from "../interfaces/IEvRiskStakingRewards.sol";
 import {Errors} from "./Errors.sol";
 import {LibDelayedOrder} from "./LibDelayedOrder.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
 import {LibFeeRouting} from "./LibFeeRouting.sol";
 import {LibMakerRewards} from "./LibMakerRewards.sol";
 import {LibResolverRewards} from "./LibResolverRewards.sol";
+import {LibSeniorCapital} from "./LibSeniorCapital.sol";
 
 library LibBookAccounting {
     using SafeERC20 for IERC20;
@@ -24,7 +23,6 @@ library LibBookAccounting {
         uint128 seniorPoolFeeShare;
         uint128 treasuryFeeShare;
         uint128 resolverFeeShare;
-        uint128 evRiskFeeShare;
         uint128 processorFeeShare;
         address processor;
     }
@@ -46,12 +44,10 @@ library LibBookAccounting {
 
         fees.makerFeeShare = uint128((remainingFee * feeConfig.makerFeeBps) / FEE_BPS_DENOMINATOR);
         fees.creatorFeeShare = uint128((remainingFee * feeConfig.creatorFeeBps) / FEE_BPS_DENOMINATOR);
-        uint128 rawSeniorPoolFeeShare = uint128((remainingFee * feeConfig.vaultFeeBps) / FEE_BPS_DENOMINATOR);
+        uint128 rawSeniorPoolFeeShare = uint128((remainingFee * feeConfig.seniorPoolFeeBps) / FEE_BPS_DENOMINATOR);
         fees.resolverFeeShare = uint128((remainingFee * feeConfig.resolverFeeBps) / FEE_BPS_DENOMINATOR);
-        uint128 rawEvRiskFeeShare = uint128((remainingFee * feeConfig.evRiskFeeBps) / FEE_BPS_DENOMINATOR);
         fees.treasuryFeeShare = uint128(
             remainingFee - fees.makerFeeShare - fees.creatorFeeShare - rawSeniorPoolFeeShare - fees.resolverFeeShare
-                - rawEvRiskFeeShare
         );
 
         if (!state.config.permissionlessCreationEnabled && book.marketId != bytes32(0)) {
@@ -59,16 +55,10 @@ library LibBookAccounting {
             fees.creatorFeeShare = 0;
         }
 
-        LibFeeRouting.SeniorPoolFeeRoute memory route = LibFeeRouting.previewSeniorPoolFeeRoute(
-            state.config.seniorCapitalPool, book.quoteToken, rawSeniorPoolFeeShare
-        );
+        LibFeeRouting.SeniorPoolFeeRoute memory route =
+            LibFeeRouting.previewSeniorPoolFeeRoute(book.quoteToken, rawSeniorPoolFeeShare);
         fees.seniorPoolFeeShare = uint128(route.seniorPoolAmount);
         fees.treasuryFeeShare += uint128(route.treasuryAmount);
-
-        LibFeeRouting.EvRiskFeeRoute memory evRiskRoute =
-            LibFeeRouting.previewEvRiskFeeRoute(state.config.evRiskStakingRewards, rawEvRiskFeeShare);
-        fees.evRiskFeeShare = uint128(evRiskRoute.evRiskAmount);
-        fees.treasuryFeeShare += uint128(evRiskRoute.treasuryAmount);
     }
 
     function payBookQuoteFees(
@@ -84,12 +74,9 @@ library LibBookAccounting {
             quoteToken.safeTransfer(fees.processor, fees.processorFeeShare);
         }
         if (fees.seniorPoolFeeShare != 0) {
-            quoteToken.forceApprove(state.config.seniorCapitalPool, fees.seniorPoolFeeShare);
-            ISeniorCapitalPool(state.config.seniorCapitalPool).notifyRevenue(book.quoteToken, fees.seniorPoolFeeShare);
-        }
-        if (fees.evRiskFeeShare != 0) {
-            quoteToken.forceApprove(state.config.evRiskStakingRewards, fees.evRiskFeeShare);
-            IEvRiskStakingRewards(state.config.evRiskStakingRewards).notifyReward(book.quoteToken, fees.evRiskFeeShare);
+            LibSeniorCapital.accrueFees(
+                LibSeniorCapital.s(), fees.seniorPoolFeeShare, LibSeniorCapital.FEE_SOURCE_ORDERBOOK, book.bookId
+            );
         }
         LibResolverRewards.accrueTradingFee(book.quoteToken, fees.resolverFeeShare);
     }
@@ -148,17 +135,10 @@ library LibBookAccounting {
 
     function retainedBuyFeeBalance(
         LibEveMarket.EveMarketStorage storage state,
-        uint128 fee,
-        LibEveMarket.BookFeeConfig storage feeConfig
+        LibEveMarket.Book storage book,
+        uint128 fee
     ) internal view returns (uint128 retainedFeeBalance) {
-        uint128 makerFeeShare = uint128((uint256(fee) * feeConfig.makerFeeBps) / FEE_BPS_DENOMINATOR);
-        uint128 creatorFeeShare = uint128((uint256(fee) * feeConfig.creatorFeeBps) / FEE_BPS_DENOMINATOR);
-        uint128 resolverFeeShare = uint128((uint256(fee) * feeConfig.resolverFeeBps) / FEE_BPS_DENOMINATOR);
-
-        if (!state.config.permissionlessCreationEnabled) {
-            creatorFeeShare = 0;
-        }
-
-        retainedFeeBalance = makerFeeShare + creatorFeeShare + resolverFeeShare;
+        FeeShares memory fees = feeSharesForBook(state, book, fee);
+        retainedFeeBalance = fees.makerFeeShare + fees.creatorFeeShare + fees.seniorPoolFeeShare + fees.resolverFeeShare;
     }
 }

@@ -5,6 +5,11 @@ import {Errors} from "./Errors.sol";
 import {Events} from "./Events.sol";
 import {LibAdminConfig} from "./LibAdminConfig.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
+import {IEvesPositionManager} from "../interfaces/IEvesPositionManager.sol";
+import {IStaticsDollarCore} from "@statics/dollar/core/interfaces/IStaticsDollarCore.sol";
+import {IStaticsDollarCoreTypes} from "@statics/dollar/interfaces/IStaticsDollarCoreTypes.sol";
+import {IStaticsDollarGateway} from "@statics/dollar/interfaces/IStaticsDollarGateway.sol";
+import {IStaticsDollar} from "@statics/dollar/interfaces/IStaticsDollar.sol";
 
 library LibMarketConfigAdmin {
     uint8 internal constant MAX_ESCALATION_LIMIT = 3;
@@ -95,7 +100,21 @@ library LibMarketConfigAdmin {
         if (evesPositionManager == address(0)) {
             revert Errors.ZeroAddress();
         }
+        if (config.evesPositionManager != address(0)) {
+            revert Errors.EvesPositionManagerAlreadyConfigured(config.evesPositionManager);
+        }
         LibAdminConfig.enforceERC1155(evesPositionManager);
+
+        address boundDiamond;
+        try IEvesPositionManager(evesPositionManager).diamond() returns (address managerDiamond) {
+            boundDiamond = managerDiamond;
+        } catch {
+            revert Errors.EvesPositionManagerDiamondMismatch(evesPositionManager, address(this), address(0));
+        }
+        if (boundDiamond != address(this)) {
+            revert Errors.EvesPositionManagerDiamondMismatch(evesPositionManager, address(this), boundDiamond);
+        }
+
         previousEvesPositionManager = config.evesPositionManager;
         config.evesPositionManager = evesPositionManager;
     }
@@ -129,15 +148,35 @@ library LibMarketConfigAdmin {
         config.eveTreasury = eveTreasury;
     }
 
-    function setEvRiskStakingRewards(LibEveMarket.MarketConfig storage config, address evRiskStakingRewards)
-        internal
-        returns (address previousEvRiskStakingRewards)
-    {
-        if (evRiskStakingRewards != address(0) && evRiskStakingRewards.code.length == 0) {
-            revert Errors.ContractHasNoCode(evRiskStakingRewards);
+    function setStaticsDollarRail(
+        LibEveMarket.MarketConfig storage config,
+        address core,
+        uint256 profileId,
+        address usdcToken
+    ) internal {
+        if (core.code.length == 0) revert Errors.ContractHasNoCode(core);
+        if (usdcToken.code.length == 0) revert Errors.ContractHasNoCode(usdcToken);
+
+        IStaticsDollarCore staticsDollarCore = IStaticsDollarCore(core);
+        address staticsDollar = staticsDollarCore.staticsDollar();
+        address staticsDiamond = staticsDollarCore.periphery();
+        address positionNFT = staticsDollarCore.positionNFT();
+        if (
+            !staticsDollarCore.bootstrapFinalized() || staticsDollar != config.collateralToken
+                || staticsDiamond == address(0) || staticsDiamond != positionNFT || staticsDiamond.code.length == 0
+                || IStaticsDollar(staticsDollar).pool() != core || IStaticsDollarGateway(staticsDiamond).pool() != core
+                || IStaticsDollarGateway(staticsDiamond).staticsDollar() != staticsDollar
+        ) revert Errors.InvalidStaticsDollarRail();
+
+        IStaticsDollarCoreTypes.StableCollateralProfile memory profile = staticsDollarCore.collateralProfile(profileId);
+        if (profile.kind != IStaticsDollarCoreTypes.ProfileKind.Pegged || profile.collateralToken != usdcToken) {
+            revert Errors.InvalidStaticsDollarRail();
         }
-        previousEvRiskStakingRewards = config.evRiskStakingRewards;
-        config.evRiskStakingRewards = evRiskStakingRewards;
+
+        config.staticsDollarCore = core;
+        config.staticsDiamond = staticsDiamond;
+        config.peggedProfileId = profileId;
+        config.usdcToken = usdcToken;
     }
 
     function setParimutuelConfig(

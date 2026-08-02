@@ -10,7 +10,12 @@ import {ParlayMulticallFacet} from "../../src/facets/parlay/ParlayMulticallFacet
 import {ParlaySettlementFacet} from "../../src/facets/parlay/ParlaySettlementFacet.sol";
 import {ParlayUnderwritingFacet} from "../../src/facets/parlay/ParlayUnderwritingFacet.sol";
 import {ParlayViewFacet} from "../../src/facets/parlay/ParlayViewFacet.sol";
+import {MarginAccountFacet} from "../../src/facets/MarginAccountFacet.sol";
+import {SeniorCapitalFacet} from "../../src/facets/SeniorCapitalFacet.sol";
+import {SeniorCapitalViewFacet} from "../../src/facets/SeniorCapitalViewFacet.sol";
+import {IMarginAccountFacet} from "../../src/interfaces/IMarginAccountFacet.sol";
 import {IParlayFacet} from "../../src/interfaces/IParlayFacet.sol";
+import {ISeniorCapitalFacet} from "../../src/interfaces/ISeniorCapitalFacet.sol";
 import {BookFacet} from "../../src/facets/BookFacet.sol";
 import {ParlayTicketToken} from "../../src/tokens/ParlayTicketToken.sol";
 import {CurveCLOBTypes} from "../../src/types/CurveCLOBTypes.sol";
@@ -56,8 +61,42 @@ contract ParlayFacetTest is TestBase {
         diamond.registerFacet(address(parlayViewFacet), _parlayViewSelectors());
         diamond.registerFacet(address(parlayMulticallFacet), _parlayMulticallSelectors());
         diamond.registerFacet(address(bookFacet), _bookSelectors());
+        diamond.registerFacet(address(new MarginAccountFacet()), _marginAssetSelectors());
+        diamond.registerFacet(address(new SeniorCapitalFacet()), _seniorCapitalSelectors());
+        diamond.registerFacet(address(new SeniorCapitalViewFacet()), _seniorCapitalViewSelectors());
+        IMarginAccountFacet(address(diamond)).setMarginAsset(address(usdc));
         IParlayFacet(address(diamond)).setParlayConfig(address(ticketToken), feeRecipient, FLAT_FEE, 0, 10_000);
         vm.stopPrank();
+    }
+
+    function test_ParlayFeeAccruesToInternalSeniorIndex() public {
+        vm.prank(owner);
+        IParlayFacet(address(diamond)).setParlayConfig(address(ticketToken), feeRecipient, FLAT_FEE, 10_000, 0);
+        vm.startPrank(creator);
+        usdc.approve(address(diamond), 100e6);
+        ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(100e6);
+        vm.warp(block.timestamp + 24 hours);
+        ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
+        vm.stopPrank();
+
+        bytes32[] memory marketIds = _createMarkets(2);
+        ParlayTypes.ParlayLeg[] memory legs = _buildSortedLegs(marketIds, _yesYesOutcomes());
+        ParlayTypes.PayoutTier[] memory tiers = _allOrNothingTiers(2, 100e6);
+        vm.startPrank(maker);
+        usdc.approve(address(diamond), 100e6);
+        uint256 offerId = IParlayFacet(address(diamond))
+            .postParlayOffer(
+                legs, tiers, ParlayTypes.InvalidPolicy.VoidInvalidLegs, "ipfs://senior-fee", 10e6, 100e6, 1, _deadline()
+            );
+        vm.stopPrank();
+        vm.startPrank(taker);
+        usdc.approve(address(diamond), 13e6);
+        IParlayFacet(address(diamond)).fillParlayOffer(offerId, 1, taker);
+        vm.stopPrank();
+
+        assertEq(ISeniorCapitalFacet(address(diamond)).seniorCapitalState().feeReserve, FLAT_FEE);
+        assertEq(ISeniorCapitalFacet(address(diamond)).pendingSeniorCapitalFees(creator), FLAT_FEE);
+        assertEq(usdc.balanceOf(feeRecipient), 0);
     }
 
     function test_MakerPostedOfferEscrowsMintsFinalizesAndClaims() public {
@@ -848,6 +887,34 @@ contract ParlayFacetTest is TestBase {
         selectors[0] = ParlayAdminFacet.setParlayConfig.selector;
         selectors[1] = ParlayAdminFacet.getParlayConfig.selector;
         selectors[2] = ParlayAdminFacet.emitStrategyCreated.selector;
+    }
+
+    function _marginAssetSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = IMarginAccountFacet.setMarginAsset.selector;
+    }
+
+    function _seniorCapitalSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](9);
+        selectors[0] = ISeniorCapitalFacet.depositSeniorCapital.selector;
+        selectors[1] = ISeniorCapitalFacet.withdrawPendingSeniorCapital.selector;
+        selectors[2] = ISeniorCapitalFacet.activateSeniorCapital.selector;
+        selectors[3] = ISeniorCapitalFacet.requestSeniorCapitalExit.selector;
+        selectors[4] = ISeniorCapitalFacet.cancelSeniorCapitalExit.selector;
+        selectors[5] = ISeniorCapitalFacet.processSeniorCapitalExits.selector;
+        selectors[6] = ISeniorCapitalFacet.claimSeniorCapitalFees.selector;
+        selectors[7] = ISeniorCapitalFacet.donateSeniorCapitalFees.selector;
+        selectors[8] = ISeniorCapitalFacet.claimSeniorCapitalExit.selector;
+    }
+
+    function _seniorCapitalViewSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](6);
+        selectors[0] = ISeniorCapitalFacet.seniorCapitalState.selector;
+        selectors[1] = ISeniorCapitalFacet.seniorCapitalAccount.selector;
+        selectors[2] = ISeniorCapitalFacet.seniorCapitalExit.selector;
+        selectors[3] = ISeniorCapitalFacet.seniorCapitalBucket.selector;
+        selectors[4] = ISeniorCapitalFacet.pendingSeniorCapitalFees.selector;
+        selectors[5] = ISeniorCapitalFacet.claimableSeniorCapitalExit.selector;
     }
 
     function _parlayUnderwritingSelectors() internal pure returns (bytes4[] memory selectors) {

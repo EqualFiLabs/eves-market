@@ -35,11 +35,11 @@ interface MarketFactoryTypes {
         uint16 orderbookMakerFeeBps;
         uint16 orderbookCreatorFeeBps;
         uint16 orderbookProtocolFeeBps;
-        uint16 orderbookVaultFeeBps;
+        uint16 orderbookSeniorPoolFeeBps;
         uint16 parimutuelEntryFeeBps;
         uint16 parimutuelCreatorFeeBps;
         uint16 parimutuelProtocolFeeBps;
-        uint16 parimutuelVaultFeeBps;
+        uint16 parimutuelSeniorPoolFeeBps;
         uint8 collateralProfileId;
         uint128 payoutUnit;
         bool delayedExecutionEnabled;
@@ -216,27 +216,24 @@ interface MarketFactoryTypes {
         uint16 makerFeeBps;
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
-        uint16 vaultFeeBps;
+        uint16 seniorPoolFeeBps;
         uint16 resolverFeeBps;
-        uint16 evRiskFeeBps;
     }
 
     struct ParimutuelFeeConfigView {
         uint16 entryFeeBps;
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
-        uint16 vaultFeeBps;
+        uint16 seniorPoolFeeBps;
         uint16 resolverFeeBps;
-        uint16 evRiskFeeBps;
     }
 
     struct SpotFeeConfigView {
         uint16 tradeFeeBps;
         uint16 makerFeeBps;
         uint16 protocolFeeBps;
-        uint16 vaultFeeBps;
+        uint16 seniorPoolFeeBps;
         uint16 resolverFeeBps;
-        uint16 evRiskFeeBps;
     }
 
     struct ComboFeeConfigView {
@@ -244,9 +241,8 @@ interface MarketFactoryTypes {
         uint16 makerFeeBps;
         uint16 creatorFeeBps;
         uint16 protocolFeeBps;
-        uint16 vaultFeeBps;
+        uint16 seniorPoolFeeBps;
         uint16 resolverFeeBps;
-        uint16 evRiskFeeBps;
     }
 
     struct MarketConfigView {
@@ -255,8 +251,6 @@ interface MarketFactoryTypes {
         address collateralToken;
         address eveToken;
         address eveTreasury;
-        address seniorCapitalPool;
-        address evRiskStakingRewards;
         address parimutuelShareToken;
         BookFeeConfigView orderbookFeeConfig;
         SpotFeeConfigView spotFeeConfig;
@@ -288,5 +282,9 @@ interface MarketFactoryTypes {
         uint32 maxDelayedOrderRouteLength;
         uint128 minDelayedOrderQuoteWad;
         uint128 minDelayedOrderBaseWad;
+        address staticsDollarCore;
+        address staticsDiamond;
+        address usdcToken;
+        uint256 peggedProfileId;
     }
 }

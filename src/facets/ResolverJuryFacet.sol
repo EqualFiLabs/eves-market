@@ -141,7 +141,7 @@ contract ResolverJuryFacet is IResolverJuryFacet {
         }
 
         round.randomnessRevealDeadline = uint64(block.timestamp + config.randomnessRevealDuration);
-        round.randomnessReferenceBlock = uint64(block.number + 1);
+        round.randomnessReferenceBlock = 0;
         _payCallerIncentive(marketConfig, config.incentiveRandomness);
     }
 
@@ -183,24 +183,36 @@ contract ResolverJuryFacet is IResolverJuryFacet {
             return;
         }
 
-        if (block.number <= round.randomnessReferenceBlock) {
-            revert Errors.RandomnessNotReady(disputeId);
-        }
-        if (block.number > uint256(round.randomnessReferenceBlock) + BLOCKHASH_LOOKUP_WINDOW) {
-            _applyRandomnessFallback(disputeId, dispute, round, config);
+        if (
+            round.randomnessReferenceBlock == 0
+                || block.number > uint256(round.randomnessReferenceBlock) + BLOCKHASH_LOOKUP_WINDOW
+        ) {
+            _scheduleRandomnessReferenceBlock(disputeId, dispute, round);
             _payCallerIncentive(marketConfig, config.incentiveRandomness);
             return;
+        }
+        if (block.number <= round.randomnessReferenceBlock) {
+            revert Errors.RandomnessNotReady(disputeId);
         }
 
         bytes32 delayedBlockEntropy = blockhash(round.randomnessReferenceBlock);
         if (delayedBlockEntropy == bytes32(0)) {
-            _applyRandomnessFallback(disputeId, dispute, round, config);
+            _scheduleRandomnessReferenceBlock(disputeId, dispute, round);
             _payCallerIncentive(marketConfig, config.incentiveRandomness);
             return;
         }
 
         round.seed = _deriveRandomnessSeed(disputeId, round.randomnessAccumulator, delayedBlockEntropy);
         _payCallerIncentive(marketConfig, config.incentiveRandomness);
+    }
+
+    function _scheduleRandomnessReferenceBlock(
+        bytes32 disputeId,
+        LibResolverJury.Dispute storage dispute,
+        LibResolverJury.DisputeRound storage round
+    ) internal {
+        round.randomnessReferenceBlock = uint64(block.number + 1);
+        emit Events.RandomnessSeedReferenceBlockSet(disputeId, dispute.currentRound, round.randomnessReferenceBlock);
     }
 
     function selectCommittee(bytes32 disputeId) external override resolverJuryNonReentrant {

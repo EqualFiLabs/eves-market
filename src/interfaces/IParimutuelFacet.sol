@@ -36,9 +36,8 @@ interface IParimutuelFacet {
         uint128 totalFee;
         uint128 creatorFee;
         uint128 protocolFee;
-        uint128 vaultFee;
+        uint128 seniorPoolFee;
         uint128 resolverFee;
-        uint128 evRiskFee;
         uint128 netCollateral;
         uint128 sharesMinted;
         uint256 multiplierBps;
@@ -102,9 +101,8 @@ interface IParimutuelFacet {
             uint128 totalFee,
             uint128 creatorFee,
             uint128 protocolFee,
-            uint128 vaultFee,
+            uint128 seniorPoolFee,
             uint128 resolverFee,
-            uint128 evRiskFee,
             uint128 netShares
         );
 

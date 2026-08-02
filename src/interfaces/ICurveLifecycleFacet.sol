@@ -27,17 +27,6 @@ interface ICurveLifecycleFacet {
         LibEveMarket.PositionTokenType positionTokenType
     ) external returns (uint256 curveId);
 
-    function postBidCurveWithUSDC(
-        bytes32 marketId,
-        bool isYesSide,
-        uint128 volume,
-        uint72 startPrice,
-        uint72 endPrice,
-        uint24 durationMinutes,
-        uint8 profileId,
-        LibEveMarket.PositionTokenType positionTokenType
-    ) external returns (uint256 curveId, uint128 usdcEscrowed);
-
     function postCurvesBatch(
         bytes32 marketId,
         LibEveMarket.PositionTokenType positionTokenType,

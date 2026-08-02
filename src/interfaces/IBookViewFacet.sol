@@ -7,8 +7,26 @@ interface IBookViewFacet {
         view
         returns (uint128 baseOut, uint128 fee, uint128 averagePrice, uint128 unfilledQuote);
 
-    function getBookTopOfBook(bytes32 bookId)
+    function getBookCurveIdsPage(bytes32 bookId, uint256 cursor, uint256 limit)
         external
         view
-        returns (uint128 bestAskPrice, uint128 bestBidPrice, uint128 midpointPrice, uint128 lastTradePrice);
+        returns (uint256[] memory curveIds, uint256 nextCursor, uint256 total);
+
+    function getActiveBookCurveIdsPage(bytes32 bookId, uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory curveIds, uint256 nextCursor, uint256 total);
+
+    function getBookTopOfBookPage(bytes32 bookId, uint256 cursor, uint256 limit)
+        external
+        view
+        returns (
+            uint128 bestAskPrice,
+            bool hasAsk,
+            uint128 bestBidPrice,
+            bool hasBid,
+            uint128 lastTradePrice,
+            uint256 nextCursor,
+            uint256 total
+        );
 }

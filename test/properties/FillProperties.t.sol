@@ -14,6 +14,7 @@ import {Errors} from "../../src/libraries/Errors.sol";
 import {LibCurvePacking} from "../../src/libraries/LibCurvePacking.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 
 import {CurveTradingFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 
@@ -168,7 +169,7 @@ contract FillPropertiesTest is CurveTradingFixture {
         returns (uint256 curveId, bytes32 marketId)
     {
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
 
         (marketId,,) = _createTradingMarket("fill-property", "curve", 7 days);
         _splitFrom(maker, marketId, volume);
@@ -186,7 +187,7 @@ contract FillPropertiesTest is CurveTradingFixture {
         uint128 volume = (shareUnits + 1) * priceDenominator;
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         (curve.marketId,,) = _createTradingMarket("configured-fill", "properties", 7 days);
         StateProbeFacet(address(diamond)).materializeMarketSideBookFixture(curve.marketId, true);

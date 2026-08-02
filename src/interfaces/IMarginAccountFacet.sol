@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {MarginTypes} from "../types/MarginTypes.sol";
 import {MarkOracleTypes} from "../types/MarkOracleTypes.sol";
+import {MLOProfitShareTypes} from "../types/MLOProfitShareTypes.sol";
 
 interface IMarginAccountFacet {
     error ZeroAmount();
@@ -10,10 +11,11 @@ interface IMarginAccountFacet {
     error ContractHasNoCode(address account);
     error MarginAssetNotSet();
     error MarginAssetInUse(uint256 liabilities);
+    error MarginAssetImmutable(address currentAsset, address proposedAsset);
+    error NonExactMarginTransfer(uint256 expected, uint256 actual);
     error InvalidRiskDomain(bytes32 riskDomainId);
     error MarginBucketNotFound(bytes32 bucketId);
     error NotMarginBucketOperator(address caller, address operator);
-    error NotMarginRiskManager(address caller);
     error InsufficientFreeMargin(address operator, uint256 required, uint256 available);
     error InsufficientBucketMargin(bytes32 bucketId, uint256 required, uint256 available);
     error InsufficientReservedRisk(bytes32 bucketId, uint256 required, uint256 available);
@@ -25,15 +27,18 @@ interface IMarginAccountFacet {
     error BucketMarginLocked(bytes32 bucketId, uint256 requested, uint256 locked);
     error BucketCannotIncreaseRisk(bytes32 bucketId, MarginTypes.BucketState state);
     error InvalidMarginRiskParams(uint256 initialMarginBps, uint256 maintenanceMarginBps);
+    error MLOInitialMarginMustBeFull(uint256 initialMarginBps);
     error InvalidRiskMarkConfig(uint256 lookbackSeconds, uint256 assetHaircutBps, uint256 liabilityPremiumBps);
     error InvalidFundingConfig(MarginTypes.FundingMode mode, uint256 ratePerSecondWad);
     error BucketBelowInitialMargin(bytes32 bucketId, uint256 equity, uint256 required);
     error RiskDomainOracleBlocked(
         bytes32 riskDomainId, bytes32 oracleKey, MarginTypes.RiskDomainOracleKind kind, uint8 oracleState
     );
+    error ScenarioManagedBucket(bytes32 bucketId);
+    error BucketMarginFrozen(bytes32 bucketId, MarginTypes.BucketState state);
+    error ClosedBucketHasObligations(bytes32 bucketId, uint256 lockedAssets);
 
     event MarginAssetSet(address indexed previousAsset, address indexed newAsset);
-    event MarginRiskManagerSet(address indexed previousRiskManager, address indexed newRiskManager);
     event WarningRiskIncreaseAllowedSet(bool allowed);
     event MarginDeposited(address indexed caller, address indexed receiver, uint256 assets);
     event MarginWithdrawn(address indexed caller, address indexed receiver, uint256 assets);
@@ -53,6 +58,7 @@ interface IMarginAccountFacet {
     event BucketDebtRepaid(bytes32 indexed bucketId, uint256 assets);
     event BucketFundingAccrued(bytes32 indexed bucketId, uint256 assets);
     event BucketFundingSettled(bytes32 indexed bucketId, uint256 assets);
+    event BucketFundingWrittenOff(bytes32 indexed bucketId, uint256 assets);
     event BucketUnrealizedPnlRecorded(bytes32 indexed bucketId, uint256 profits, uint256 losses);
     event BucketRecoveryPnlRecorded(bytes32 indexed bucketId, uint256 profits, uint256 losses);
     event BucketBadDebtRecorded(bytes32 indexed bucketId, uint256 assets);
@@ -61,11 +67,20 @@ interface IMarginAccountFacet {
     event BucketStateSet(
         bytes32 indexed bucketId, MarginTypes.BucketState previousState, MarginTypes.BucketState newState
     );
+    event ScenarioExposureInitialized(bytes32 indexed bucketId, bytes32 indexed marketId, uint8 outcomeCount);
+    event ScenarioExposureUpdated(
+        bytes32 indexed bucketId, bytes32 indexed marketId, uint8 outcomeCount, int256 maximumRawLoss
+    );
     event DefaultRiskParamsSet(
         MarginTypes.BucketKind indexed kind, uint16 initialMarginBps, uint16 maintenanceMarginBps
     );
-    event RiskDomainRiskParamsSet(bytes32 indexed riskDomainId, uint16 initialMarginBps, uint16 maintenanceMarginBps);
-    event RiskDomainRiskParamsCleared(bytes32 indexed riskDomainId);
+    event RiskDomainRiskParamsSet(
+        bytes32 indexed riskDomainId,
+        MarginTypes.BucketKind indexed kind,
+        uint16 initialMarginBps,
+        uint16 maintenanceMarginBps
+    );
+    event RiskDomainRiskParamsCleared(bytes32 indexed riskDomainId, MarginTypes.BucketKind indexed kind);
     event RiskDomainOracleConfigured(
         bytes32 indexed riskDomainId, MarginTypes.RiskDomainOracleKind kind, bytes32 indexed oracleKey
     );
@@ -75,6 +90,9 @@ interface IMarginAccountFacet {
     event RiskDomainFundingConfigSet(
         bytes32 indexed riskDomainId, MarginTypes.FundingMode mode, uint128 ratePerSecondWad
     );
+    event DefaultFundingConfigSet(
+        MarginTypes.BucketKind indexed kind, MarginTypes.FundingMode mode, uint128 ratePerSecondWad
+    );
 
     function marginConfig() external view returns (MarginTypes.MarginConfig memory config);
 
@@ -82,13 +100,20 @@ interface IMarginAccountFacet {
 
     function withdrawMargin(uint256 assets, address receiver) external returns (uint256 withdrawn);
 
-    function allocateBucketMargin(bytes32 riskDomainId, uint256 assets) external returns (bytes32 bucketId);
-
-    function allocateBucketMarginWithKind(bytes32 riskDomainId, uint256 assets, MarginTypes.BucketKind kind)
+    function allocateBucketMargin(bytes32 riskDomainId, uint256 assets, uint256 expectedSplitVersion)
         external
         returns (bytes32 bucketId);
 
-    function releaseBucketMargin(bytes32 bucketId, uint256 assets) external;
+    function allocateBucketMarginWithKind(
+        bytes32 riskDomainId,
+        uint256 assets,
+        MarginTypes.BucketKind kind,
+        uint256 expectedSplitVersion
+    ) external returns (bytes32 bucketId);
+
+    function releaseBucketMargin(bytes32 bucketId, uint256 assets)
+        external
+        returns (MLOProfitShareTypes.ProfitRelease memory release);
 
     function getMarginAccount(address operator) external view returns (MarginTypes.MarginAccount memory account);
 
@@ -102,7 +127,10 @@ interface IMarginAccountFacet {
 
     function defaultRiskParams(MarginTypes.BucketKind kind) external view returns (MarginTypes.RiskParams memory params);
 
-    function riskDomainRiskParams(bytes32 riskDomainId) external view returns (MarginTypes.RiskParams memory params);
+    function riskDomainRiskParams(bytes32 riskDomainId, MarginTypes.BucketKind kind)
+        external
+        view
+        returns (MarginTypes.RiskParams memory params);
 
     function bucketLockedRisk(bytes32 bucketId) external view returns (uint256 locked);
 
@@ -110,7 +138,7 @@ interface IMarginAccountFacet {
 
     function riskDomainForBook(bytes32 bookId) external pure returns (bytes32 riskDomainId);
 
-    function riskDomainForMarketBook(bytes32 marketId, bytes32 bookId) external pure returns (bytes32 riskDomainId);
+    function riskDomainForMarket(bytes32 marketId) external pure returns (bytes32 riskDomainId);
 
     function canBucketIncreaseRisk(bytes32 bucketId) external view returns (bool canIncrease);
 
@@ -133,9 +161,12 @@ interface IMarginAccountFacet {
         view
         returns (MarginTypes.FundingConfig memory config);
 
-    function setMarginAsset(address asset) external;
+    function defaultFundingConfig(MarginTypes.BucketKind kind)
+        external
+        view
+        returns (MarginTypes.FundingConfig memory config);
 
-    function setMarginRiskManager(address riskManager) external;
+    function setMarginAsset(address asset) external;
 
     function setWarningRiskIncreaseAllowed(bool allowed) external;
 
@@ -152,49 +183,23 @@ interface IMarginAccountFacet {
     function setRiskDomainFundingConfig(bytes32 riskDomainId, MarginTypes.FundingMode mode, uint128 ratePerSecondWad)
         external;
 
+    function setDefaultFundingConfig(
+        MarginTypes.BucketKind kind,
+        MarginTypes.FundingMode mode,
+        uint128 ratePerSecondWad
+    ) external;
+
     function setDefaultRiskParams(MarginTypes.BucketKind kind, uint16 initialMarginBps, uint16 maintenanceMarginBps)
         external;
 
-    function setRiskDomainRiskParams(bytes32 riskDomainId, uint16 initialMarginBps, uint16 maintenanceMarginBps)
-        external;
+    function setRiskDomainRiskParams(
+        bytes32 riskDomainId,
+        MarginTypes.BucketKind kind,
+        uint16 initialMarginBps,
+        uint16 maintenanceMarginBps
+    ) external;
 
-    function clearRiskDomainRiskParams(bytes32 riskDomainId) external;
-
-    function reserveBucketRisk(bytes32 bucketId, uint256 assets) external;
-
-    function releaseReservedBucketRisk(bytes32 bucketId, uint256 assets) external;
-
-    function activateReservedBucketRisk(bytes32 bucketId, uint256 assets) external;
-
-    function releaseActiveBucketRisk(bytes32 bucketId, uint256 assets) external;
-
-    function increaseOpenOrderRisk(bytes32 bucketId, uint256 assets) external;
-
-    function releaseOpenOrderRisk(bytes32 bucketId, uint256 assets) external;
-
-    function moveOpenOrderToPositionRisk(bytes32 bucketId, uint256 assets) external;
-
-    function releasePositionRisk(bytes32 bucketId, uint256 assets) external;
-
-    function recordBucketDebt(bytes32 bucketId, uint256 assets) external;
-
-    function repayBucketDebt(bytes32 bucketId, uint256 assets) external;
-
-    function accrueBucketFunding(bytes32 bucketId, uint256 assets) external;
+    function clearRiskDomainRiskParams(bytes32 riskDomainId, MarginTypes.BucketKind kind) external;
 
     function accrueBucketFundingNow(bytes32 bucketId) external returns (uint256 accrued);
-
-    function settleBucketFunding(bytes32 bucketId, uint256 assets) external;
-
-    function recordBucketUnrealizedPnl(bytes32 bucketId, uint256 profits, uint256 losses) external;
-
-    function recordBucketRecoveryPnl(bytes32 bucketId, uint256 profits, uint256 losses) external;
-
-    function recordBucketBadDebt(bytes32 bucketId, uint256 assets) external;
-
-    function recordBucketProfit(bytes32 bucketId, uint256 assets) external;
-
-    function recordBucketLoss(bytes32 bucketId, uint256 assets) external;
-
-    function setBucketState(bytes32 bucketId, MarginTypes.BucketState state) external;
 }

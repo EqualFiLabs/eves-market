@@ -16,7 +16,7 @@ import {CurveTradingFixture} from "../helpers/DiamondFixtures.sol";
 contract CurveProfilesTest is CurveTradingFixture {
     function test_LinearProfileInterpolatesAcrossDuration() public {
         uint256 curveId = _postProfileCurve(0, 200_000_000, 800_000_000, 100);
-        uint256 startTime = block.timestamp;
+        uint256 startTime = vm.getBlockTimestamp();
 
         vm.warp(startTime + 25 minutes);
         (,, uint128 quarterPrice,) = ICurveViewFacet(address(diamond)).previewCurveQuote(curveId, 100e6);
@@ -41,12 +41,13 @@ contract CurveProfilesTest is CurveTradingFixture {
 
     function test_ExponentialDecayProfileUsesSquaredRemainingFactor() public {
         uint256 curveId = _postProfileCurve(2, 900_000_000, 100_000_000, 100);
+        uint256 startTime = vm.getBlockTimestamp();
 
-        vm.warp(block.timestamp + 25 minutes);
+        vm.warp(startTime + 25 minutes);
         (,, uint128 quarterPrice,) = ICurveViewFacet(address(diamond)).previewCurveQuote(curveId, 100e6);
         assertEq(quarterPrice, 550_000_000);
 
-        vm.warp(block.timestamp + 25 minutes);
+        vm.warp(startTime + 50 minutes);
         (,, uint128 halfPrice,) = ICurveViewFacet(address(diamond)).previewCurveQuote(curveId, 100e6);
         assertEq(halfPrice, 300_000_000);
     }

@@ -8,6 +8,7 @@ import {LibBookAccess} from "../../src/libraries/LibBookAccess.sol";
 import {LibBookPricing} from "../../src/libraries/LibBookPricing.sol";
 import {LibCurvePacking} from "../../src/libraries/LibCurvePacking.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
+import {LibCurveIndex} from "../../src/libraries/LibCurveIndex.sol";
 import {LibProductAdapter} from "../../src/libraries/LibProductAdapter.sol";
 import {LibSafeCast} from "../../src/libraries/LibSafeCast.sol";
 import {ProductAdapterTypes} from "../../src/types/ProductAdapterTypes.sol";
@@ -122,6 +123,7 @@ contract ProductAdapterHarnessFacet {
         curve.bookId = params.bookId;
         curve.quoteEscrowRemaining = narrowed.quoteEscrow;
         state.bookCurveIds[params.bookId].push(curveId);
+        LibCurveIndex.registerCreatedCurve(state, curveId);
         book.curveCount += 1;
         if (book.marketId != bytes32(0) && state.markets[book.marketId].marketId != bytes32(0)) {
             state.markets[book.marketId].curveCount += 1;

@@ -7,6 +7,7 @@ import {IConditionalTokens} from "../../src/interfaces/IConditionalTokens.sol";
 import {IGnosisConditionalTokens} from "../../src/interfaces/IGnosisConditionalTokens.sol";
 import {IParimutuelShareToken} from "../../src/interfaces/IParimutuelShareToken.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
 import {ParimutuelShareToken} from "../../src/tokens/ParimutuelShareToken.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
@@ -22,16 +23,9 @@ contract AdminConfigTest is SettlementFeeFixture {
     event OrderbookEntryFeeBpsSet(uint16 previousEntryFeeBps, uint16 newEntryFeeBps);
     event SpotTradeFeeBpsSet(uint16 previousTradeFeeBps, uint16 newTradeFeeBps);
     event OrderbookFeeSplitSet(
-        uint16 makerFeeBps,
-        uint16 creatorFeeBps,
-        uint16 protocolFeeBps,
-        uint16 vaultFeeBps,
-        uint16 resolverFeeBps,
-        uint16 evRiskFeeBps
+        uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 seniorPoolFeeBps, uint16 resolverFeeBps
     );
-    event SpotFeeSplitSet(
-        uint16 makerFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps, uint16 resolverFeeBps, uint16 evRiskFeeBps
-    );
+    event SpotFeeSplitSet(uint16 makerFeeBps, uint16 protocolFeeBps, uint16 seniorPoolFeeBps, uint16 resolverFeeBps);
     event MarketCreationFeeSet(uint128 previousMarketCreationFee, uint128 newMarketCreationFee);
     event SpotBookCreationFeeSet(uint128 previousSpotBookCreationFee, uint128 newSpotBookCreationFee);
     event DefaultConditionalTokensSet(
@@ -227,36 +221,36 @@ contract AdminConfigTest is SettlementFeeFixture {
 
         vm.expectEmit(false, false, false, true, address(diamond));
         emit OrderbookEntryFeeBpsSet(previousFeeRate, newFeeRate);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(newFeeRate);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(newFeeRate);
 
         vm.expectEmit(false, false, false, true, address(diamond));
         emit OrderbookEntryFeeBpsSet(newFeeRate, 125);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(125);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(125);
         assertEq(StateProbeFacet(address(diamond)).orderbookEntryFeeBps(), 125);
 
         vm.expectEmit(false, false, false, true, address(diamond));
         emit SpotTradeFeeBpsSet(0, newSpotFeeRate);
-        OwnershipFacet(address(diamond)).setSpotTradeFeeBps(newSpotFeeRate);
+        FeeConfigFacet(address(diamond)).setSpotTradeFeeBps(newSpotFeeRate);
         assertEq(StateProbeFacet(address(diamond)).spotTradeFeeBps(), newSpotFeeRate);
 
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit OrderbookFeeSplitSet(8_500, 400, 1_000, 100, 0, 0);
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100, 0, 0);
+        emit OrderbookFeeSplitSet(8_500, 400, 1_000, 100, 0);
+        FeeConfigFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100, 0);
 
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit SpotFeeSplitSet(8_000, 1_900, 100, 0, 0);
-        OwnershipFacet(address(diamond)).setSpotFeeSplit(8_000, 1_900, 100, 0, 0);
+        emit SpotFeeSplitSet(8_000, 1_900, 100, 0);
+        FeeConfigFacet(address(diamond)).setSpotFeeSplit(8_000, 1_900, 100, 0);
 
         MarketFactoryTypes.MarketConfigView memory configView = IMarketFactoryFacet(address(diamond)).getMarketConfig();
         assertEq(configView.orderbookFeeConfig.makerFeeBps, 8_500);
         assertEq(configView.orderbookFeeConfig.creatorFeeBps, 400);
         assertEq(configView.orderbookFeeConfig.protocolFeeBps, 1_000);
-        assertEq(configView.orderbookFeeConfig.vaultFeeBps, 100);
+        assertEq(configView.orderbookFeeConfig.seniorPoolFeeBps, 100);
         assertEq(configView.orderbookFeeConfig.resolverFeeBps, 0);
         assertEq(configView.spotFeeConfig.tradeFeeBps, newSpotFeeRate);
         assertEq(configView.spotFeeConfig.makerFeeBps, 8_000);
         assertEq(configView.spotFeeConfig.protocolFeeBps, 1_900);
-        assertEq(configView.spotFeeConfig.vaultFeeBps, 100);
+        assertEq(configView.spotFeeConfig.seniorPoolFeeBps, 100);
         assertEq(configView.spotFeeConfig.resolverFeeBps, 0);
 
         vm.expectEmit(false, false, false, true, address(diamond));

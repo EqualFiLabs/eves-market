@@ -6,7 +6,6 @@ import {SafeERC20} from "../../../lib/openzeppelin-contracts/contracts/token/ERC
 import {Strings} from "../../../lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 
 import {IParlayTicketToken} from "../../interfaces/IParlayTicketToken.sol";
-import {ISeniorCapitalPool} from "../../interfaces/ISeniorCapitalPool.sol";
 import {Errors} from "../../libraries/Errors.sol";
 import {Events} from "../../libraries/Events.sol";
 import {LibCollateralProfile} from "../../libraries/LibCollateralProfile.sol";
@@ -14,6 +13,7 @@ import {LibEveMarket} from "../../libraries/LibEveMarket.sol";
 import {LibFeeRouting} from "../../libraries/LibFeeRouting.sol";
 import {LibParlay} from "../../libraries/LibParlay.sol";
 import {LibReentrancy} from "../../libraries/LibReentrancy.sol";
+import {LibSeniorCapital} from "../../libraries/LibSeniorCapital.sol";
 import {ParlayTypes} from "../../types/ParlayTypes.sol";
 
 abstract contract ParlayBase {
@@ -22,7 +22,7 @@ abstract contract ParlayBase {
     uint8 internal constant YES_OUTCOME = uint8(LibEveMarket.MarketOutcome.Yes);
     uint8 internal constant NO_OUTCOME = uint8(LibEveMarket.MarketOutcome.No);
     uint8 internal constant INVALID_OUTCOME = uint8(LibEveMarket.MarketOutcome.Invalid);
-    uint128 internal constant DEFAULT_EVEUSDC_PAYOUT_UNIT = 1 ether;
+    uint128 internal constant DEFAULT_COLLATERAL_PAYOUT_UNIT = 1 ether;
 
     struct ParlayCollateralContext {
         uint8 profileId;
@@ -240,19 +240,18 @@ abstract contract ParlayBase {
         }
 
         LibParlay.Config storage config = _requireConfig();
-        LibEveMarket.MarketConfig storage marketConfig = LibEveMarket.store().config;
-        uint256 rawSeniorPoolAmount = (fee * config.vaultFeeBps) / LibParlay.BPS_DENOMINATOR;
+        uint256 rawSeniorPoolAmount = (fee * config.seniorPoolFeeBps) / LibParlay.BPS_DENOMINATOR;
         uint256 feeRecipientAmount = fee - rawSeniorPoolAmount;
 
-        LibFeeRouting.SeniorPoolFeeRoute memory route = LibFeeRouting.previewSeniorPoolFeeRoute(
-            marketConfig.seniorCapitalPool, address(collateralToken), rawSeniorPoolAmount
-        );
+        LibFeeRouting.SeniorPoolFeeRoute memory route =
+            LibFeeRouting.previewSeniorPoolFeeRoute(address(collateralToken), rawSeniorPoolAmount);
         uint256 seniorPoolAmount = route.seniorPoolAmount;
         feeRecipientAmount += route.treasuryAmount;
 
         if (seniorPoolAmount != 0) {
-            collateralToken.forceApprove(marketConfig.seniorCapitalPool, seniorPoolAmount);
-            ISeniorCapitalPool(marketConfig.seniorCapitalPool).notifyRevenue(address(collateralToken), seniorPoolAmount);
+            LibSeniorCapital.accrueFees(
+                LibSeniorCapital.s(), seniorPoolAmount, LibSeniorCapital.FEE_SOURCE_PARLAY, bytes32(ticketId)
+            );
         }
 
         if (feeRecipientAmount != 0) {
@@ -557,7 +556,7 @@ abstract contract ParlayBase {
         context = ParlayCollateralContext({
             profileId: 0,
             collateralToken: token,
-            payoutUnit: DEFAULT_EVEUSDC_PAYOUT_UNIT,
+            payoutUnit: DEFAULT_COLLATERAL_PAYOUT_UNIT,
             underwritingFee: config.underwritingFee
         });
     }

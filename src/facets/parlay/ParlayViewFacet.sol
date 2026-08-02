@@ -156,6 +156,24 @@ contract ParlayViewFacet is ParlayBase {
         LibParlay.ParlayTemplate storage template_ = _requireTemplate(state, bucket.templateId);
 
         string memory json = string.concat(
+            _ticketIdentityJson(ticketId, bucket, template_),
+            _ticketPricingJson(bucket, template_),
+            '"legs":',
+            _legsJson(state, bucket.templateId, template_.legCount),
+            ",",
+            '"payout_tiers":',
+            _tiersJson(state, bucket.templateId, template_.tierCount),
+            "}"
+        );
+        uri = string.concat(JSON_PREFIX, Base64.encode(bytes(json)));
+    }
+
+    function _ticketIdentityJson(
+        uint256 ticketId,
+        LibParlay.ParlayTicketBucket storage bucket,
+        LibParlay.ParlayTemplate storage template_
+    ) private view returns (string memory json) {
+        json = string.concat(
             '{"name":"Eves Parlay Ticket #',
             Strings.toString(ticketId),
             '",',
@@ -171,7 +189,15 @@ contract ParlayViewFacet is ParlayBase {
             '",',
             '"underwriter":"',
             Strings.toHexString(bucket.underwriter),
-            '",',
+            '",'
+        );
+    }
+
+    function _ticketPricingJson(
+        LibParlay.ParlayTicketBucket storage bucket,
+        LibParlay.ParlayTemplate storage template_
+    ) private view returns (string memory json) {
+        json = string.concat(
             '"premium_per_unit":"',
             Strings.toString(bucket.premiumPerUnit),
             '",',
@@ -183,14 +209,7 @@ contract ParlayViewFacet is ParlayBase {
             '",',
             '"invalid_policy":"',
             _invalidPolicyLabel(template_.invalidPolicy),
-            '",',
-            '"legs":',
-            _legsJson(state, bucket.templateId, template_.legCount),
-            ",",
-            '"payout_tiers":',
-            _tiersJson(state, bucket.templateId, template_.tierCount),
-            "}"
+            '",'
         );
-        uri = string.concat(JSON_PREFIX, Base64.encode(bytes(json)));
     }
 }

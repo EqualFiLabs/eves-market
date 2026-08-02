@@ -8,6 +8,7 @@ import {LibCLOBBook} from "./LibCLOBBook.sol";
 import {LibCurveMath} from "./LibCurveMath.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
 import {LibMLOPredictionFill} from "./LibMLOPredictionFill.sol";
+import {LibMLORecovery} from "./LibMLORecovery.sol";
 import {LibProductAdapter} from "./LibProductAdapter.sol";
 
 library LibDelayedOrderRoute {
@@ -50,7 +51,10 @@ library LibDelayedOrderRoute {
         LibEveMarket.DelayedOrder storage order,
         LibEveMarket.Book storage book,
         DelayedOrderTypes.DelayedOrderRoute calldata route
-    ) public view returns (PreparedRoute memory prepared) {
+    ) public returns (PreparedRoute memory prepared) {
+        for (uint256 index; index < route.curveIds.length; ++index) {
+            LibMLORecovery.maintainCurve(state, route.curveIds[index]);
+        }
         uint256 validCount;
         bool hasLimit = order.kind == LibEveMarket.DelayedOrderKind.LimitBuy;
         for (uint256 index; index < route.curveIds.length; ++index) {
@@ -106,7 +110,10 @@ library LibDelayedOrderRoute {
         LibEveMarket.DelayedOrder storage order,
         LibEveMarket.Book storage book,
         DelayedOrderTypes.DelayedOrderRoute calldata route
-    ) public view returns (PreparedRoute memory prepared) {
+    ) public returns (PreparedRoute memory prepared) {
+        for (uint256 index; index < route.curveIds.length; ++index) {
+            LibMLORecovery.maintainCurve(state, route.curveIds[index]);
+        }
         uint256 validCount;
         bool hasLimit = order.kind == LibEveMarket.DelayedOrderKind.LimitSell;
         for (uint256 index; index < route.curveIds.length; ++index) {
@@ -141,13 +148,16 @@ library LibDelayedOrderRoute {
         LibEveMarket.StoredCurve storage curve = state.curves[route.curveIds[index]];
         if (
             curve.bookId != order.bookId || !curve.active || curve.curveSide != LibEveMarket.CurveSide.BID
-                || curve.remainingVolume == 0 || curve.quoteEscrowRemaining == 0 || curve.maker == order.owner
+                || curve.remainingVolume == 0 || curve.maker == order.owner
                 || route.expectedGenerations[index] != curve.generation
                 || route.expectedCommitments[index] != LibCurveMath.curveCommitment(curve.packed)
                 || LibCurveMath.isExpired(state, curve)
         ) {
             return false;
         }
+        if (LibProductAdapter.isEscrowBackedCurve(state, route.curveIds[index])
+                ? curve.quoteEscrowRemaining == 0
+                : state.mloCurveSeniorReserved[route.curveIds[index]] == 0) return false;
         if (hasLimit && LibCurveMath.currentPrice(state, curve) < order.limitPrice) {
             return false;
         }
@@ -201,10 +211,10 @@ library LibDelayedOrderRoute {
             if (shares > curve.remainingVolume) {
                 shares = curve.remainingVolume;
             }
-            uint256 maxSharesByEscrow =
-                (uint256(curve.quoteEscrowRemaining) * uint256(book.priceDenominator)) / uint256(price);
-            if (shares > maxSharesByEscrow) {
-                shares = maxSharesByEscrow;
+            if (LibProductAdapter.isEscrowBackedCurve(state, prepared.curveIds[index])) {
+                uint256 maxSharesByEscrow =
+                    (uint256(curve.quoteEscrowRemaining) * uint256(book.priceDenominator)) / uint256(price);
+                if (shares > maxSharesByEscrow) shares = maxSharesByEscrow;
             }
             if (shares == 0) {
                 continue;

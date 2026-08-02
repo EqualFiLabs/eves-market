@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {MarketFactoryFacet} from "../../src/facets/MarketFactoryFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
 import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
@@ -34,7 +35,7 @@ abstract contract ParimutuelPropertiesBase is ResolutionFixture {
         _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500, 0, 0);
+        FeeConfigFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500, 0);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(shareToken), 250, 1);
         vm.stopPrank();
     }

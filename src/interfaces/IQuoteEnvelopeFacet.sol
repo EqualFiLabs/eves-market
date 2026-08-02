@@ -11,6 +11,7 @@ interface IQuoteEnvelopeFacet {
     error QuoteEnvelopeExpired(uint256 envelopeId, uint64 expiresAt);
     error NotQuoteEnvelopeOperator(address caller, address operator);
     error QuoteEnvelopeBucketNotFound(bytes32 bucketId);
+    error QuoteEnvelopeBucketKindMismatch(bytes32 bucketId, MarginTypes.BucketKind actualKind);
     error UnsupportedQuoteEnvelopeBook(bytes32 bookId);
     error QuoteEnvelopeRiskDomainMismatch(bytes32 bucketId, bytes32 expectedRiskDomain, bytes32 actualRiskDomain);
     error InvalidQuoteEnvelopeSide(uint8 side);
@@ -52,9 +53,15 @@ interface IQuoteEnvelopeFacet {
         view
         returns (QuoteEnvelopeTypes.QuoteEnvelopeView memory envelope);
 
-    function getOperatorQuoteEnvelopes(address operator) external view returns (uint256[] memory envelopeIds);
+    function getOperatorQuoteEnvelopesPage(address operator, uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory envelopeIds, uint256 nextCursor, uint256 total);
 
-    function getBookQuoteEnvelopes(bytes32 bookId) external view returns (uint256[] memory envelopeIds);
+    function getBookQuoteEnvelopesPage(bytes32 bookId, uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory envelopeIds, uint256 nextCursor, uint256 total);
 
     function previewQuoteEnvelopeRisk(QuoteEnvelopeTypes.CreateQuoteEnvelopeParams calldata params)
         external

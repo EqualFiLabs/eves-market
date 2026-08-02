@@ -17,6 +17,10 @@ interface IComboMarketFacet {
         external
         returns (ComboMarketPreparation memory preparation);
 
+    function createComboMarketFromLegs(uint256[] calldata positionIds)
+        external
+        returns (ComboMarketPreparation memory preparation);
+
     function computeComboBookId(bytes32 comboMarketId, bool isYesSide) external pure returns (bytes32 bookId);
 
     function getComboMarket(bytes32 comboMarketId)

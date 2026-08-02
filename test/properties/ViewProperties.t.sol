@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
-import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
+import {BookViewFacet} from "../../src/facets/BookViewFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
 import {IBookViewFacet} from "../../src/interfaces/IBookViewFacet.sol";
@@ -14,6 +14,8 @@ import {IFeeRouterFacet} from "../../src/interfaces/IFeeRouterFacet.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {FeeConfigFacet} from "../../src/facets/FeeConfigFacet.sol";
+import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 
 import {SettlementFeeFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
@@ -45,6 +47,13 @@ contract ViewPropertiesTest is SettlementFeeFixture {
         uint128 totalFeeDelta;
         uint128 totalQuoteDelta;
         uint256 takerYesDelta;
+    }
+
+    function setUp() public override {
+        super.setUp();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = IBookViewFacet.getBookTopOfBookPage.selector;
+        _addFacet(address(new BookViewFacet()), selectors);
     }
 
     struct RouteContext {
@@ -144,7 +153,7 @@ contract ViewPropertiesTest is SettlementFeeFixture {
         _approvePositions(trader);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         _postCurveFromMaker(marketId, true, curveVolume, yesPrice, yesPrice, 180, 0);
 
@@ -171,7 +180,7 @@ contract ViewPropertiesTest is SettlementFeeFixture {
         _approvePositions(maker);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(feeRate);
 
         curve.curveId = _postCurveFromMaker(curve.marketId, true, makerInventory, price, price, 180, 0);
         (curve.packed,,, curve.storedGeneration,,,,) = StateProbeFacet(address(diamond)).getStoredCurve(curve.curveId);
@@ -219,7 +228,7 @@ contract ViewPropertiesTest is SettlementFeeFixture {
         _approvePositions(trader);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
+        FeeConfigFacet(address(diamond)).setOrderbookEntryFeeBps(0);
 
         uint256 firstCurveId = _postCurveFromMaker(route.marketId, true, curveVolume, firstPrice, firstPrice, 180, 0);
 
@@ -335,12 +344,42 @@ contract ViewPropertiesTest is SettlementFeeFixture {
             uint128 midpointPrice,
             uint128 lastTradePrice,
             uint128 displayPrice
-        ) = ICurveViewFacet(address(diamond)).getMarketTopOfBook(marketId);
+        ) = _marketTopOfBook(marketId);
 
         assertEq(bestYesPrice, yesPrice);
         assertEq(bestNoPrice, noPrice);
         assertEq(midpointPrice, uint128((uint256(yesPrice) + (PRICE_SCALE - noPrice)) / 2));
         assertEq(lastTradePrice, 0);
         assertEq(displayPrice, midpointPrice);
+    }
+
+    function _marketTopOfBook(bytes32 marketId)
+        internal
+        view
+        returns (
+            uint128 bestYesPrice,
+            uint128 bestNoPrice,
+            uint128 midpointPrice,
+            uint128 lastTradePrice,
+            uint128 displayPrice
+        )
+    {
+        bytes32 yesBookId = LibCLOBBook.marketBookId(marketId, true);
+        bytes32 noBookId = LibCLOBBook.marketBookId(marketId, false);
+        bool hasYes;
+        bool hasNo;
+        (bestYesPrice, hasYes,,, lastTradePrice,,) =
+            IBookViewFacet(address(diamond)).getBookTopOfBookPage(yesBookId, 0, 128);
+        (bestNoPrice, hasNo,,,,,) = IBookViewFacet(address(diamond)).getBookTopOfBookPage(noBookId, 0, 128);
+        if (hasYes && hasNo) {
+            midpointPrice = uint128((uint256(bestYesPrice) + (PRICE_SCALE - bestNoPrice)) / 2);
+            displayPrice = midpointPrice;
+        } else if (hasYes) {
+            displayPrice = bestYesPrice;
+        } else if (hasNo) {
+            displayPrice = uint128(PRICE_SCALE - bestNoPrice);
+        } else {
+            displayPrice = lastTradePrice;
+        }
     }
 }

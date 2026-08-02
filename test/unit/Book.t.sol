@@ -6,10 +6,10 @@ import {CurveCLOBFacet} from "../../src/facets/CurveCLOBFacet.sol";
 import {CurveInventoryFacet} from "../../src/facets/CurveInventoryFacet.sol";
 import {CurveLifecycleFacet} from "../../src/facets/CurveLifecycleFacet.sol";
 import {CurveViewFacet} from "../../src/facets/CurveViewFacet.sol";
-import {EveUSDC} from "../../src/EveUSDC.sol";
 import {BookFacet} from "../../src/facets/BookFacet.sol";
 import {BookOrderFacet} from "../../src/facets/BookOrderFacet.sol";
 import {BookTradeFacet} from "../../src/facets/BookTradeFacet.sol";
+import {BookSellFacet} from "../../src/facets/BookSellFacet.sol";
 import {BookViewFacet} from "../../src/facets/BookViewFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
@@ -83,6 +83,7 @@ contract BookTest is TestBase {
         diamond.registerFacet(address(new BookFacet()), _bookSelectors());
         diamond.registerFacet(address(new BookOrderFacet()), _bookOrderSelectors());
         diamond.registerFacet(address(new BookTradeFacet()), _bookTradeSelectors());
+        diamond.registerFacet(address(new BookSellFacet()), _bookSellSelectors());
         diamond.registerFacet(address(new BookViewFacet()), _bookViewSelectors());
         diamond.registerFacet(address(new CurveInventoryFacet()), _curveInventorySelectors());
         diamond.registerFacet(address(new CurveLifecycleFacet()), _curveLifecycleSelectors());
@@ -220,13 +221,13 @@ contract BookTest is TestBase {
         assertEq(firstInfo.makerFeeBps, 8_500);
         assertEq(firstInfo.creatorFeeBps, 0);
         assertEq(firstInfo.protocolFeeBps, 1_400);
-        assertEq(firstInfo.vaultFeeBps, 100);
+        assertEq(firstInfo.seniorPoolFeeBps, 100);
 
         assertEq(secondInfo.entryFeeBps, 125);
         assertEq(secondInfo.makerFeeBps, 8_000);
         assertEq(secondInfo.creatorFeeBps, 0);
         assertEq(secondInfo.protocolFeeBps, 1_900);
-        assertEq(secondInfo.vaultFeeBps, 100);
+        assertEq(secondInfo.seniorPoolFeeBps, 100);
     }
 
     function test_CreateSpotBookStoresSelectedTickPreset() public {
@@ -590,6 +591,84 @@ contract BookTest is TestBase {
         assertEq(baseOut, 40e6);
     }
 
+    function test_LiveCurvePagesUnlinkCancellationAndPruneExpiryWithoutDeletingHistory() public {
+        bytes32 bookId = _createSpotBook();
+
+        vm.startPrank(maker);
+        spotToken.approve(address(diamond), 150e6);
+        uint256 first = IBookOrderFacet(address(diamond))
+            .postBookCurve(bookId, LibEveMarket.CurveSide.ASK, 50e6, TWO_USDC, TWO_USDC, 120, 0, type(uint8).max);
+        uint256 second = IBookOrderFacet(address(diamond))
+            .postBookCurve(bookId, LibEveMarket.CurveSide.ASK, 50e6, TWO_USDC, TWO_USDC, 120, 0, type(uint8).max);
+        uint256 expiring = IBookOrderFacet(address(diamond))
+            .postBookCurve(bookId, LibEveMarket.CurveSide.ASK, 50e6, TWO_USDC, TWO_USDC, 1, 0, type(uint8).max);
+        ICurveLifecycleFacet(address(diamond)).cancelCurve(first);
+        vm.stopPrank();
+
+        (uint256[] memory historical,, uint256 historicalTotal) =
+            IBookViewFacet(address(diamond)).getBookCurveIdsPage(bookId, 0, 128);
+        assertEq(historical.length, 3);
+        assertEq(historicalTotal, 3);
+
+        (uint256[] memory liveBefore,, uint256 indexedBefore) =
+            IBookViewFacet(address(diamond)).getActiveBookCurveIdsPage(bookId, 0, 128);
+        assertEq(liveBefore.length, 2);
+        assertEq(indexedBefore, 2);
+
+        vm.warp(block.timestamp + 2 minutes);
+        (uint256[] memory executableAfterExpiry,, uint256 indexedAfterExpiry) =
+            IBookViewFacet(address(diamond)).getActiveBookCurveIdsPage(bookId, 0, 128);
+        assertEq(executableAfterExpiry.length, 1);
+        assertEq(executableAfterExpiry[0], second);
+        assertEq(indexedAfterExpiry, 2);
+
+        uint256 pruned = IBookOrderFacet(address(diamond)).pruneBookCurves(bookId, _singleCurve(expiring));
+        assertEq(pruned, 1);
+
+        (uint256[] memory liveAfter,, uint256 indexedAfter) =
+            IBookViewFacet(address(diamond)).getActiveBookCurveIdsPage(bookId, 0, 128);
+        assertEq(liveAfter.length, 1);
+        assertEq(liveAfter[0], second);
+        assertEq(indexedAfter, 1);
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidPageSize.selector, 129, 128));
+        IBookViewFacet(address(diamond)).getBookCurveIdsPage(bookId, 0, 129);
+    }
+
+    function testFuzz_LiveCurveSwapPopKeepsRemainingCurvesRemovable(uint256 removalSeed) public {
+        bytes32 bookId = _createSpotBook();
+
+        vm.startPrank(maker);
+        spotToken.approve(address(diamond), 150e6);
+        uint256[] memory curveIds = new uint256[](3);
+        for (uint256 i; i < curveIds.length; ++i) {
+            curveIds[i] = IBookOrderFacet(address(diamond))
+                .postBookCurve(bookId, LibEveMarket.CurveSide.ASK, 50e6, TWO_USDC, TWO_USDC, 120, 0, type(uint8).max);
+        }
+
+        uint256 removedIndex = bound(removalSeed, 0, curveIds.length - 1);
+        ICurveLifecycleFacet(address(diamond)).cancelCurve(curveIds[removedIndex]);
+        vm.stopPrank();
+
+        (uint256[] memory live,, uint256 indexedCount) =
+            IBookViewFacet(address(diamond)).getActiveBookCurveIdsPage(bookId, 0, 128);
+        assertEq(live.length, 2);
+        assertEq(indexedCount, 2);
+        assertTrue(live[0] != curveIds[removedIndex]);
+        assertTrue(live[1] != curveIds[removedIndex]);
+        assertTrue(live[0] != live[1]);
+
+        vm.startPrank(maker);
+        ICurveLifecycleFacet(address(diamond)).cancelCurve(live[0]);
+        ICurveLifecycleFacet(address(diamond)).cancelCurve(live[1]);
+        vm.stopPrank();
+
+        (uint256[] memory empty,, uint256 remainingIndexed) =
+            IBookViewFacet(address(diamond)).getActiveBookCurveIdsPage(bookId, 0, 128);
+        assertEq(empty.length, 0);
+        assertEq(remainingIndexed, 0);
+    }
+
     function test_ReactivateDepletedBidCurveCollectsFreshQuoteEscrow() public {
         bytes32 bookId = _createSpotBook();
 
@@ -619,6 +698,10 @@ contract BookTest is TestBase {
         CurveCLOBTypes.CurveInfo memory depleted = ICurveViewFacet(address(diamond)).getCurveInfo(curveId);
         assertEq(depleted.remainingVolume, 0);
         assertEq(depleted.quoteEscrowRemaining, 0);
+        (uint256[] memory liveDepleted,, uint256 indexedDepleted) =
+            IBookViewFacet(address(diamond)).getActiveBookCurveIdsPage(bookId, 0, 128);
+        assertEq(liveDepleted.length, 0);
+        assertEq(indexedDepleted, 0);
 
         uint256 newPacked = LibCurvePacking.pack(ONE_POINT_EIGHT_USDC, ONE_POINT_EIGHT_USDC, 120, 0, 0, bytes32(0));
         vm.prank(maker);
@@ -629,6 +712,11 @@ contract BookTest is TestBase {
         assertEq(reactivated.quoteEscrowRemaining, 45e6);
         assertEq(reactivated.generation, 2);
         assertEq(usdc.balanceOf(address(diamond)), 45e6);
+        (uint256[] memory liveReactivated,, uint256 indexedReactivated) =
+            IBookViewFacet(address(diamond)).getActiveBookCurveIdsPage(bookId, 0, 128);
+        assertEq(liveReactivated.length, 1);
+        assertEq(liveReactivated[0], curveId);
+        assertEq(indexedReactivated, 1);
     }
 
     function test_SpotBookBidExecutionUsesSelectedTickPreset() public {
@@ -698,8 +786,11 @@ contract BookTest is TestBase {
         assertEq(averagePrice, TWO_USDC);
         assertEq(unfilledQuote, 0);
 
-        (uint128 bestAskPrice, uint128 bestBidPrice, uint128 midpointPrice,) =
-            IBookViewFacet(address(diamond)).getBookTopOfBook(bookId);
+        (uint128 bestAskPrice, bool hasAsk, uint128 bestBidPrice, bool hasBid,,,) =
+            IBookViewFacet(address(diamond)).getBookTopOfBookPage(bookId, 0, 128);
+        uint128 midpointPrice = (bestAskPrice + bestBidPrice) / 2;
+        assertTrue(hasAsk);
+        assertTrue(hasBid);
         assertEq(bestAskPrice, TWO_USDC);
         assertEq(bestBidPrice, ONE_POINT_EIGHT_USDC);
         assertEq(midpointPrice, 1_900_000_000_000_000_000);
@@ -905,60 +996,6 @@ contract BookTest is TestBase {
         assertFalse(info.active);
         assertEq(base18.balanceOf(maker), makerBefore);
         assertEq(base18.balanceOf(address(diamond)), 0);
-    }
-
-    function test_EveUsdcSpotBookQuotesAndFillsMicroEvePrice() public {
-        MockEveToken eveBase = new MockEveToken();
-        EveUSDC microEveUSDC = new EveUSDC(address(usdc), address(this), address(this));
-
-        eveBase.mint(maker, 10_000e18);
-        usdc.mint(taker, 1e6);
-
-        ITestStateFacet(address(diamond)).setSpotBookCreationFeeFixture(0);
-
-        vm.prank(maker);
-        bytes32 bookId = IBookAdminFacet(address(diamond))
-            .createBook(
-                LibEveMarket.BookAssetType.ERC20,
-                LibEveMarket.BaseTransferMode.EXACT,
-                address(eveBase),
-                0,
-                address(microEveUSDC),
-                0,
-                keccak256("eve-eveusdc-micro-price")
-            );
-
-        vm.startPrank(maker);
-        eveBase.approve(address(diamond), MICRO_EVE_BASE_AMOUNT);
-        uint256 curveId = IBookOrderFacet(address(diamond))
-            .postBookCurve(
-                bookId, LibEveMarket.CurveSide.ASK, MICRO_EVE_BASE_AMOUNT, MICRO_EVE_PRICE, MICRO_EVE_PRICE, 120, 0, 0
-            );
-        vm.stopPrank();
-
-        uint256[] memory curveIds = _singleCurve(curveId);
-        (uint128 previewBaseOut, uint128 previewFee, uint128 previewAveragePrice, uint128 unfilledQuote) =
-            IBookViewFacet(address(diamond)).previewBookExecution(bookId, MICRO_EVE_QUOTE_IN, curveIds);
-        assertEq(previewBaseOut, MICRO_EVE_BASE_AMOUNT);
-        assertEq(previewFee, 0);
-        assertEq(previewAveragePrice, MICRO_EVE_PRICE);
-        assertEq(unfilledQuote, 0);
-
-        (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
-        vm.startPrank(taker);
-        usdc.approve(address(microEveUSDC), 1e6);
-        microEveUSDC.wrap(1e6, taker);
-        microEveUSDC.approve(address(diamond), MICRO_EVE_QUOTE_IN);
-        CurveCLOBTypes.FillBestResult memory result = _fillSingleBookCurve(
-            bookId, curveId, MICRO_EVE_QUOTE_IN, MICRO_EVE_BASE_AMOUNT, MICRO_EVE_PRICE, generation, commitment
-        );
-        vm.stopPrank();
-
-        assertEq(result.sharesOut, MICRO_EVE_BASE_AMOUNT);
-        assertEq(result.collateralUsed, MICRO_EVE_QUOTE_IN);
-        assertEq(result.averagePrice, MICRO_EVE_PRICE);
-        assertEq(eveBase.balanceOf(taker), MICRO_EVE_BASE_AMOUNT);
-        assertEq(microEveUSDC.balanceOf(maker), MICRO_EVE_QUOTE_IN);
     }
 
     function _fillSingleBookCurve(
@@ -1220,22 +1257,29 @@ contract BookTest is TestBase {
     }
 
     function _bookOrderSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = IBookOrderFacet.postBookCurve.selector;
         selectors[1] = IBookOrderFacet.topUpBookCurvesBatch.selector;
         selectors[2] = IBookOrderFacet.reactivateBookCurve.selector;
+        selectors[3] = IBookOrderFacet.pruneBookCurves.selector;
     }
 
     function _bookTradeSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](1);
+        selectors[0] = IBookTradeFacet.fillBookBest.selector;
+    }
+
+    function _bookSellSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
         selectors[0] = IBookTradeFacet.sellBookBest.selector;
-        selectors[1] = IBookTradeFacet.fillBookBest.selector;
     }
 
     function _bookViewSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](4);
         selectors[0] = IBookViewFacet.previewBookExecution.selector;
-        selectors[1] = IBookViewFacet.getBookTopOfBook.selector;
+        selectors[1] = IBookViewFacet.getBookCurveIdsPage.selector;
+        selectors[2] = IBookViewFacet.getActiveBookCurveIdsPage.selector;
+        selectors[3] = IBookViewFacet.getBookTopOfBookPage.selector;
     }
 
     function _curveInventorySelectors() internal pure returns (bytes4[] memory selectors) {

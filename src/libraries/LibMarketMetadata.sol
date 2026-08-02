@@ -7,6 +7,7 @@ import {Strings} from "../../lib/openzeppelin-contracts/contracts/utils/Strings.
 import {Errors} from "./Errors.sol";
 import {Events} from "./Events.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
+import {LibNativePosition} from "./LibNativePosition.sol";
 import {MarketFactoryTypes} from "../types/MarketFactoryTypes.sol";
 
 library LibMarketMetadata {
@@ -78,11 +79,11 @@ library LibMarketMetadata {
             orderbookMakerFeeBps: market.orderbookFeeConfig.makerFeeBps,
             orderbookCreatorFeeBps: market.orderbookFeeConfig.creatorFeeBps,
             orderbookProtocolFeeBps: market.orderbookFeeConfig.protocolFeeBps,
-            orderbookVaultFeeBps: market.orderbookFeeConfig.vaultFeeBps,
+            orderbookSeniorPoolFeeBps: market.orderbookFeeConfig.seniorPoolFeeBps,
             parimutuelEntryFeeBps: market.parimutuelFeeConfig.entryFeeBps,
             parimutuelCreatorFeeBps: market.parimutuelFeeConfig.creatorFeeBps,
             parimutuelProtocolFeeBps: market.parimutuelFeeConfig.protocolFeeBps,
-            parimutuelVaultFeeBps: market.parimutuelFeeConfig.vaultFeeBps,
+            parimutuelSeniorPoolFeeBps: market.parimutuelFeeConfig.seniorPoolFeeBps,
             collateralProfileId: market.collateralProfileId,
             payoutUnit: market.payoutUnit,
             delayedExecutionEnabled: market.delayedExecutionEnabled
@@ -172,6 +173,42 @@ library LibMarketMetadata {
                 LibEveMarket.PositionMetadata({marketId: market.marketId, outcome: YES_OUTCOME, exists: true});
             state.positionMetadata[market.positionToken][market.noPositionId] =
                 LibEveMarket.PositionMetadata({marketId: market.marketId, outcome: NO_OUTCOME, exists: true});
+            if (market.positionTokenType == LibEveMarket.PositionTokenType.CTF) {
+                state.nativePositionMetadata[market.yesPositionId] = LibEveMarket.NativePositionMetadata({
+                    moduleId: LibNativePosition.MODULE_BINARY,
+                    conditionId: market.conditionId,
+                    outcomeIndex: LibNativePosition.OUTCOME_YES,
+                    marketId: market.marketId,
+                    exists: true
+                });
+                state.nativePositionMetadata[market.noPositionId] = LibEveMarket.NativePositionMetadata({
+                    moduleId: LibNativePosition.MODULE_BINARY,
+                    conditionId: market.conditionId,
+                    outcomeIndex: LibNativePosition.OUTCOME_NO,
+                    marketId: market.marketId,
+                    exists: true
+                });
+                state.ctfPositionMetadata[market.yesPositionId] = LibEveMarket.CTFPositionMetadata({
+                    positionToken: market.positionToken,
+                    collateralToken: market.collateralToken,
+                    settlementAdapter: state.ctfSettlementAdapter,
+                    conditionId: market.conditionId,
+                    complementPositionId: market.noPositionId,
+                    payoutUnit: market.payoutUnit,
+                    exists: true
+                });
+                state.ctfPositionMetadata[market.noPositionId] = LibEveMarket.CTFPositionMetadata({
+                    positionToken: market.positionToken,
+                    collateralToken: market.collateralToken,
+                    settlementAdapter: state.ctfSettlementAdapter,
+                    conditionId: market.conditionId,
+                    complementPositionId: market.yesPositionId,
+                    payoutUnit: market.payoutUnit,
+                    exists: true
+                });
+                state.ctfConditionYesPositionId[market.conditionId] = market.yesPositionId;
+                state.ctfConditionNoPositionId[market.conditionId] = market.noPositionId;
+            }
         }
     }
 

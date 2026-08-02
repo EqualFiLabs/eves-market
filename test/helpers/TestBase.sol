@@ -11,9 +11,11 @@ import {Events} from "../../src/libraries/Events.sol";
 import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibCTF} from "../../src/libraries/LibCTF.sol";
 import {LibCurvePacking} from "../../src/libraries/LibCurvePacking.sol";
+import {LibCurveIndex} from "../../src/libraries/LibCurveIndex.sol";
 import {LibDiamond} from "../../src/libraries/LibDiamond.sol";
 import {LibDelayedOrder} from "../../src/libraries/LibDelayedOrder.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
+import {LibFeeRouting} from "../../src/libraries/LibFeeRouting.sol";
 import {LibMarketCreation} from "../../src/libraries/LibMarketCreation.sol";
 import {LibParimutuel} from "../../src/libraries/LibParimutuel.sol";
 import {ParimutuelShareToken} from "../../src/tokens/ParimutuelShareToken.sol";
@@ -28,6 +30,8 @@ interface ITestStateFacet {
     function configure(address conditionalTokens, address collateralToken, address eveToken, address eveTreasury)
         external;
 
+    function setStaticsDollarCoreFixture(address core) external;
+
     function configureParimutuelFixture(address shareToken, uint256 entryFeeBps, uint256 minEntry) external;
 
     function setSpotBookCreationFeeFixture(uint256 fee) external;
@@ -36,7 +40,7 @@ interface ITestStateFacet {
         uint256 tradeFeeBps,
         uint256 makerFeeBps,
         uint256 protocolFeeBps,
-        uint256 vaultFeeBps
+        uint256 seniorPoolFeeBps
     ) external;
 
     function setOrderbookFeeConfigFixture(
@@ -44,7 +48,7 @@ interface ITestStateFacet {
         uint256 makerFeeBps,
         uint256 creatorFeeBps,
         uint256 protocolFeeBps,
-        uint256 vaultFeeBps
+        uint256 seniorPoolFeeBps
     ) external;
 
     function setDelayedOrderConfigFixture(
@@ -130,6 +134,8 @@ interface ITestStateFacet {
         external;
 
     function resolveMarketFixture(bytes32 marketId, uint8 outcome) external;
+
+    function resolveMultiOutcomeFixture(bytes32 marketId, uint256 outcome) external;
 
     function resolveParimutuelMarketFixture(bytes32 marketId, uint8 outcome) external;
 
@@ -229,6 +235,10 @@ interface ITestStateFacet {
         );
 
     function getStoredCurvePacked(uint256 curveId) external view returns (uint256 packed);
+
+    function getActiveBookCurveIdsFixture(bytes32 bookId) external view returns (uint256[] memory curveIds);
+
+    function getBookMakerAskExposureFixture(bytes32 bookId, address maker_) external view returns (uint256 exposure);
 }
 
 error FunctionNotFound(bytes4 selector);
@@ -310,25 +320,14 @@ contract TestStateFacet {
             makerFeeBps: 8_500,
             creatorFeeBps: 500,
             protocolFeeBps: 1_000,
-            vaultFeeBps: 0,
-            resolverFeeBps: 0,
-            evRiskFeeBps: 0
+            seniorPoolFeeBps: 0,
+            resolverFeeBps: 0
         });
         state.config.spotFeeConfig = LibEveMarket.SpotFeeConfig({
-            tradeFeeBps: 0,
-            makerFeeBps: 8_500,
-            protocolFeeBps: 1_500,
-            vaultFeeBps: 0,
-            resolverFeeBps: 0,
-            evRiskFeeBps: 0
+            tradeFeeBps: 0, makerFeeBps: 8_500, protocolFeeBps: 1_500, seniorPoolFeeBps: 0, resolverFeeBps: 0
         });
         state.config.parimutuelFeeConfig = LibEveMarket.ParimutuelFeeConfig({
-            entryFeeBps: 0,
-            creatorFeeBps: 500,
-            protocolFeeBps: 9_500,
-            vaultFeeBps: 0,
-            resolverFeeBps: 0,
-            evRiskFeeBps: 0
+            entryFeeBps: 0, creatorFeeBps: 500, protocolFeeBps: 9_500, seniorPoolFeeBps: 0, resolverFeeBps: 0
         });
         state.config.minMarketDuration = 1 hours;
         state.config.maxMarketDuration = 90 days;
@@ -337,6 +336,10 @@ contract TestStateFacet {
         state.config.openResolutionTimeout = 2 days;
         state.config.parimutuelEpochWindowCap = 30 days;
         state.config.maxEscalation = 2;
+    }
+
+    function setStaticsDollarCoreFixture(address core) external {
+        LibEveMarket.store().config.staticsDollarCore = core;
     }
 
     function configureParimutuelFixture(address shareToken, uint256 entryFeeBps, uint256 minEntry) external {
@@ -364,20 +367,19 @@ contract TestStateFacet {
         uint256 tradeFeeBps,
         uint256 makerFeeBps,
         uint256 protocolFeeBps,
-        uint256 vaultFeeBps
+        uint256 seniorPoolFeeBps
     ) external {
         if (tradeFeeBps > type(uint16).max) revert Errors.InvalidAmount(tradeFeeBps);
         if (makerFeeBps > type(uint16).max) revert Errors.InvalidAmount(makerFeeBps);
         if (protocolFeeBps > type(uint16).max) revert Errors.InvalidAmount(protocolFeeBps);
-        if (vaultFeeBps > type(uint16).max) revert Errors.InvalidAmount(vaultFeeBps);
+        if (seniorPoolFeeBps > type(uint16).max) revert Errors.InvalidAmount(seniorPoolFeeBps);
 
         LibEveMarket.store().config.spotFeeConfig = LibEveMarket.SpotFeeConfig({
             tradeFeeBps: uint16(tradeFeeBps),
             makerFeeBps: uint16(makerFeeBps),
             protocolFeeBps: uint16(protocolFeeBps),
-            vaultFeeBps: uint16(vaultFeeBps),
-            resolverFeeBps: 0,
-            evRiskFeeBps: 0
+            seniorPoolFeeBps: uint16(seniorPoolFeeBps),
+            resolverFeeBps: 0
         });
     }
 
@@ -386,22 +388,21 @@ contract TestStateFacet {
         uint256 makerFeeBps,
         uint256 creatorFeeBps,
         uint256 protocolFeeBps,
-        uint256 vaultFeeBps
+        uint256 seniorPoolFeeBps
     ) external {
         if (entryFeeBps > type(uint16).max) revert Errors.InvalidAmount(entryFeeBps);
         if (makerFeeBps > type(uint16).max) revert Errors.InvalidAmount(makerFeeBps);
         if (creatorFeeBps > type(uint16).max) revert Errors.InvalidAmount(creatorFeeBps);
         if (protocolFeeBps > type(uint16).max) revert Errors.InvalidAmount(protocolFeeBps);
-        if (vaultFeeBps > type(uint16).max) revert Errors.InvalidAmount(vaultFeeBps);
+        if (seniorPoolFeeBps > type(uint16).max) revert Errors.InvalidAmount(seniorPoolFeeBps);
 
         LibEveMarket.store().config.orderbookFeeConfig = LibEveMarket.BookFeeConfig({
             entryFeeBps: uint16(entryFeeBps),
             makerFeeBps: uint16(makerFeeBps),
             creatorFeeBps: uint16(creatorFeeBps),
             protocolFeeBps: uint16(protocolFeeBps),
-            vaultFeeBps: uint16(vaultFeeBps),
-            resolverFeeBps: 0,
-            evRiskFeeBps: 0
+            seniorPoolFeeBps: uint16(seniorPoolFeeBps),
+            resolverFeeBps: 0
         });
     }
 
@@ -738,7 +739,7 @@ contract TestStateFacet {
         if (uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps > FEE_BPS_DENOMINATOR) {
             revert Errors.FeeSplitExceedsDenominator(feeConfig.creatorFeeBps, feeConfig.protocolFeeBps);
         }
-        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.vaultFeeBps;
+        uint256 splitTotal = uint256(feeConfig.creatorFeeBps) + feeConfig.protocolFeeBps + feeConfig.seniorPoolFeeBps;
         if (splitTotal != FEE_BPS_DENOMINATOR) {
             revert Errors.InvalidFeeSplit(splitTotal);
         }
@@ -757,7 +758,7 @@ contract TestStateFacet {
             fees.protocolFee += fees.creatorFee;
             fees.creatorFee = 0;
         }
-        if (config.seniorCapitalPool == address(0)) {
+        if (!LibFeeRouting.canRouteSeniorPoolFee(market.collateralToken)) {
             fees.protocolFee += seniorPoolFee;
         }
     }
@@ -796,6 +797,7 @@ contract TestStateFacet {
         market.curveCount += 1;
         book.curveCount += 1;
         state.bookCurveIds[book.bookId].push(curveId);
+        LibCurveIndex.registerCreatedCurve(state, curveId);
 
         emit Events.CurvePosted(marketId, curveId, maker, isYesSide, curve.packed);
     }
@@ -816,7 +818,7 @@ contract TestStateFacet {
         LibEveMarket.Market storage market = state.markets[state.books[curve.bookId].marketId];
         LibCurvePacking.CurveParams memory params = LibCurvePacking.unpack(curve.packed);
 
-        curve.remainingVolume -= sharesOut;
+        LibCurveIndex.decreaseRemaining(state, curveId, sharesOut);
         market.lastTradePrice = params.startPrice;
         market.totalFeePool += fee;
         market.totalQuoteVolume += collateralIn;
@@ -887,6 +889,22 @@ contract TestStateFacet {
         emit Events.ResolutionFinalized(marketId, outcome);
         emit Events.PayoutReported(marketId, outcome, keccak256(abi.encode(payouts)));
         emit Events.MarketSettled(marketId);
+    }
+
+    /// @dev Narrow status jump for native settlement tests; value movement still uses production settlement paths.
+    function resolveMultiOutcomeFixture(bytes32 marketId, uint256 outcome) external {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        LibEveMarket.Market storage market = state.markets[marketId];
+        LibEveMarket.MultiOutcomeMarket storage multi = state.multiOutcomeMarkets[marketId];
+        if (!multi.exists || outcome > type(uint8).max) revert Errors.InvalidAmount(outcome);
+        uint8 narrowed = uint8(outcome);
+        if (narrowed != type(uint8).max && narrowed >= multi.outcomeCount) revert Errors.InvalidOutcome(narrowed);
+        market.state = LibEveMarket.MarketState.Resolved;
+        market.resolutionTime = uint64(block.timestamp);
+        multi.resolved = true;
+        multi.invalid = narrowed == type(uint8).max;
+        multi.resolvedOutcome = narrowed;
+        multi.payoutDenominator = multi.invalid ? multi.outcomeCount : 1;
     }
 
     function resolveParimutuelMarketFixture(bytes32 marketId, uint8 outcome) external {
@@ -1089,6 +1107,14 @@ contract TestStateFacet {
         packed = LibEveMarket.store().curves[curveId].packed;
     }
 
+    function getActiveBookCurveIdsFixture(bytes32 bookId) external view returns (uint256[] memory curveIds) {
+        curveIds = LibEveMarket.store().activeBookCurveIds[bookId];
+    }
+
+    function getBookMakerAskExposureFixture(bytes32 bookId, address maker_) external view returns (uint256 exposure) {
+        exposure = LibEveMarket.store().bookMakerAskExposure[bookId][maker_];
+    }
+
     function _payoutVector(uint8 outcome) internal pure returns (uint256[] memory payouts) {
         payouts = new uint256[](2);
 
@@ -1154,7 +1180,7 @@ abstract contract TestBase is Test, ERC1155ReceiverHarness {
         parimutuelShareToken = new ParimutuelShareToken(address(diamond), "uri://parimutuel/{id}");
         stateFacet = new TestStateFacet();
 
-        bytes4[] memory selectors = new bytes4[](42);
+        bytes4[] memory selectors = new bytes4[](46);
         selectors[0] = ITestStateFacet.configure.selector;
         selectors[1] = ITestStateFacet.configureParimutuelFixture.selector;
         selectors[2] = ITestStateFacet.setSpotBookCreationFeeFixture.selector;
@@ -1197,6 +1223,10 @@ abstract contract TestBase is Test, ERC1155ReceiverHarness {
         selectors[39] = ITestStateFacet.setBookDelayedExecutionFixture.selector;
         selectors[40] = ITestStateFacet.getMarketDelayedExecutionFixture.selector;
         selectors[41] = ITestStateFacet.getBookDelayedExecutionFixture.selector;
+        selectors[42] = ITestStateFacet.resolveMultiOutcomeFixture.selector;
+        selectors[43] = ITestStateFacet.getActiveBookCurveIdsFixture.selector;
+        selectors[44] = ITestStateFacet.getBookMakerAskExposureFixture.selector;
+        selectors[45] = ITestStateFacet.setStaticsDollarCoreFixture.selector;
 
         vm.prank(owner);
         diamond.registerFacet(address(stateFacet), selectors);

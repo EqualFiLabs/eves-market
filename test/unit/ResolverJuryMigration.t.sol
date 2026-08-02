@@ -121,7 +121,7 @@ contract ResolverJuryMigrationTest is ResolutionFixture {
     }
 
     function _resolverRegistrySelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](7);
         selectors[0] = IResolverRegistryFacet.mintIdentity.selector;
         selectors[1] = IResolverRegistryFacet.setCreatorRole.selector;
         selectors[2] = IResolverRegistryFacet.setResolverRole.selector;
@@ -129,22 +129,6 @@ contract ResolverJuryMigrationTest is ResolutionFixture {
         selectors[4] = IResolverRegistryFacet.openResolverEpochRotation.selector;
         selectors[5] = IResolverRegistryFacet.requestResolverExit.selector;
         selectors[6] = IResolverRegistryFacet.withdrawResolverStake.selector;
-        selectors[7] = IResolverRegistryFacet.eveIdentity.selector;
-        selectors[8] = IResolverRegistryFacet.resolverDashboard.selector;
-        selectors[9] = IResolverRegistryFacet.resolverIdentity.selector;
-        selectors[10] = IResolverRegistryFacet.resolverIdentityByOwner.selector;
-        selectors[11] = IResolverRegistryFacet.resolverJuryConfig.selector;
-        selectors[12] = IResolverRegistryFacet.identityByOwner.selector;
-        selectors[13] = IResolverRegistryFacet.isEligibleResolver.selector;
-        selectors[14] = IResolverRegistryFacet.hasConflict.selector;
-        selectors[15] = IResolverRegistryFacet.resolverLifecycleState.selector;
-        selectors[16] = IResolverRegistryFacet.creatorReputation.selector;
-        selectors[17] = IResolverRegistryFacet.resolverReputation.selector;
-        selectors[18] = IResolverRegistryFacet.eligibleResolverCount.selector;
-        selectors[19] = IResolverRegistryFacet.activeResolverCount.selector;
-        selectors[20] = IResolverRegistryFacet.activeResolverEpochSize.selector;
-        selectors[21] = IResolverRegistryFacet.activeResolverAt.selector;
-        selectors[22] = IResolverRegistryFacet.applyFinalityReputation.selector;
     }
 
     function _resolverJuryInterfaceSelectors() internal pure returns (bytes4[] memory selectors) {

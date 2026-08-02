@@ -5,6 +5,7 @@ import {Events} from "./Events.sol";
 import {Errors} from "./Errors.sol";
 import {LibBookPricing} from "./LibBookPricing.sol";
 import {LibCurvePacking} from "./LibCurvePacking.sol";
+import {LibCurveIndex} from "./LibCurveIndex.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
 
 library LibCurveStorage {
@@ -66,9 +67,7 @@ library LibCurveStorage {
         incrementCurveCount(state, book);
     }
 
-    function incrementCurveCount(LibEveMarket.EveMarketStorage storage state, LibEveMarket.Book storage book)
-        internal
-    {
+    function incrementCurveCount(LibEveMarket.EveMarketStorage storage state, LibEveMarket.Book storage book) internal {
         incrementCurveCountBy(state, book, 1);
     }
 
@@ -98,6 +97,7 @@ library LibCurveStorage {
 
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
         state.bookCurveIds[bookId].push(curveId);
+        LibCurveIndex.registerCreatedCurve(state, curveId);
         _emitCurvePosted(state, bookId, maker, isYesSide, curveSide, packed, curveId);
     }
 

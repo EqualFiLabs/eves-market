@@ -12,11 +12,21 @@ import {LibResolverJury} from "src/libraries/LibResolverJury.sol";
 import {BondManagerFacet} from "src/facets/BondManagerFacet.sol";
 import {ResolverJuryFacet} from "src/facets/ResolverJuryFacet.sol";
 import {ResolverRegistryFacet} from "src/facets/ResolverRegistryFacet.sol";
+import {ResolverRegistryReputationFacet} from "src/facets/ResolverRegistryReputationFacet.sol";
+import {ResolverRegistryRewardsFacet} from "src/facets/ResolverRegistryRewardsFacet.sol";
+import {ResolverRegistryViewFacet} from "src/facets/ResolverRegistryViewFacet.sol";
 import {EveIdentity} from "src/tokens/EveIdentity.sol";
 import {MockEveToken} from "test/helpers/MockEveToken.sol";
 import {MockUSDC} from "test/helpers/MockUSDC.sol";
 
-contract ResolverJuryEconomicsPropertyHarness is ResolverJuryFacet, ResolverRegistryFacet, BondManagerFacet {
+contract ResolverJuryEconomicsPropertyHarness is
+    ResolverJuryFacet,
+    ResolverRegistryFacet,
+    ResolverRegistryViewFacet,
+    ResolverRegistryRewardsFacet,
+    ResolverRegistryReputationFacet,
+    BondManagerFacet
+{
     function configure(address eveIdentity, address mintFeeToken, address eveToken) external {
         LibResolverJury.store().eveIdentity = eveIdentity;
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
@@ -300,12 +310,12 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         );
         _commitVote(disputeId, bob, bobId, uint8(LibEveMarket.MarketOutcome.No), keccak256(abi.encode(salt, bob)));
         _commitVote(disputeId, carol, carolId, uint8(LibEveMarket.MarketOutcome.No), keccak256(abi.encode(salt, carol)));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256(abi.encode(salt, alice)));
         _revealVote(disputeId, bob, uint8(LibEveMarket.MarketOutcome.No), keccak256(abi.encode(salt, bob)));
         _revealVote(disputeId, carol, uint8(LibEveMarket.MarketOutcome.No), keccak256(abi.encode(salt, carol)));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
         (uint8[] memory outcomes, uint256[] memory counts) = jury.outcomeTally(disputeId, 0);
@@ -366,13 +376,13 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         expectedCallerBalance += randomnessIncentive;
         assertEq(bondToken.balanceOf(caller), expectedCallerBalance + requiredAppealBond);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.prank(caller);
         jury.closeRandomnessCommit(disputeId);
         expectedCallerBalance += randomnessIncentive;
         assertEq(bondToken.balanceOf(caller), expectedCallerBalance + requiredAppealBond);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.prank(caller);
         jury.applyRandomnessFallback(disputeId);
         expectedCallerBalance += randomnessIncentive;
@@ -391,7 +401,7 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         _commitVote(disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-incentive"));
         _commitVote(disputeId, bob, bobId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-incentive"));
         _commitVote(disputeId, carol, carolId, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-incentive"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.prank(caller);
         jury.closeCommit(disputeId);
         expectedCallerBalance += closeCommitIncentive;
@@ -400,7 +410,7 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-incentive"));
         _revealVote(disputeId, bob, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-incentive"));
         _revealVote(disputeId, carol, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-incentive"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.prank(caller);
         jury.closeRevealAndTally(disputeId);
         expectedCallerBalance += closeRevealIncentive;
@@ -500,12 +510,12 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         );
         _commitVote(disputeId, bob, bobId, uint8(LibEveMarket.MarketOutcome.No), keccak256(abi.encode(salt, bob)));
         _commitVote(disputeId, carol, carolId, uint8(LibEveMarket.MarketOutcome.No), keccak256(abi.encode(salt, carol)));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256(abi.encode(salt, alice)));
         _revealVote(disputeId, bob, uint8(LibEveMarket.MarketOutcome.No), keccak256(abi.encode(salt, bob)));
         _revealVote(disputeId, carol, uint8(LibEveMarket.MarketOutcome.No), keccak256(abi.encode(salt, carol)));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
         assertEq(jury.resolverReputation(aliceId).finalAgreementCount, 0);
@@ -690,12 +700,12 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         _commitVote(disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-finality"));
         _commitVote(disputeId, bob, bobId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-finality"));
         _commitVote(disputeId, carol, carolId, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-finality"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVote(disputeId, alice, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("alice-finality"));
         _revealVote(disputeId, bob, uint8(LibEveMarket.MarketOutcome.Yes), keccak256("bob-finality"));
         _revealVote(disputeId, carol, uint8(LibEveMarket.MarketOutcome.No), keccak256("carol-finality"));
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
     }
 
@@ -706,13 +716,13 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
             _commitVoteByIdentity(disputeId, members[index], outcome, salt);
         }
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         for (uint256 index; index < members.length; ++index) {
             _revealVoteByIdentity(disputeId, members[index], outcome, salt);
         }
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
     }
 
@@ -724,7 +734,7 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
 
         uint128 stakeBefore = jury.resolverStakeOf(members[2]);
         (uint256[] memory activeIds, uint128[] memory rewardsBefore, uint256 treasuryBefore) = _rewardSnapshot();
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
 
         _assertSlashedOnce(disputeId, members[2], stakeBefore, slashBps, activeIds, rewardsBefore, treasuryBefore);
@@ -740,14 +750,14 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         _commitVoteByIdentity(disputeId, members[1], uint8(LibEveMarket.MarketOutcome.No), salt);
         _commitVoteByIdentity(disputeId, members[2], uint8(LibEveMarket.MarketOutcome.Yes), salt);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
         _revealVoteByIdentity(disputeId, members[0], uint8(LibEveMarket.MarketOutcome.Yes), salt);
         _revealVoteByIdentity(disputeId, members[1], uint8(LibEveMarket.MarketOutcome.No), salt);
 
         uint128 stakeBefore = jury.resolverStakeOf(members[2]);
         (uint256[] memory activeIds, uint128[] memory rewardsBefore, uint256 treasuryBefore) = _rewardSnapshot();
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
         _assertSlashedOnce(disputeId, members[2], stakeBefore, slashBps, activeIds, rewardsBefore, treasuryBefore);
@@ -764,7 +774,7 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         _commitVoteByIdentity(disputeId, members[1], uint8(LibEveMarket.MarketOutcome.Yes), salt);
         _commitVoteByIdentity(disputeId, members[2], uint8(LibEveMarket.MarketOutcome.No), salt);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeCommit(disputeId);
 
         uint128 stakeBefore = jury.resolverStakeOf(members[0]);
@@ -779,7 +789,7 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         _revealVoteByIdentity(disputeId, members[1], uint8(LibEveMarket.MarketOutcome.Yes), salt);
         _revealVoteByIdentity(disputeId, members[2], uint8(LibEveMarket.MarketOutcome.No), salt);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
         _assertSlashedOnce(disputeId, members[0], stakeBefore, slashBps, activeIds, rewardsBefore, treasuryBefore);

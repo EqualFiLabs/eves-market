@@ -149,82 +149,6 @@ library LibCLOBView {
         unfilledQuote = quoteIn - totals.quoteUsed;
     }
 
-    function bookTopOfBook(LibEveMarket.EveMarketStorage storage state, bytes32 bookId)
-        internal
-        view
-        returns (uint128 bestAskPrice, uint128 bestBidPrice, uint128 midpointPrice, uint128 lastTradePrice)
-    {
-        LibEveMarket.Book storage book = state.books[bookId];
-        if (book.bookId != bookId) {
-            return (0, 0, 0, 0);
-        }
-
-        bool hasAsk;
-        bool hasBid;
-        uint256[] storage curveIds = state.bookCurveIds[bookId];
-        for (uint256 index = 0; index < curveIds.length; ++index) {
-            LibEveMarket.StoredCurve storage curve = state.curves[curveIds[index]];
-            if (
-                !curve.active || curve.remainingVolume == 0 || LibCurveMath.isExpired(state, curve)
-                    || !LibCLOBBook.canExecute(book)
-            ) {
-                continue;
-            }
-
-            uint128 price = LibCurveMath.currentPrice(state, curve);
-            if (curve.curveSide == LibEveMarket.CurveSide.ASK) {
-                if (!hasAsk || price < bestAskPrice) {
-                    bestAskPrice = price;
-                    hasAsk = true;
-                }
-            } else if (!hasBid || price > bestBidPrice) {
-                bestBidPrice = price;
-                hasBid = true;
-            }
-        }
-
-        lastTradePrice = uint128(book.lastTradePrice);
-        if (hasAsk && hasBid) {
-            midpointPrice = uint128((uint256(bestAskPrice) + uint256(bestBidPrice)) / 2);
-        }
-    }
-
-    function marketTopOfBook(LibEveMarket.EveMarketStorage storage state, bytes32 marketId)
-        internal
-        view
-        returns (
-            uint128 bestYesPrice,
-            uint128 bestNoPrice,
-            uint128 midpointPrice,
-            uint128 lastTradePrice,
-            uint128 displayPrice
-        )
-    {
-        LibEveMarket.Market storage market = state.markets[marketId];
-        if (market.marketId != marketId) {
-            return (0, 0, 0, 0, 0);
-        }
-
-        bool hasYes;
-        bool hasNo;
-        (bestYesPrice, hasYes) = _bestAskPrice(state, market.yesBookId);
-        (bestNoPrice, hasNo) = _bestAskPrice(state, market.noBookId);
-        lastTradePrice = uint128(market.lastTradePrice);
-
-        LibEveMarket.Book storage noBook = state.books[market.noBookId];
-        if (hasYes && hasNo) {
-            uint128 noDisplayPrice = LibBookPricing.complementPrice(noBook, bestNoPrice);
-            midpointPrice = uint128((uint256(bestYesPrice) + uint256(noDisplayPrice)) / 2);
-            displayPrice = midpointPrice;
-        } else if (hasYes) {
-            displayPrice = bestYesPrice;
-        } else if (hasNo) {
-            displayPrice = LibBookPricing.complementPrice(noBook, bestNoPrice);
-        } else {
-            displayPrice = lastTradePrice;
-        }
-    }
-
     function bookAssetIdsMatch(LibEveMarket.EveMarketStorage storage state, LibEveMarket.Book storage book)
         internal
         view
@@ -321,27 +245,6 @@ library LibCLOBView {
                 bestIndex = index;
                 bestPrice = price;
                 bestCurveId = curveId;
-                found = true;
-            }
-        }
-    }
-
-    function _bestAskPrice(LibEveMarket.EveMarketStorage storage state, bytes32 bookId)
-        private
-        view
-        returns (uint128 bestAskPrice, bool found)
-    {
-        LibEveMarket.Book storage book = state.books[bookId];
-        uint256[] storage curveIds = state.bookCurveIds[bookId];
-        for (uint256 index = 0; index < curveIds.length; ++index) {
-            LibEveMarket.StoredCurve storage curve = state.curves[curveIds[index]];
-            if (!_isPreviewableAsk(state, curve, bookId) || !LibCLOBBook.canExecute(book)) {
-                continue;
-            }
-
-            uint128 price = LibCurveMath.currentPrice(state, curve);
-            if (!found || price < bestAskPrice) {
-                bestAskPrice = price;
                 found = true;
             }
         }

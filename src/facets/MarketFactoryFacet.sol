@@ -12,6 +12,7 @@ import {LibCLOBBook} from "../libraries/LibCLOBBook.sol";
 import {LibCTF} from "../libraries/LibCTF.sol";
 import {LibCollateralProfile} from "../libraries/LibCollateralProfile.sol";
 import {LibCurvePacking} from "../libraries/LibCurvePacking.sol";
+import {LibCurveIndex} from "../libraries/LibCurveIndex.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 import {LibMarketAccess} from "../libraries/LibMarketAccess.sol";
 import {LibMarketCreation} from "../libraries/LibMarketCreation.sol";
@@ -22,10 +23,9 @@ import {MarketFactoryTypes} from "../types/MarketFactoryTypes.sol";
 contract MarketFactoryFacet is MarketFactoryTypes {
     using SafeERC20 for IERC20;
 
-    uint128 internal constant DEFAULT_EVEUSDC_PAYOUT_UNIT = 1 ether;
+    uint128 internal constant DEFAULT_COLLATERAL_PAYOUT_UNIT = 1 ether;
     uint72 internal constant FIFTY_FIFTY_PRICE = 500_000_000;
     uint8 internal constant LINEAR_PROFILE_ID = 0;
-    uint256 internal constant MAX_GROUP_TITLE_BYTES = 512;
 
     struct CreateMarketArgs {
         string question;
@@ -118,103 +118,6 @@ contract MarketFactoryFacet is MarketFactoryTypes {
         marketIds = _createMarkets(params, length);
     }
 
-    function createMarketGroup(MarketGroupCreationParams calldata params)
-        external
-        nonReentrant
-        returns (bytes32 groupId, bytes32[] memory marketIds)
-    {
-        uint256 length = params.markets.length;
-        _requireMarketCreationBatchLength(LibEveMarket.store().config, length);
-        _requireGroupTitle(params.display.title);
-
-        marketIds = _createGroupMarkets(params.markets, length);
-        bytes32 titleHash = keccak256(bytes(params.display.title));
-        groupId = keccak256(abi.encodePacked("EVE_MARKET_GROUP", msg.sender, titleHash, marketIds[0], length));
-
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        LibMarketMetadata.registerMarketGroup(groupId, msg.sender, params.display);
-        state.marketGroupMarketIds[groupId] = marketIds;
-        LibMarketMetadata.registerMarketExternalReference(groupId, params.display.externalRef);
-
-        emit Events.MarketGroupCreated(groupId, msg.sender, titleHash, params.display.title, length);
-        for (uint256 index = 0; index < length; ++index) {
-            emit Events.MarketGroupMarketAdded(groupId, marketIds[index], index);
-            LibMarketMetadata.registerGroupMarketDisplay(
-                groupId, marketIds[index], _checkedSortOrder(index), params.markets[index].display
-            );
-        }
-    }
-
-    function createMarketGroup(string calldata title, MarketCreationParams[] calldata params)
-        external
-        nonReentrant
-        returns (bytes32 groupId, bytes32[] memory marketIds)
-    {
-        uint256 length = params.length;
-        _requireMarketCreationBatchLength(LibEveMarket.store().config, length);
-        _requireGroupTitle(title);
-
-        marketIds = _createMarkets(params, length);
-        bytes32 titleHash = keccak256(bytes(title));
-        groupId = keccak256(abi.encodePacked("EVE_MARKET_GROUP", msg.sender, titleHash, marketIds[0], length));
-
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        MarketGroupCreationParams memory groupParams;
-        groupParams.display.title = title;
-        LibMarketMetadata.registerMarketGroup(groupId, msg.sender, groupParams.display);
-        state.marketGroupMarketIds[groupId] = marketIds;
-
-        emit Events.MarketGroupCreated(groupId, msg.sender, titleHash, title, length);
-        for (uint256 index = 0; index < length; ++index) {
-            emit Events.MarketGroupMarketAdded(groupId, marketIds[index], index);
-            LibMarketMetadata.registerGroupMarketDisplay(
-                groupId, marketIds[index], _checkedSortOrder(index), LibMarketMetadata.emptyGroupMarketDisplayInput()
-            );
-        }
-    }
-
-    function createMarketGroupFromExisting(ExistingMarketGroupCreationParams calldata params)
-        external
-        nonReentrant
-        returns (bytes32 groupId)
-    {
-        uint256 length = params.markets.length;
-        _requireMarketCreationBatchLength(LibEveMarket.store().config, length);
-        _requireGroupTitle(params.display.title);
-
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        bytes32[] memory marketIds = _existingGroupMarketIds(state, params.markets, msg.sender, bytes32(0));
-        groupId = _existingMarketGroupId(msg.sender, params.display, marketIds);
-        if (state.marketGroups[groupId].exists) {
-            revert Errors.MarketGroupAlreadyExists(groupId);
-        }
-
-        bytes32 titleHash = keccak256(bytes(params.display.title));
-        LibMarketMetadata.registerMarketGroup(groupId, msg.sender, params.display);
-        LibMarketMetadata.registerMarketExternalReference(groupId, params.display.externalRef);
-        emit Events.MarketGroupCreated(groupId, msg.sender, titleHash, params.display.title, length);
-
-        _appendExistingMarketsToGroup(state, groupId, params.markets, marketIds, 0);
-    }
-
-    function addMarketsToGroup(bytes32 groupId, ExistingGroupMarketParam[] calldata markets) external nonReentrant {
-        uint256 length = markets.length;
-        _requireMarketCreationBatchLength(LibEveMarket.store().config, length);
-
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        LibEveMarket.MarketGroupMetadata storage group = state.marketGroups[groupId];
-        if (!group.exists) {
-            revert Errors.MarketGroupNotFound(groupId);
-        }
-        if (group.creator != msg.sender) {
-            revert Errors.NotMarketCreator(msg.sender, group.creator);
-        }
-
-        uint256 startIndex = state.marketGroupMarketIds[groupId].length;
-        bytes32[] memory marketIds = _existingGroupMarketIds(state, markets, msg.sender, groupId);
-        _appendExistingMarketsToGroup(state, groupId, markets, marketIds, startIndex);
-    }
-
     function _createMarkets(MarketCreationParams[] calldata params, uint256 length)
         internal
         returns (bytes32[] memory marketIds)
@@ -224,87 +127,6 @@ contract MarketFactoryFacet is MarketFactoryTypes {
             MarketCreationParams calldata input = params[index];
             marketIds[index] = _createMarket(_createMarketArgs(input));
         }
-    }
-
-    function _createGroupMarkets(GroupMarketCreationParam[] calldata params, uint256 length)
-        internal
-        returns (bytes32[] memory marketIds)
-    {
-        marketIds = new bytes32[](length);
-        for (uint256 index = 0; index < length; ++index) {
-            marketIds[index] = _createMarket(_createMarketArgs(params[index].market));
-        }
-    }
-
-    function _existingGroupMarketIds(
-        LibEveMarket.EveMarketStorage storage state,
-        ExistingGroupMarketParam[] calldata params,
-        address creator,
-        bytes32 groupId
-    ) internal view returns (bytes32[] memory marketIds) {
-        uint256 length = params.length;
-        marketIds = new bytes32[](length);
-        for (uint256 index = 0; index < length; ++index) {
-            bytes32 marketId = params[index].marketId;
-            _requireExistingGroupMarket(state, groupId, marketId, creator);
-            for (uint256 previous = 0; previous < index; ++previous) {
-                if (marketIds[previous] == marketId) {
-                    revert Errors.DuplicateGroupMarket(groupId, marketId);
-                }
-            }
-            marketIds[index] = marketId;
-        }
-    }
-
-    function _requireExistingGroupMarket(
-        LibEveMarket.EveMarketStorage storage state,
-        bytes32 groupId,
-        bytes32 marketId,
-        address creator
-    ) internal view {
-        LibEveMarket.Market storage market = state.markets[marketId];
-        if (market.marketId == bytes32(0)) {
-            revert Errors.MarketNotFound(marketId);
-        }
-        if (market.creator != creator) {
-            revert Errors.NotMarketCreator(creator, market.creator);
-        }
-        if (groupId != bytes32(0) && state.groupMarketDisplays[groupId][marketId].exists) {
-            revert Errors.DuplicateGroupMarket(groupId, marketId);
-        }
-    }
-
-    function _appendExistingMarketsToGroup(
-        LibEveMarket.EveMarketStorage storage state,
-        bytes32 groupId,
-        ExistingGroupMarketParam[] calldata params,
-        bytes32[] memory marketIds,
-        uint256 startIndex
-    ) internal {
-        for (uint256 index = 0; index < marketIds.length; ++index) {
-            state.marketGroupMarketIds[groupId].push(marketIds[index]);
-            uint256 sortOrder = startIndex + index;
-            emit Events.MarketGroupMarketAdded(groupId, marketIds[index], sortOrder);
-            LibMarketMetadata.registerGroupMarketDisplay(
-                groupId, marketIds[index], _checkedSortOrder(sortOrder), params[index].display
-            );
-        }
-    }
-
-    function _existingMarketGroupId(address creator, GroupDisplayInput calldata display, bytes32[] memory marketIds)
-        internal
-        pure
-        returns (bytes32 groupId)
-    {
-        groupId = keccak256(
-            abi.encode(
-                "EVE_EXISTING_MARKET_GROUP",
-                creator,
-                keccak256(bytes(display.title)),
-                display.externalRef.snapshotHash,
-                keccak256(abi.encode(marketIds))
-            )
-        );
     }
 
     function _createMarketArgs(MarketCreationParams calldata input)
@@ -325,24 +147,10 @@ contract MarketFactoryFacet is MarketFactoryTypes {
         });
     }
 
-    function _requireGroupTitle(string calldata title) internal pure {
-        uint256 titleLength = bytes(title).length;
-        if (titleLength == 0 || titleLength > MAX_GROUP_TITLE_BYTES) {
-            revert Errors.InvalidAmount(titleLength);
-        }
-    }
-
     function _requireMarketCreationBatchLength(LibEveMarket.MarketConfig storage config, uint256 length) internal view {
         if (length == 0 || length > config.marketCreationBatchCap) {
             revert Errors.InvalidAmount(length);
         }
-    }
-
-    function _checkedSortOrder(uint256 index) internal pure returns (uint16 sortOrder) {
-        if (index > type(uint16).max) {
-            revert Errors.InvalidAmount(index);
-        }
-        sortOrder = uint16(index);
     }
 
     function _createMarket(CreateMarketArgs memory args) internal returns (bytes32 marketId) {
@@ -373,7 +181,7 @@ contract MarketFactoryFacet is MarketFactoryTypes {
         );
 
         LibEveMarket.Market storage market = _initializeMarket(state, marketId, args.question, args.category, creation);
-        market.payoutUnit = DEFAULT_EVEUSDC_PAYOUT_UNIT;
+        market.payoutUnit = DEFAULT_COLLATERAL_PAYOUT_UNIT;
 
         LibMarketMetadata.registerMarketMetadata(market, args.question, args.category, args.resolutionSource);
         bytes32 externalRefHash = LibMarketMetadata.registerMarketExternalReference(marketId, args.externalRef);
@@ -586,6 +394,7 @@ contract MarketFactoryFacet is MarketFactoryTypes {
         curve.curveSide = LibEveMarket.CurveSide.ASK;
         curve.bookId = book.bookId;
         state.bookCurveIds[book.bookId].push(curveId);
+        LibCurveIndex.registerCreatedCurve(state, curveId);
 
         market.curveCount += 1;
         book.curveCount += 1;
