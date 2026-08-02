@@ -30,5 +30,11 @@
 /docs/*audit*.md
 /docs/*remediation*.md
 /docs/*prompt*.md
+/docs/*plan*.md
+/docs/*roadmap*.md
+/docs/*inventory*.md
+/docs/*draft*.md
+/docs/*readiness*.md
 /docs/agent-orchestration-workflow.md
 /docs/llms.txt
+/*outline*.md

@@ -6,13 +6,19 @@ import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/uti
 import {Script} from "../lib/forge-std/src/Script.sol";
 import {stdJson} from "../lib/forge-std/src/StdJson.sol";
 
+import {ChainlinkETHUSDOracle} from "../src/ChainlinkETHUSDOracle.sol";
 import {EveMarketDiamond} from "../src/EveMarketDiamond.sol";
+import {EveRiskShares} from "../src/EveRiskShares.sol";
+import {EveUSD} from "../src/EveUSD.sol";
+import {EveUSDPool} from "../src/EveUSDPool.sol";
+import {EveUSDRouter} from "../src/EveUSDRouter.sol";
 import {EveUSDC} from "../src/EveUSDC.sol";
 import {Faucet} from "../src/Faucet.sol";
 import {MakerLendingRouter} from "../src/MakerLendingRouter.sol";
 import {SEveUSDCLending} from "../src/SEveUSDCLending.sol";
 import {SEveUSDCVault} from "../src/SEveUSDCVault.sol";
 import {CanonicalWETH9} from "../src/mocks/CanonicalWETH9.sol";
+import {MockETHUSDOracle} from "../src/mocks/MockETHUSDOracle.sol";
 import {BondManagerFacet} from "../src/facets/BondManagerFacet.sol";
 import {BondTokenGateFacet} from "../src/facets/BondTokenGateFacet.sol";
 import {CurveCLOBFacet} from "../src/facets/CurveCLOBFacet.sol";
@@ -92,6 +98,24 @@ import {MockEveToken} from "../test/helpers/MockEveToken.sol";
 import {MockUSDC} from "../test/helpers/MockUSDC.sol";
 import {MarketFactoryTypes} from "../src/types/MarketFactoryTypes.sol";
 
+contract EveUSDStackDeployer {
+    function deployStack(
+        address predictedPool,
+        address weth,
+        address oracle,
+        address owner,
+        uint256 collateralRatioBps,
+        uint256 recoveryTriggerBps,
+        string memory riskUri
+    ) external returns (address eveUSD, address evRisk, address pool, address router) {
+        eveUSD = address(new EveUSD(predictedPool));
+        evRisk = address(new EveRiskShares(predictedPool, riskUri));
+        pool = address(new EveUSDPool(weth, eveUSD, evRisk, oracle, owner, collateralRatioBps, recoveryTriggerBps));
+        require(pool == predictedPool, "eveUSD pool prediction mismatch");
+        router = address(new EveUSDRouter(pool, weth, eveUSD, evRisk));
+    }
+}
+
 contract DeployScript is Script {
     using SafeERC20 for IERC20;
     using stdJson for string;
@@ -99,6 +123,46 @@ contract DeployScript is Script {
     string internal constant DEFAULT_CONDITIONAL_TOKENS_ARTIFACT_PATH =
         "../../conditional-tokens-contracts/out/ConditionalTokens.sol/ConditionalTokens.json";
     uint8 internal constant EVE_ETH_PROFILE_ID = 1;
+    uint8 internal constant EVE_USD_PROFILE_ID = 2;
+
+    struct EveUSDStackConfig {
+        address eveUSD;
+        address evRisk;
+        address pool;
+        address router;
+        address oracle;
+        address ethUsdFeed;
+        address sequencerUptimeFeed;
+        uint256 oracleMaxStaleness;
+        uint256 oracleMinPriceWad;
+        uint256 oracleMaxPriceWad;
+        uint256 sequencerGracePeriod;
+        uint256 collateralRatioBps;
+        uint256 recoveryTriggerBps;
+        uint256 recoveryTimelock;
+        uint256 mintFeeBps;
+        uint256 recombinationFeeBps;
+        uint128 payoutUnit;
+        uint128 marketCreationFee;
+        uint128 parimutuelCreationSeedAmount;
+        uint128 parimutuelMinEntry;
+        uint128 parlayUnderwritingFee;
+        bool deploy;
+        bool enableMarkets;
+        bool deployMockOracle;
+        uint256 mockOraclePriceWad;
+        uint256 mockOracleMaxStaleness;
+        string riskUri;
+    }
+
+    struct EveUSDStackDeployment {
+        address eveUSD;
+        address evRisk;
+        address pool;
+        address router;
+        address oracle;
+        address stackDeployer;
+    }
 
     struct DeploymentConfig {
         address owner;
@@ -229,6 +293,7 @@ contract DeployScript is Script {
         address faucetOwner;
         address wethToken;
         address eveETH;
+        EveUSDStackConfig eveUsd;
         uint128 eveEthPayoutUnit;
         uint128 eveEthMarketCreationFee;
         uint128 eveEthParimutuelCreationSeedAmount;
@@ -256,6 +321,12 @@ contract DeployScript is Script {
         address faucet;
         address wethToken;
         address eveETH;
+        address eveUSD;
+        address evRisk;
+        address eveUsdPool;
+        address eveUsdRouter;
+        address eveUsdOracle;
+        address eveUsdStackDeployer;
     }
 
     function run() external returns (FullDeployment memory deployment) {
@@ -284,6 +355,14 @@ contract DeployScript is Script {
             _resolveEveUSDC(config.eveUSDC, deployment.usdcToken, config.eveUsdcOnramp, config.eveUsdcOfframp);
         deployment.wethToken = _resolveWeth(config.wethToken, config.deployMockWeth);
         deployment.eveETH = _resolveEveETH(config.eveETH, deployment.wethToken, config.deployEveETH);
+        EveUSDStackDeployment memory eveUsdDeployment =
+            _resolveEveUSDStack(config.eveUsd, deployment.wethToken, temporaryOwner);
+        deployment.eveUSD = eveUsdDeployment.eveUSD;
+        deployment.evRisk = eveUsdDeployment.evRisk;
+        deployment.eveUsdPool = eveUsdDeployment.pool;
+        deployment.eveUsdRouter = eveUsdDeployment.router;
+        deployment.eveUsdOracle = eveUsdDeployment.oracle;
+        deployment.eveUsdStackDeployer = eveUsdDeployment.stackDeployer;
 
         DeploymentConfig memory marketConfig = config.market;
         marketConfig.owner = temporaryOwner;
@@ -304,8 +383,9 @@ contract DeployScript is Script {
             config.aumFeeBps,
             deployment.market.diamond
         );
-        deployment.seveUsdcLending =
-            _resolveSEveUSDCLending(config.seveUsdcLending, deployment.seveUsdcVault, deployment.eveUSDC, temporaryOwner);
+        deployment.seveUsdcLending = _resolveSEveUSDCLending(
+            config.seveUsdcLending, deployment.seveUsdcVault, deployment.eveUSDC, temporaryOwner
+        );
         deployment.makerLendingRouter = _resolveMakerLendingRouter(
             config.makerLendingRouter,
             deployment.usdcToken,
@@ -992,6 +1072,35 @@ contract DeployScript is Script {
         config.faucetEveFundAmount = vm.envOr("FAUCET_EVE_FUND_AMOUNT", uint256(10_000_000e18));
         config.wethToken = vm.envOr("WETH_ADDRESS", address(0));
         config.eveETH = vm.envOr("EVEETH_ADDRESS", address(0));
+        config.eveUsd.eveUSD = vm.envOr("EVEUSD_ADDRESS", address(0));
+        config.eveUsd.evRisk = vm.envOr("EVRISK_ADDRESS", address(0));
+        config.eveUsd.pool = vm.envOr("EVEUSD_POOL_ADDRESS", address(0));
+        config.eveUsd.router = vm.envOr("EVEUSD_ROUTER_ADDRESS", address(0));
+        config.eveUsd.oracle = vm.envOr("EVEUSD_ORACLE_ADDRESS", address(0));
+        config.eveUsd.ethUsdFeed = vm.envOr("ETH_USD_FEED", address(0));
+        config.eveUsd.sequencerUptimeFeed = vm.envOr("BASE_SEQUENCER_UPTIME_FEED", address(0));
+        config.eveUsd.oracleMaxStaleness = vm.envOr("EVEUSD_ORACLE_MAX_STALENESS", uint256(1 hours));
+        config.eveUsd.oracleMinPriceWad = vm.envOr("EVEUSD_ORACLE_MIN_PRICE_WAD", uint256(0));
+        config.eveUsd.oracleMaxPriceWad = vm.envOr("EVEUSD_ORACLE_MAX_PRICE_WAD", uint256(0));
+        config.eveUsd.sequencerGracePeriod = vm.envOr("BASE_SEQUENCER_GRACE_PERIOD", uint256(1 hours));
+        config.eveUsd.collateralRatioBps = vm.envOr("EVEUSD_COLLATERAL_RATIO_BPS", uint256(15_000));
+        config.eveUsd.recoveryTriggerBps = vm.envOr("EVEUSD_RECOVERY_TRIGGER_BPS", uint256(8_000));
+        config.eveUsd.recoveryTimelock = vm.envOr("EVEUSD_RECOVERY_TIMELOCK", uint256(7 days));
+        config.eveUsd.mintFeeBps = vm.envOr("EVEUSD_MINT_FEE_BPS", uint256(0));
+        config.eveUsd.recombinationFeeBps = vm.envOr("EVEUSD_RECOMBINATION_FEE_BPS", uint256(0));
+        config.eveUsd.payoutUnit = uint128(vm.envOr("EVEUSD_PAYOUT_UNIT", uint256(1e18)));
+        config.eveUsd.marketCreationFee = uint128(vm.envOr("EVEUSD_MARKET_CREATION_FEE", uint256(0)));
+        config.eveUsd.parimutuelCreationSeedAmount =
+            uint128(vm.envOr("EVEUSD_PARIMUTUEL_CREATION_SEED_AMOUNT", uint256(0)));
+        config.eveUsd.parimutuelMinEntry =
+            uint128(vm.envOr("EVEUSD_PARIMUTUEL_MIN_ENTRY", uint256(config.eveUsd.payoutUnit)));
+        config.eveUsd.parlayUnderwritingFee = uint128(vm.envOr("EVEUSD_PARLAY_UNDERWRITING_FEE", uint256(1e18)));
+        config.eveUsd.deploy = vm.envOr("DEPLOY_EVEUSD", false);
+        config.eveUsd.enableMarkets = vm.envOr("ENABLE_EVEUSD_MARKETS", false);
+        config.eveUsd.deployMockOracle = vm.envOr("DEPLOY_MOCK_EVEUSD_ORACLE", false);
+        config.eveUsd.mockOraclePriceWad = vm.envOr("EVEUSD_MOCK_ORACLE_PRICE_WAD", uint256(2_500e18));
+        config.eveUsd.mockOracleMaxStaleness = vm.envOr("EVEUSD_MOCK_ORACLE_MAX_STALENESS", uint256(1 hours));
+        config.eveUsd.riskUri = vm.envOr("EVRISK_URI", string("uri://evrisk/{id}"));
         config.eveEthPayoutUnit = uint128(vm.envOr("EVEETH_PAYOUT_UNIT", uint256(0.0005 ether)));
         config.eveEthMarketCreationFee = uint128(vm.envOr("EVEETH_MARKET_CREATION_FEE", uint256(0)));
         config.eveEthParimutuelCreationSeedAmount =
@@ -1072,6 +1181,42 @@ contract DeployScript is Script {
         if (config.initialVaultBootstrap == 0 && _requiresVaultBootstrap(config)) {
             config.initialVaultBootstrap = 1e6;
         }
+        if (config.eveUsd.enableMarkets) {
+            config.eveUsd.deploy = config.eveUsd.deploy || config.eveUsd.pool == address(0);
+        }
+        if (config.eveUsd.payoutUnit == 0) {
+            config.eveUsd.payoutUnit = 1e18;
+        }
+        if (config.eveUsd.parimutuelMinEntry == 0) {
+            config.eveUsd.parimutuelMinEntry = config.eveUsd.payoutUnit;
+        }
+        if (config.eveUsd.parlayUnderwritingFee == 0) {
+            config.eveUsd.parlayUnderwritingFee = config.eveUsd.payoutUnit;
+        }
+        if (config.eveUsd.collateralRatioBps == 0) {
+            config.eveUsd.collateralRatioBps = 15_000;
+        }
+        if (config.eveUsd.recoveryTriggerBps == 0) {
+            config.eveUsd.recoveryTriggerBps = 8_000;
+        }
+        if (config.eveUsd.recoveryTimelock == 0) {
+            config.eveUsd.recoveryTimelock = 7 days;
+        }
+        if (config.eveUsd.oracleMaxStaleness == 0) {
+            config.eveUsd.oracleMaxStaleness = 1 hours;
+        }
+        if (config.eveUsd.sequencerGracePeriod == 0) {
+            config.eveUsd.sequencerGracePeriod = 1 hours;
+        }
+        if (config.eveUsd.mockOraclePriceWad == 0) {
+            config.eveUsd.mockOraclePriceWad = 2_500e18;
+        }
+        if (config.eveUsd.mockOracleMaxStaleness == 0) {
+            config.eveUsd.mockOracleMaxStaleness = 1 hours;
+        }
+        if (bytes(config.eveUsd.riskUri).length == 0) {
+            config.eveUsd.riskUri = "uri://evrisk/{id}";
+        }
 
         return config;
     }
@@ -1100,6 +1245,37 @@ contract DeployScript is Script {
         }
         if (config.deployEveETH) {
             require(config.deployMockWeth || config.wethToken != address(0), "missing WETH for eveETH");
+        }
+        if (_eveUSDStackRequested(config.eveUsd)) {
+            require(config.deployMockWeth || config.wethToken != address(0), "missing WETH for eveUSD");
+            require(config.eveUsd.collateralRatioBps >= 10_001, "invalid eveUSD collateral ratio");
+            require(
+                config.eveUsd.recoveryTriggerBps != 0 && config.eveUsd.recoveryTriggerBps < 10_000,
+                "invalid eveUSD trigger"
+            );
+            require(config.eveUsd.payoutUnit != 0, "zero eveUSD payout unit");
+            if (config.eveUsd.pool == address(0)) {
+                require(config.eveUsd.deploy, "eveUSD deploy disabled");
+                require(config.eveUsd.eveUSD == address(0), "eveUSD token requires pool");
+                require(config.eveUsd.evRisk == address(0), "evRisk token requires pool");
+                require(config.eveUsd.router == address(0), "eveUSD router requires pool");
+                require(
+                    config.eveUsd.oracle != address(0) || config.eveUsd.ethUsdFeed != address(0)
+                        || config.eveUsd.deployMockOracle,
+                    "missing eveUSD oracle"
+                );
+            }
+        }
+        if (config.eveUsd.deployMockOracle) {
+            require(config.eveUsd.oracle == address(0), "mock oracle conflicts with oracle");
+            require(config.eveUsd.ethUsdFeed == address(0), "mock oracle conflicts with feed");
+        }
+        if (config.eveUsd.ethUsdFeed != address(0)) {
+            require(config.eveUsd.oracle == address(0), "feed conflicts with oracle");
+            require(config.eveUsd.oracleMaxStaleness != 0, "zero oracle staleness");
+        }
+        if (config.eveUsd.sequencerUptimeFeed != address(0)) {
+            require(config.eveUsd.sequencerGracePeriod != 0, "zero sequencer grace");
         }
         if (config.deployMockWeth) {
             require(config.wethToken == address(0), "mock WETH conflicts with WETH address");
@@ -1325,6 +1501,30 @@ contract DeployScript is Script {
                 .setCollateralProfileParimutuelMinEntry(EVE_ETH_PROFILE_ID, config.eveEthParimutuelMinEntry);
             OwnershipFacet(deployment.market.diamond)
                 .setCollateralProfileParlayUnderwritingFee(EVE_ETH_PROFILE_ID, config.eveEthParlayUnderwritingFee);
+        }
+        if (deployment.eveUsdStackDeployer != address(0)) {
+            EveUSDPool(deployment.eveUsdPool).setFeeRecipient(config.feeRecipient);
+            EveUSDPool(deployment.eveUsdPool).setRecoveryTimelock(config.eveUsd.recoveryTimelock);
+            EveUSDPool(deployment.eveUsdPool).setFeeBps(config.eveUsd.mintFeeBps, config.eveUsd.recombinationFeeBps);
+        }
+        if (config.eveUsd.enableMarkets) {
+            OwnershipFacet(deployment.market.diamond)
+                .setCollateralProfile(
+                    EVE_USD_PROFILE_ID,
+                    deployment.eveUSD,
+                    address(0),
+                    config.eveUsd.payoutUnit,
+                    config.eveUsd.marketCreationFee,
+                    true
+                );
+            OwnershipFacet(deployment.market.diamond)
+                .setCollateralProfileParimutuelCreationSeedAmount(
+                    EVE_USD_PROFILE_ID, config.eveUsd.parimutuelCreationSeedAmount
+                );
+            OwnershipFacet(deployment.market.diamond)
+                .setCollateralProfileParimutuelMinEntry(EVE_USD_PROFILE_ID, config.eveUsd.parimutuelMinEntry);
+            OwnershipFacet(deployment.market.diamond)
+                .setCollateralProfileParlayUnderwritingFee(EVE_USD_PROFILE_ID, config.eveUsd.parlayUnderwritingFee);
         }
     }
 
@@ -1575,10 +1775,12 @@ contract DeployScript is Script {
 
         require(SEveUSDCLending(deployment.seveUsdcLending).owner() == config.market.owner, "lending owner mismatch");
         require(
-            address(SEveUSDCLending(deployment.seveUsdcLending).vault()) == deployment.seveUsdcVault, "vault link mismatch"
+            address(SEveUSDCLending(deployment.seveUsdcLending).vault()) == deployment.seveUsdcVault,
+            "vault link mismatch"
         );
         require(
-            address(SEveUSDCLending(deployment.seveUsdcLending).eveUSDC()) == deployment.eveUSDC, "eveUSDC link mismatch"
+            address(SEveUSDCLending(deployment.seveUsdcLending).eveUSDC()) == deployment.eveUSDC,
+            "eveUSDC link mismatch"
         );
         require(
             SEveUSDCLending(deployment.seveUsdcLending).approvedRouters(deployment.makerLendingRouter),
@@ -1646,6 +1848,82 @@ contract DeployScript is Script {
             uint128 profileParlayFee = IMarketFactoryFacet(deployment.market.diamond)
                 .getCollateralProfileParlayUnderwritingFee(EVE_ETH_PROFILE_ID);
             require(profileParlayFee == config.eveEthParlayUnderwritingFee, "eveETH parlay fee mismatch");
+        }
+        if (_eveUSDStackRequested(config.eveUsd)) {
+            require(deployment.wethToken != address(0), "WETH missing");
+            require(deployment.eveUSD != address(0), "eveUSD missing");
+            require(deployment.evRisk != address(0), "evRisk missing");
+            require(deployment.eveUsdPool != address(0), "eveUSD pool missing");
+            require(deployment.eveUsdOracle != address(0), "eveUSD oracle missing");
+            require(EveUSD(deployment.eveUSD).pool() == deployment.eveUsdPool, "eveUSD pool mismatch");
+            require(EveRiskShares(deployment.evRisk).pool() == deployment.eveUsdPool, "evRisk pool mismatch");
+            require(EveUSDPool(deployment.eveUsdPool).weth() == deployment.wethToken, "eveUSD WETH mismatch");
+            require(EveUSDPool(deployment.eveUsdPool).eveUSD() == deployment.eveUSD, "pool eveUSD mismatch");
+            require(EveUSDPool(deployment.eveUsdPool).evRisk() == deployment.evRisk, "pool evRisk mismatch");
+            require(EveUSDPool(deployment.eveUsdPool).oracle() == deployment.eveUsdOracle, "pool oracle mismatch");
+            if (deployment.eveUsdRouter != address(0)) {
+                require(
+                    EveUSDRouter(payable(deployment.eveUsdRouter)).pool() == deployment.eveUsdPool,
+                    "router pool mismatch"
+                );
+                require(
+                    EveUSDRouter(payable(deployment.eveUsdRouter)).weth() == deployment.wethToken,
+                    "router WETH mismatch"
+                );
+                require(
+                    EveUSDRouter(payable(deployment.eveUsdRouter)).eveUSD() == deployment.eveUSD,
+                    "router eveUSD mismatch"
+                );
+                require(
+                    EveUSDRouter(payable(deployment.eveUsdRouter)).evRisk() == deployment.evRisk,
+                    "router evRisk mismatch"
+                );
+            }
+            if (deployment.eveUsdStackDeployer != address(0)) {
+                require(EveUSDPool(deployment.eveUsdPool).owner() == config.market.owner, "eveUSD owner mismatch");
+                require(
+                    EveUSDPool(deployment.eveUsdPool).nextSeriesCollateralRatioBps()
+                        == config.eveUsd.collateralRatioBps,
+                    "eveUSD collateral ratio mismatch"
+                );
+                require(
+                    EveUSDPool(deployment.eveUsdPool).nextSeriesRecoveryTriggerBps()
+                        == config.eveUsd.recoveryTriggerBps,
+                    "eveUSD trigger mismatch"
+                );
+                require(
+                    EveUSDPool(deployment.eveUsdPool).recoveryTimelock() == config.eveUsd.recoveryTimelock,
+                    "eveUSD timelock mismatch"
+                );
+                require(
+                    EveUSDPool(deployment.eveUsdPool).mintFeeBps() == config.eveUsd.mintFeeBps,
+                    "eveUSD mint fee mismatch"
+                );
+                require(
+                    EveUSDPool(deployment.eveUsdPool).recombinationFeeBps() == config.eveUsd.recombinationFeeBps,
+                    "eveUSD recombination fee mismatch"
+                );
+                require(
+                    EveUSDPool(deployment.eveUsdPool).feeRecipient() == config.feeRecipient,
+                    "eveUSD fee recipient mismatch"
+                );
+            }
+        }
+        if (config.eveUsd.enableMarkets) {
+            MarketFactoryTypes.CollateralProfileView memory profile =
+                IMarketFactoryFacet(deployment.market.diamond).getCollateralProfile(EVE_USD_PROFILE_ID);
+            require(profile.collateralToken == deployment.eveUSD, "eveUSD profile collateral mismatch");
+            require(profile.wrapperToken == address(0), "eveUSD profile wrapper mismatch");
+            require(profile.payoutUnit == config.eveUsd.payoutUnit, "eveUSD profile payout mismatch");
+            require(profile.marketCreationFee == config.eveUsd.marketCreationFee, "eveUSD profile fee mismatch");
+            require(profile.enabled, "eveUSD profile disabled");
+            (uint128 profileSeed, uint128 profileMinEntry) =
+                IMarketFactoryFacet(deployment.market.diamond).getCollateralProfileParimutuelConfig(EVE_USD_PROFILE_ID);
+            require(profileSeed == config.eveUsd.parimutuelCreationSeedAmount, "eveUSD parimutuel seed mismatch");
+            require(profileMinEntry == config.eveUsd.parimutuelMinEntry, "eveUSD parimutuel min mismatch");
+            uint128 profileParlayFee = IMarketFactoryFacet(deployment.market.diamond)
+                .getCollateralProfileParlayUnderwritingFee(EVE_USD_PROFILE_ID);
+            require(profileParlayFee == config.eveUsd.parlayUnderwritingFee, "eveUSD parlay fee mismatch");
         }
 
         require(Faucet(deployment.faucet).owner() == config.faucetOwner, "faucet owner mismatch");
@@ -1758,6 +2036,63 @@ contract DeployScript is Script {
         }
 
         return address(new EveETH(wethToken));
+    }
+
+    function _resolveEveUSDStack(EveUSDStackConfig memory config, address wethToken, address owner)
+        internal
+        returns (EveUSDStackDeployment memory deployment)
+    {
+        if (!_eveUSDStackRequested(config)) {
+            return deployment;
+        }
+
+        if (config.pool != address(0)) {
+            deployment.pool = config.pool;
+            deployment.eveUSD = config.eveUSD != address(0) ? config.eveUSD : EveUSDPool(config.pool).eveUSD();
+            deployment.evRisk = config.evRisk != address(0) ? config.evRisk : EveUSDPool(config.pool).evRisk();
+            deployment.router = config.router;
+            deployment.oracle = config.oracle != address(0) ? config.oracle : EveUSDPool(config.pool).oracle();
+            return deployment;
+        }
+
+        deployment.oracle = _resolveEveUSDOracle(config);
+        EveUSDStackDeployer deployer = new EveUSDStackDeployer();
+        deployment.stackDeployer = address(deployer);
+        deployment.pool = vm.computeCreateAddress(deployment.stackDeployer, 3);
+        (deployment.eveUSD, deployment.evRisk, deployment.pool, deployment.router) = deployer.deployStack(
+            deployment.pool,
+            wethToken,
+            deployment.oracle,
+            owner,
+            config.collateralRatioBps,
+            config.recoveryTriggerBps,
+            config.riskUri
+        );
+    }
+
+    function _resolveEveUSDOracle(EveUSDStackConfig memory config) internal returns (address) {
+        if (config.oracle != address(0)) {
+            return config.oracle;
+        }
+        if (config.deployMockOracle) {
+            return address(new MockETHUSDOracle(config.mockOraclePriceWad, config.mockOracleMaxStaleness));
+        }
+
+        return address(
+            new ChainlinkETHUSDOracle(
+                config.ethUsdFeed,
+                config.oracleMaxStaleness,
+                config.oracleMinPriceWad,
+                config.oracleMaxPriceWad,
+                config.sequencerUptimeFeed,
+                config.sequencerGracePeriod
+            )
+        );
+    }
+
+    function _eveUSDStackRequested(EveUSDStackConfig memory config) internal pure returns (bool) {
+        return config.deploy || config.enableMarkets || config.pool != address(0) || config.eveUSD != address(0)
+            || config.evRisk != address(0) || config.router != address(0);
     }
 
     function _resolveParimutuelShareToken(address configuredAddress, address diamond) internal returns (address) {

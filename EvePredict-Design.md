@@ -1,7 +1,7 @@
 # Eves Market — Design Document
 ## On-Chain Prediction Market Protocol
 
-**Version:** 3.0
+**Version:** 3.1
 **Module:** Eves Market — On-Chain Prediction Market Protocol
 
 ---
@@ -30,10 +30,11 @@
 20. [eveUSDC Collateral Rail & sEVEUSDC Staking Vault](#eveusdc-collateral-rail--seveusdc-staking-vault)
 21. [sEVEUSDC Maker Lending](#seveusdc-maker-lending)
 22. [Maker Lending Router](#maker-lending-router)
-23. [Faucet](#faucet)
-24. [Events](#events)
-25. [Security Considerations](#security-considerations)
-26. [Appendix: Correctness Properties](#appendix-correctness-properties)
+23. [eveUSD ETH-Backed Stablecoin](#eveusd-eth-backed-stablecoin)
+24. [Faucet](#faucet)
+25. [Events](#events)
+26. [Security Considerations](#security-considerations)
+27. [Appendix: Correctness Properties](#appendix-correctness-properties)
 
 ---
 
@@ -42,6 +43,10 @@
 Eves Market is an on-chain prediction market protocol built on Base. It is structured as an EIP-2535 Diamond with modular facets sharing a single storage layout. The protocol started as a two-type binary market (Curve CLOB and Parimutuel) and has grown into a broader exchange surface that also supports multi-outcome orderbook markets, native combinatorial (parlay-style) positions, peer-to-peer parlays, standalone spot books, and MEV-resistant delayed taker orders.
 
 Markets are resolved through an Optimistic Bond-based Resolution (OBR) system. Instead of escalating to token-weighted governance voting, fully escalated disputes are now decided by a **Resolver Jury** — a staked, soulbound-identity committee that uses commit-reveal randomness for selection and commit-reveal voting for the verdict.
+
+Alongside the market machinery, the protocol includes **eveUSD**, an ETH-backed, options-style senior stablecoin. A WETH deposit into the `EveUSDPool` mints a par-denominated senior claim (`eveUSD`) plus a junior risk share (`EvRisk`, an ERC-1155 series token). The senior/junior split behaves like a collateralized options structure: senior holders hold a stable claim on the WETH collateral while junior holders absorb ETH price volatility and can be recapitalized into a new series when ETH falls through a recovery trigger.
+
+> **Naming note:** the USDC-backed collateral wrapper used for trading is now named **eveUSDC** (contract `EveUSDC`, vault `SEveUSDCVault`, lending `SEveUSDCLending`). The name **eveUSD** now refers exclusively to the ETH-backed senior tranche described in [eveUSD ETH-Backed Stablecoin](#eveusd-eth-backed-stablecoin). Do not confuse the two.
 
 ### Key Characteristics
 
@@ -64,6 +69,8 @@ Markets are resolved through an Optimistic Bond-based Resolution (OBR) system. I
 | **sEVEUSDC Vault** | ERC4626 staking vault with AUM fees, revenue sharing, and multi-token rewards |
 | **Maker Lending** | Vault-native lending against sEVEUSDC shares |
 | **Delayed Orders** | Block-delayed taker orders with permissionless/protocol processing |
+| **eveUSD Stablecoin** | ETH-backed senior/junior options structure: WETH deposit mints `eveUSD` (senior par claim) + `EvRisk` (junior series share) |
+| **ETH/USD Oracle** | Chainlink adapter (`ethUsdPriceWad`) with staleness, bounds, and sequencer-uptime checks |
 | **Permissionless** | Anyone can create markets, post curves, and resolve |
 
 ### System Participants
@@ -79,6 +86,8 @@ Markets are resolved through an Optimistic Bond-based Resolution (OBR) system. I
 | **Juror** | Staked soulbound resolver identity selected onto a dispute committee |
 | **Processor** | Executes queued delayed orders (protocol or permissionless) |
 | **Vault Staker** | Deposits eveUSDC into the sEVEUSDC vault for yield |
+| **Senior Holder** | Holds `eveUSD` — a par-denominated senior claim on pooled WETH |
+| **Junior Holder** | Holds `EvRisk` series shares — absorbs ETH volatility, exposed to recovery |
 
 
 ---
@@ -121,6 +130,11 @@ eve-predict/src/
 ├── SEveUSDCVault.sol                  # ERC4626 staking vault
 ├── SEveUSDCLending.sol                # Vault-native maker lending
 ├── MakerLendingRouter.sol            # USDC ↔ market position router (standalone)
+├── EveUSD.sol                        # ETH-backed senior stablecoin (ERC-20, pool-minted)
+├── EveRiskShares.sol                 # Junior risk shares (ERC-1155 per series, pool-minted)
+├── EveUSDPool.sol                    # ETH-backed stablecoin pool (deposit / recombine / recovery)
+├── EveUSDRouter.sol                  # ETH/WETH ↔ eveUSD + EvRisk router (standalone)
+├── ChainlinkETHUSDOracle.sol         # ETH/USD oracle adapter for the pool
 ├── Faucet.sol                        # Multi-token testnet faucet (standalone)
 ├── facets/
 │   ├── MarketFactoryFacet.sol        # Market + market-group creation, metadata, views
@@ -191,7 +205,7 @@ The Diamond supports DiamondCut (add/replace/remove facet functions), selector f
 
 The CLOB engine is decomposed across multiple facets for bytecode-size management. `CurveCLOBFacet` is an aggregating entry point; `CurveInventoryFacet`, `CurveLifecycleFacet`, and `CurveViewFacet` provide split/merge, posting/lifecycle, and views respectively. Standalone book operations live in `BookFacet` / `BookOrderFacet` / `BookTradeFacet` / `BookViewFacet`.
 
-Standalone contracts (`EveUSDC`, `EveETH`, `SEveUSDCVault`, `SEveUSDCLending`, `MakerLendingRouter`, `Faucet`) operate outside the Diamond and interact with it through its public facet interfaces.
+Standalone contracts (`EveUSDC`, `EveETH`, `SEveUSDCVault`, `SEveUSDCLending`, `MakerLendingRouter`, `EveUSD`, `EveRiskShares`, `EveUSDPool`, `EveUSDRouter`, `ChainlinkETHUSDOracle`, `Faucet`) operate outside the Diamond and interact with it (or with each other) through their public interfaces.
 
 > **Note on renames since v2.1:** the former `SpotBook*Facet` family is now `Book*Facet`, and the former `EveTokenGateFacet` is now `BondTokenGateFacet`. The bond gate no longer locks an EVE governance token — it locks a generic `config.bondToken` for resolution bonds.
 
@@ -1763,6 +1777,163 @@ Preview functions mirror each flow (`previewOnramp`, `previewParimutuelOnramp`, 
 
 ---
 
+## eveUSD ETH-Backed Stablecoin
+
+### Overview
+
+`eveUSD` is an ETH-backed, options-style senior stablecoin — a separate subsystem from the eveUSDC trading collateral. A user deposits WETH into the `EveUSDPool` and receives two tokens minted against the same collateral:
+
+- **`eveUSD`** — an 18-decimal ERC-20 **senior** claim, minted at par against the deposit at the pool's collateral ratio. It is the stable leg.
+- **`EvRisk`** — an ERC-1155 **junior** risk share, one token ID per *risk series*. It is the volatile leg that absorbs ETH price movement and carries recovery/recapitalization exposure.
+
+Every deposit mints equal amounts of `eveUSD` and `EvRisk` for the current series (a "pair"). Recombining a full pair (equal `eveUSD` + `EvRisk` of the same series) returns the proportional WETH. The structure behaves like a covered call / collateralized option split: senior holders get downside protection funded by junior holders, and when ETH drops through a recovery trigger the impaired series is frozen and rolled into a fresh series so new deposits are never diluted by legacy risk.
+
+> This is a clean-break ERC-1155 series model: an impaired series can never claim junior equity created by a later series.
+
+### Contracts
+
+| Contract | File | Type | Role |
+|---|---|---|---|
+| EveUSD | `src/EveUSD.sol` | ERC-20 (18 decimals) | Senior par claim; `mint`/`burn` gated to the pool |
+| EveRiskShares (`EvRisk`) | `src/EveRiskShares.sol` | ERC-1155 | Junior risk shares, one ID per series; `mint`/`burn`/batch gated to the pool |
+| EveUSDPool | `src/EveUSDPool.sol` | Standalone | Core accounting: deposit, recombine, recovery lifecycle |
+| EveUSDRouter | `src/EveUSDRouter.sol` | Standalone | ETH/WETH deposit + recombine with slippage bounds and residual snapshots |
+| ChainlinkETHUSDOracle | `src/ChainlinkETHUSDOracle.sol` | Standalone | ETH/USD price adapter (`ethUsdPriceWad`) |
+
+`EveUSD.pool()` and `EveRiskShares.pool()` must both point at the pool; the pool and router validate these links at construction.
+
+### Pricing & Accounting
+
+All math is WAD (1e18) fixed point; ratios are in bps (`BPS_DENOMINATOR = 10_000`).
+
+```
+wethPerPairWad = (WAD × collateralRatioBps / 10_000) × WAD / priceWad
+```
+
+- On deposit, `minted = netWeth × WAD / series.wethPerPairWad`, and equal `eveUSD` and `EvRisk` are minted (`sharesMinted == eveUSDMinted`).
+- The series is priced from the ETH/USD oracle **at series creation**; `wethPerPairWad` is fixed for the life of the series.
+- `collateralRatioBps` (global) = `collateralValueWad × 10_000 / seniorLiabilities`, where `collateralValueWad = accountedCollateral × priceWad / WAD` and `seniorLiabilities = eveUSD.totalSupply()`.
+- Direct WETH donations do not inflate share pricing — the pool tracks `accountedCollateral` and per-series `accountedCollateral` rather than raw balances.
+
+### Configuration & Bounds
+
+Owner-set, lockable via `lockConfig()` (irreversible). Constants enforce bounds:
+
+| Parameter | Bounds |
+|---|---|
+| `collateralRatioBps` (next series) | `10_001` – `30_000` |
+| `recoveryTriggerBps` (next series) | `1` – `9_999` |
+| `recoveryTimelock` | `1 day` – `30 days` (default `7 days`) |
+| `mintFeeBps` / `recombinationFeeBps` | ≤ `1_000` (10%) |
+
+Config setters: `setOracle`, `setNextSeriesConfig`, `setRecoveryTimelock`, `setFeeRecipient`, `setFeeBps`, `transferOwnership`, `lockConfig`. Fees are taken in WETH and sent to `feeRecipient`.
+
+### Series Lifecycle
+
+```solidity
+enum SeriesStatus { None, Active, RecoveryPending, RecoveryFinalized, Liquidatable, Retired }
+```
+
+```
+Active
+  ├─ depositWETH → mint eveUSD + EvRisk(seriesId)
+  ├─ recombine   → burn pair, return proportional WETH
+  └─ startRecovery (oracle price ≤ trigger) → RecoveryPending
+
+RecoveryPending
+  ├─ returnRiskShares / reclaimReturnedRiskShares   (junior holders opt in/out of migration)
+  ├─ cancelRecovery (price recovers above trigger)  → Active
+  └─ finalizeRecovery (after timelock, still impaired) → Liquidatable + new Active series
+
+Liquidatable (old series)
+  ├─ claimRecoveredRiskShares    (returned holders migrate into the new series)
+  └─ recoverExpiredRisk          (operator sweeps stragglers into the new series)
+```
+
+### Key Operations
+
+```solidity
+// Deposit WETH → senior + junior
+(uint256 seriesId, uint256 eveUSDMinted, uint256 sharesMinted) =
+    pool.depositWETH(wethAmount, eveUSDReceiver, shareReceiver);
+
+// Recombine a full pair (exact shareAmount == required) → WETH
+uint256 wethOut = pool.recombine(seriesId, eveUSDAmount, shareAmount, receiver);
+
+// Recovery lifecycle
+pool.startRecovery(seriesId);                                  // price ≤ trigger
+pool.returnRiskShares(seriesId, shares);                       // opt into migration
+uint256 shares = pool.reclaimReturnedRiskShares(seriesId, receiver); // opt back out (while Active/RecoveryPending)
+pool.cancelRecovery(seriesId);                                 // price restored
+uint256 newSeriesId = pool.finalizeRecovery(seriesId);         // after timelock, still impaired
+
+// Post-finalization junior migration
+(uint256 sharesMinted, uint256 eveUSDMinted, uint256 wethOut) =
+    pool.claimRecoveredRiskShares(oldSeriesId, receiver, mode);
+(uint256 newSeriesId, uint256 sharesMinted, uint256 eveUSDMinted) =
+    pool.recoverExpiredRisk(holder, oldSeriesId, shares);      // operator-driven
+```
+
+### Recovery Claim Modes
+
+When a returned junior holder migrates from a `Liquidatable` old series into the new series:
+
+```solidity
+enum RecoveryClaimMode { WETHDifference, MorePairs }
+```
+
+Let `oldClaimWeth` be the WETH value of the holder's returned shares in the old series and `baseNewClaimWeth` the WETH needed to mint the same share count in the new series (which requires `baseNewClaimWeth ≤ oldClaimWeth`):
+
+- **`WETHDifference`** — mint the same number of new-series shares (`sharesMinted == shares`) and pay out the surplus `oldClaimWeth − baseNewClaimWeth` as WETH.
+- **`MorePairs`** — roll the full `oldClaimWeth` into the new series, minting more shares plus `eveUSDMinted = sharesMinted − shares` of senior claim.
+
+`finalizeRecovery` enforces that the new series' `wethPerPairWad` is non-dilutive to the old series' per-pair claim (`RecoveryClaimValueInsufficient` otherwise).
+
+### Router
+
+`EveUSDRouter` wraps the pool for ETH-native UX and enforces slippage plus strict residual-balance snapshots (WETH, eveUSD, EvRisk-by-series, native ETH) after each call. It implements `IERC1155Receiver`.
+
+```solidity
+(uint256 seriesId, uint256 eveUSDMinted, uint256 sharesMinted) =
+    router.depositETH{value: x}(eveUSDReceiver, shareReceiver, minEveUSD, minShares);
+router.depositWETH(wethAmount, eveUSDReceiver, shareReceiver, minEveUSD, minShares);
+uint256 wethOut = router.recombineToWETH(seriesId, eveUSDAmount, maxSharesIn, receiver, minWETHOut);
+uint256 ethOut  = router.recombineToETH(seriesId, eveUSDAmount, maxSharesIn, receiver, minETHOut);
+```
+
+### Oracle
+
+`ChainlinkETHUSDOracle` adapts a Chainlink ETH/USD aggregator to `ethUsdPriceWad()` and enforces:
+
+- Positive answer, non-future `updatedAt`, `answeredInRound ≥ roundId`
+- Staleness: `block.timestamp − updatedAt ≤ maxStaleness`
+- Optional price bounds (`minPriceWad` / `maxPriceWad`, exclusive)
+- Optional L2 sequencer-uptime feed with a grace period (`SequencerDown` / `SequencerGracePeriodActive`)
+- Feed decimals ≤ 18, scaled up to WAD
+
+`MockETHUSDOracle` provides a settable price for tests.
+
+### Preview & View Functions
+
+```solidity
+DepositPreview       memory p = pool.previewDeposit(wethAmount);
+RedemptionPreview    memory p = pool.previewRecombine(seriesId, eveUSDAmount);
+uint256 shares                = pool.requiredSharesForRecombine(seriesId, eveUSDAmount); // == eveUSDAmount
+OperatorRecoveryPreview memory p = pool.previewOperatorRecovery(holder, oldSeriesId, shares);
+RecoveredRiskClaimPreview memory p = pool.previewRecoveredRiskClaim(account, oldSeriesId, mode);
+
+RiskSeries memory s = pool.riskSeries(seriesId);
+uint256 shares      = pool.returnedShares(seriesId, account);
+uint256 wethAmount  = pool.totalCollateral();
+uint256 eveUSDAmt   = pool.seniorLiabilities();
+uint256 usdValueWad = pool.collateralValueWad();
+uint256 ratioBps    = pool.collateralRatioBps();
+uint256 seriesId    = pool.currentRiskSeriesId();
+```
+
+
+---
+
 ## Faucet
 
 `Faucet.sol` is a standalone owner-managed multi-token testnet faucet (`Ownable`, `ReentrancyGuard`, `CLAIM_INTERVAL = 1 days`). The owner configures per-token amounts via `setToken` / `setTokenAmount` / `setTokenEnabled`; users call `claim()` once per interval to receive the configured amount of every enabled token; `withdraw` (owner) recovers funds. Testnet-only utility.
@@ -1923,6 +2094,23 @@ event BookMakerFeesClaimed(bytes32 indexed bookId, address indexed maker, uint12
 event BookCreatorFeesClaimed(bytes32 indexed bookId, address indexed creator, uint128 amount);
 ```
 
+### eveUSD Stablecoin (EveUSDPool / EveUSDRouter)
+
+```solidity
+event Deposited(address indexed caller, address indexed eveUSDReceiver, address indexed shareReceiver, uint256 seriesId, uint256 wethAmount, uint256 eveUSDMinted, uint256 sharesMinted, uint256 priceWad, uint256 wethPerPairWad);
+event Recombined(address indexed caller, address indexed receiver, uint256 indexed seriesId, uint256 eveUSDBurned, uint256 sharesBurned, uint256 wethOut, uint256 collateralRatioBpsAfter);
+event RecoveryStarted(uint256 indexed seriesId, uint256 recoveryEndsAt, uint256 priceWad);
+event RiskSharesReturned(address indexed account, uint256 indexed seriesId, uint256 shares);
+event ReturnedRiskSharesReclaimed(address indexed account, uint256 indexed seriesId, uint256 shares);
+event RecoveryCancelled(uint256 indexed seriesId);
+event RecoveryFinalized(uint256 indexed oldSeriesId, uint256 indexed newSeriesId, uint256 priceWad);
+event RecoveredRiskSharesClaimed(address indexed account, uint256 indexed oldSeriesId, uint256 indexed newSeriesId, RecoveryClaimMode mode, uint256 returnedShares, uint256 sharesMinted, uint256 eveUSDMinted, uint256 wethOut);
+event ExpiredRiskRecovered(address indexed operator, address indexed holder, uint256 indexed oldSeriesId, uint256 newSeriesId, uint256 sharesBurned, uint256 sharesMinted, uint256 eveUSDMinted);
+// Config / ownership: OwnershipTransferred, ConfigLockedForever, OracleSet, NextSeriesConfigSet,
+//                     RecoveryTimelockSet, FeeRecipientSet, FeeBpsSet, FeeCollected
+// Router: ETHDeposited, WETHDeposited, RecombinedToWETH, RecombinedToETH
+```
+
 
 ---
 
@@ -1944,9 +2132,13 @@ event BookCreatorFeesClaimed(bytes32 indexed bookId, address indexed creator, ui
 14. **Top-up volume balance.** `splitAndTopUp` variants enforce equal total YES and NO volume per market batch.
 15. **Zero-winning-side protection (parimutuel).** A YES/NO outcome with no shares on the winning side becomes effectively INVALID, preventing division by zero.
 16. **Delayed-order MEV resistance.** Orders become executable only after a block delay and must be processed along a committed route hash; `ProtocolOnly` mode restricts processing to registered processors.
-17. **Router residual assertions.** `TradeRouterFacet`, `VaultRouterFacet`, and `MakerLendingRouter` assert zero residual balances after every operation.
-18. **Reentrancy protection.** Vault, lending, and Diamond router/mutating facets use reentrancy guards (`nonReentrant` / `LibReentrancy`).
-19. **Network-exposed surfaces.** All on/off-ramp mint/burn paths are gated to immutable onramp/offramp addresses (eveUSDC) or require backing transfers (eveETH).
+17. **Router residual assertions.** `TradeRouterFacet`, `VaultRouterFacet`, and `MakerLendingRouter` assert zero residual balances after every operation. `EveUSDRouter` asserts snapshot-restored balances (WETH, eveUSD, EvRisk-by-series, native ETH) after every operation.
+18. **Reentrancy protection.** Vault, lending, Diamond router/mutating facets, and the eveUSD pool/router use reentrancy guards (`nonReentrant` / `LibReentrancy`).
+19. **Network-exposed surfaces.** All on/off-ramp mint/burn paths are gated to immutable onramp/offramp addresses (eveUSDC) or require backing transfers (eveETH). `eveUSD` / `EvRisk` mint/burn are gated to the pool (`NotMinter` / `NotBurner` / `NotPool`).
+20. **eveUSD oracle safety.** `ChainlinkETHUSDOracle` rejects non-positive, future-dated, stale, and out-of-bounds prices, and honors an optional L2 sequencer-uptime feed with a grace period. The pool re-reads the oracle on every deposit, recovery transition, and recombine preview.
+21. **eveUSD series isolation.** Junior risk is series-scoped ERC-1155; an impaired (`Liquidatable`) series can never claim junior equity minted for a later series. `finalizeRecovery` requires the new series to be non-dilutive to the old series' per-pair claim.
+22. **eveUSD collateral integrity.** The pool tracks `accountedCollateral` (global and per-series) rather than raw WETH balances, so donations cannot distort share pricing; recombine and recovery burn tokens before transferring WETH.
+23. **eveUSD config immutability option.** `lockConfig()` permanently freezes oracle, series, timelock, fee-recipient, and fee-bps changes.
 
 
 ---
@@ -2147,7 +2339,45 @@ Market-linked book and market fee/volume accounting update in lockstep
 Standalone books snapshot fee config at creation and accrue independently
 ```
 
+### Property 31: eveUSD Pair Backing
+```
+Each deposit mints eveUSDMinted == sharesMinted against netWeth at series.wethPerPairWad
+accountedCollateral (global) == Σ series.accountedCollateral
+Recombining a full pair returns collateralOut ≤ series.accountedCollateral pro-rata
+Fees are taken from WETH only; senior/junior units are never minted unbacked
+```
+
+### Property 32: eveUSD Series Isolation
+```
+Junior risk is ERC-1155 keyed by seriesId
+A Liquidatable series never receives junior equity minted for a later series
+finalizeRecovery reverts (RecoveryClaimValueInsufficient) if the new series' wethPerPairWad
+  exceeds the old series' per-pair claim (non-dilution guard)
+```
+
+### Property 33: eveUSD Recovery Trigger Monotonicity
+```
+startRecovery requires oracle price ≤ startPrice × recoveryTriggerBps / 10_000
+cancelRecovery requires price restored above the trigger
+finalizeRecovery requires block.timestamp ≥ recoveryEndsAt AND price still ≤ trigger
+```
+
+### Property 34: eveUSD Recovery Claim Value Preservation
+```
+Migration requires baseNewClaimWeth ≤ oldClaimWeth
+WETHDifference: sharesMinted == returnedShares, wethOut == oldClaimWeth − baseNewClaimWeth
+MorePairs:      collateralMoved == oldClaimWeth, eveUSDMinted == sharesMinted − returnedShares
+No claim mode increases the holder's WETH-denominated value beyond oldClaimWeth
+```
+
+### Property 35: eveUSD Oracle Validity
+```
+ethUsdPriceWad reverts on non-positive, future-dated, stale (> maxStaleness), or out-of-bounds prices
+When a sequencer feed is set, prices revert while the sequencer is down or within the grace period
+Feed answers are scaled to 18-decimal WAD
+```
+
 ---
 
-**Document Version:** 3.0
+**Document Version:** 3.1
 **Module:** Eves Market — On-Chain Prediction Market Protocol
