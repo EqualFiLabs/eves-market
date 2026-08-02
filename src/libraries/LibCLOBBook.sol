@@ -223,7 +223,9 @@ library LibCLOBBook {
             makerFeeBps: feeConfig.makerFeeBps,
             creatorFeeBps: feeConfig.creatorFeeBps,
             protocolFeeBps: feeConfig.protocolFeeBps,
-            vaultFeeBps: feeConfig.vaultFeeBps
+            vaultFeeBps: feeConfig.vaultFeeBps,
+            resolverFeeBps: feeConfig.resolverFeeBps,
+            evRiskFeeBps: feeConfig.evRiskFeeBps
         });
     }
 
@@ -237,15 +239,13 @@ library LibCLOBBook {
             makerFeeBps: feeConfig.makerFeeBps,
             creatorFeeBps: 0,
             protocolFeeBps: feeConfig.protocolFeeBps,
-            vaultFeeBps: feeConfig.vaultFeeBps
+            vaultFeeBps: feeConfig.vaultFeeBps,
+            resolverFeeBps: feeConfig.resolverFeeBps,
+            evRiskFeeBps: feeConfig.evRiskFeeBps
         });
     }
 
-    function bookInfo(LibEveMarket.Book storage book)
-        internal
-        view
-        returns (CurveCLOBTypes.BookInfo memory info)
-    {
+    function bookInfo(LibEveMarket.Book storage book) internal view returns (CurveCLOBTypes.BookInfo memory info) {
         info = CurveCLOBTypes.BookInfo({
             bookId: book.bookId,
             marketId: book.marketId,
@@ -270,6 +270,8 @@ library LibCLOBBook {
             creatorFeeBps: book.feeConfig.creatorFeeBps,
             protocolFeeBps: book.feeConfig.protocolFeeBps,
             vaultFeeBps: book.feeConfig.vaultFeeBps,
+            resolverFeeBps: book.feeConfig.resolverFeeBps,
+            evRiskFeeBps: book.feeConfig.evRiskFeeBps,
             pricingMode: uint8(book.pricingMode),
             lifecycle: uint8(book.lifecycle),
             tickPresetId: book.tickPresetId,
@@ -283,11 +285,9 @@ library LibCLOBBook {
         });
     }
 
-    function collectSpotBookCreationFee(
-        LibEveMarket.EveMarketStorage storage state,
-        bytes32 bookId,
-        address creator
-    ) internal {
+    function collectSpotBookCreationFee(LibEveMarket.EveMarketStorage storage state, bytes32 bookId, address creator)
+        internal
+    {
         uint128 fee = state.config.spotBookCreationFee;
         if (fee == 0 || creator == LibDiamond.contractOwner()) {
             return;

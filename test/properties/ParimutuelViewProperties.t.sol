@@ -26,7 +26,7 @@ contract ParimutuelViewPropertiesTest is CurveTradingFixture {
         ResolutionHarnessFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
 
         vm.startPrank(owner);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 9_500, 0);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 9_500, 0, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelEpochWindowCap(30 days);
         OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
         vm.stopPrank();

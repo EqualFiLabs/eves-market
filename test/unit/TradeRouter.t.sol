@@ -19,11 +19,10 @@ import {Errors} from "../../src/libraries/Errors.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibRouter} from "../../src/libraries/LibRouter.sol";
 
-import {ResolutionHarnessFacet, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
+import {EveUSDCRouterFixture, ResolutionHarnessFacet, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 import {MockConditionalTokens} from "../helpers/MockConditionalTokens.sol";
-import {VaultFeeRoutingFixture} from "../helpers/VaultFeeRoutingFixture.sol";
 
-contract TradeRouterTest is VaultFeeRoutingFixture {
+contract TradeRouterTest is EveUSDCRouterFixture {
     ITradeRouter internal tradeRouter;
     address internal alternateReceiver;
 
@@ -442,7 +441,7 @@ contract TradeRouterTest is VaultFeeRoutingFixture {
         ITradeRouter.SellBestResult memory result = tradeRouter.sellWithEveUSDC(params);
 
         assertEq(result.sharesSold, 2e6);
-        assertEq(result.collateralOut, 950_000);
+        assertEq(result.collateralOut, 1_000_000);
         assertEq(conditionalTokens.balanceOf(maker, yesPositionId), 2e6);
     }
 
@@ -520,7 +519,7 @@ contract TradeRouterTest is VaultFeeRoutingFixture {
     function _configureSmallFeeSplit() internal {
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(100);
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100);
+        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100, 0, 0);
         vm.stopPrank();
     }
 

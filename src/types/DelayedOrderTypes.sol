@@ -4,6 +4,14 @@ pragma solidity ^0.8.28;
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 
 abstract contract DelayedOrderTypes {
+    enum DelayedOrderHeadState {
+        Empty,
+        Waiting,
+        Expired,
+        NeedsRoute,
+        Paused
+    }
+
     struct SubmitDelayedOrderParams {
         bytes32 bookId;
         LibEveMarket.DelayedOrderKind kind;
@@ -55,6 +63,18 @@ abstract contract DelayedOrderTypes {
         uint64 tail;
         uint256 headOrderId;
         uint256 pendingCount;
+    }
+
+    struct DelayedOrderHeadView {
+        bytes32 bookId;
+        uint64 head;
+        uint64 tail;
+        uint256 orderId;
+        LibEveMarket.DelayedOrderStatus status;
+        uint64 executableBlock;
+        uint64 expiryBlock;
+        bytes32 routeHash;
+        DelayedOrderHeadState processState;
     }
 
     struct CreditBalanceView {

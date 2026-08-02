@@ -56,16 +56,13 @@ USDC=$(addr_of MockUSDC)
 EVE=$(addr_of MockEveToken)
 EVOTES=$EVE
 EVEUSDC=$(addr_of EveUSDC)
-VAULT=$(addr_of SEveUSDCVault)
-LENDING=$(addr_of SEveUSDCLending)
-ROUTER=$(addr_of MakerLendingRouter)
 PSHARE=$(addr_of ParimutuelShareToken)
 
 # Conditional tokens were deployed via assembly (no contractName). Pull from getMarketConfig.
-CFG=$($CAST_CALL "$DIAMOND" "getMarketConfig()((address,address,address,address,address,address,address,(uint16,uint16,uint16,uint16,uint16),(uint16,uint16,uint16,uint16),uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint128,uint64,uint64,uint64,uint64,uint64,uint64,uint64,uint8,bool))")
+CFG=$($CAST_CALL "$DIAMOND" "getMarketConfig()((address,address,address,address,address,address,address,address,(uint16,uint16,uint16,uint16,uint16),(uint16,uint16,uint16,uint16),(uint16,uint16,uint16,uint16,uint16),(uint16,uint16,uint16,uint16),uint128,uint128,uint128,uint128,uint128,uint128,address,uint128,uint128,uint64,uint64,uint64,uint64,uint64,uint16,uint8,uint8,bool,uint64,uint64,uint24,uint16,uint8,uint32,uint128,uint128))")
 CTF=$(echo "$CFG" | sed 's/^(//; s/)$//' | awk -F',' '{print $1}' | xargs)
 
-for v in DIAMOND USDC EVE EVOTES EVEUSDC VAULT LENDING ROUTER PSHARE CTF; do
+for v in DIAMOND USDC EVE EVOTES EVEUSDC PSHARE CTF; do
   val=${!v}
   [ -n "$val" ] && [ "$val" != "null" ] || fail "missing address for $v"
   ok "$(printf '%-22s %s' "$v" "$val")"
@@ -77,11 +74,8 @@ done
 step "Approvals"
 MAX=115792089237316195423570985008687907853269984665640564039457584007913129639935
 $CAST_SEND "$USDC"   "approve(address,uint256)" "$EVEUSDC"  "$MAX" >/dev/null && ok "USDC -> EveUSDC onramp"
-$CAST_SEND "$USDC"   "approve(address,uint256)" "$ROUTER"  "$MAX" >/dev/null && ok "USDC -> MakerLendingRouter"
 $CAST_SEND "$USDC"   "approve(address,uint256)" "$DIAMOND" "$MAX" >/dev/null && ok "USDC -> Diamond"
 $CAST_SEND "$EVEUSDC" "approve(address,uint256)" "$DIAMOND" "$MAX" >/dev/null && ok "EveUSDC -> Diamond"
-$CAST_SEND "$EVEUSDC" "approve(address,uint256)" "$VAULT"   "$MAX" >/dev/null && ok "EveUSDC -> Vault"
-$CAST_SEND "$EVEUSDC" "approve(address,uint256)" "$ROUTER"  "$MAX" >/dev/null && ok "EveUSDC -> MakerLendingRouter"
 $CAST_SEND "$EVE"    "approve(address,uint256)" "$DIAMOND" "$MAX" >/dev/null && ok "EVE -> Diamond"
 $CAST_SEND "$CTF"    "setApprovalForAll(address,bool)" "$DIAMOND" true >/dev/null && ok "CTF -> Diamond"
 
@@ -118,15 +112,14 @@ $CAST_SEND "$DIAMOND" "setDisputeWindow(uint64)" 7200 >/dev/null && ok "setDispu
 $CAST_SEND "$DIAMOND" "setCreatorSettleGrace(uint64)" 86400 >/dev/null && ok "setCreatorSettleGrace"
 $CAST_SEND "$DIAMOND" "setOpenResolutionTimeout(uint64)" 172800 >/dev/null && ok "setOpenResolutionTimeout"
 $CAST_SEND "$DIAMOND" "setMaxEscalation(uint8)" 2 >/dev/null && ok "setMaxEscalation"
-$CAST_SEND "$DIAMOND" "setOrderbookFeeSplit(uint16,uint16,uint16,uint16)" 8500 400 1000 100 >/dev/null && ok "setFeeSplit"
-$CAST_SEND "$DIAMOND" "setParimutuelFeeSplit(uint16,uint16,uint16)" 500 9500 0 >/dev/null && ok "setParimutuelFeeSplit"
+$CAST_SEND "$DIAMOND" "setOrderbookFeeSplit(uint16,uint16,uint16,uint16,uint16)" 8500 400 1000 100 0 >/dev/null && ok "setFeeSplit"
+$CAST_SEND "$DIAMOND" "setParimutuelFeeSplit(uint16,uint16,uint16,uint16)" 500 9500 0 0 >/dev/null && ok "setParimutuelFeeSplit"
 $CAST_SEND "$DIAMOND" "setParimutuelConfig(address,uint16,uint128)" "$PSHARE" 250 1000000 >/dev/null && ok "setParimutuelConfig"
 $CAST_SEND "$DIAMOND" "setParimutuelEpochWindowCap(uint64)" 2592000 >/dev/null && ok "setParimutuelEpochWindowCap"
 $CAST_SEND "$DIAMOND" "setEveTreasury(address)" "$TREASURY" >/dev/null && ok "setEveTreasury"
 $CAST_SEND "$DIAMOND" "setEveToken(address)" "$EVE" >/dev/null && ok "setEveToken"
 $CAST_SEND "$DIAMOND" "setCollateralToken(address)" "$EVEUSDC" >/dev/null && ok "setCollateralToken"
 $CAST_SEND "$DIAMOND" "setDefaultConditionalTokens(address)" "$CTF" >/dev/null && ok "setDefaultConditionalTokens"
-$CAST_SEND "$DIAMOND" "setStakingVault(address)" "$VAULT" >/dev/null && ok "setStakingVault"
 
 ##############################################################################
 # 5. createMarket (CLOB / CTF) + market views
@@ -399,9 +392,6 @@ echo "USDC:              $USDC"
 echo "ConditionalTokens: $CTF"
 echo "EVE:               $EVE"
 echo "EVE-Votes:         $EVOTES"
-echo "Vault (sEveUSDC):   $VAULT"
-echo "Lending:           $LENDING"
-echo "MakerLendingRouter:$ROUTER"
 echo "ParimutuelShares:  $PSHARE"
 echo "Treasury:          $TREASURY"
 echo "Market id:         $MARKET_ID"

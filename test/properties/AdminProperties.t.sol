@@ -32,7 +32,6 @@ contract AdminPropertiesTest is SettlementFeeFixture {
         address newCollateralToken = makeAddr("new-collateral-token");
         address newEveToken = makeAddr("new-eve-token");
         address newTreasury = makeAddr("new-treasury");
-        address newStakingVault = makeAddr("new-staking-vault");
 
         vm.startPrank(outsider);
 
@@ -58,10 +57,7 @@ contract AdminPropertiesTest is SettlementFeeFixture {
         OwnershipFacet(address(diamond)).setEveTreasury(newTreasury);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
-        OwnershipFacet(address(diamond)).setStakingVault(newStakingVault);
-
-        vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100);
+        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 400, 1_000, 100, 0, 0);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
         OwnershipFacet(address(diamond)).setDurationParams(minDuration, maxDuration);

@@ -29,9 +29,16 @@ interface IResolverRegistryFacet {
         address eveIdentity;
         address identityMintFeeToken;
         uint128 identityMintFee;
-        uint128 resolverStakeRequirement;
-        uint128 resolverStakeCap;
-        uint16 resolverPoolCap;
+        uint128 resolverSeatStake;
+        address epochCandidateFeeToken;
+        uint128 epochCandidateFeeAmount;
+        uint16 activeEpochSize;
+        uint64 resolverEpochDuration;
+        uint64 resolverRotationWindow;
+        uint64 epochRandomnessCommitDuration;
+        uint64 epochRandomnessRevealDuration;
+        uint64 epochSelectionDuration;
+        uint8 minEpochRandomnessReveals;
         uint64 activationDelay;
         uint64 exitCooldown;
         uint16 participationThresholdBps;
@@ -84,28 +91,71 @@ interface IResolverRegistryFacet {
         uint16 unresolvedCommittees;
         uint64 slashLockUntil;
         bool slashLockActive;
-        bool activePoolMember;
+        bool currentEpochMember;
         bool globallyEligible;
     }
 
-    struct ResolverPoolView {
+    struct ResolverEpochPoolView {
+        uint64 currentEpochId;
         uint256 activeResolverCount;
         uint256 eligibleResolverCount;
-        uint16 resolverPoolCapacity;
+        uint16 activeEpochSize;
+    }
+
+    struct ResolverEpochView {
+        uint64 epochId;
+        uint64 startTime;
+        uint64 endTime;
+        uint64 rotationOpenedAt;
+        uint64 commitDeadline;
+        uint64 revealDeadline;
+        uint64 selectionDeadline;
+        uint64 seedReferenceBlock;
+        uint32 validRevealCount;
+        bytes32 seed;
+        bool seedFinalized;
+        bool selectionFinalized;
+        uint256 candidateCount;
+        uint256 scoreSubmittedCount;
+        uint256 selectedCount;
+        uint256 activeCount;
+    }
+
+    struct ResolverEpochCandidateView {
+        bool optedIn;
+        bool selected;
+        bool scoreSubmitted;
+        uint256 score;
+        bool hasCommitted;
+        bool hasRevealed;
     }
 
     function mintIdentity() external returns (uint256 identityId);
     function setCreatorRole(bool enabled) external;
     function setResolverRole(bool enabled) external;
     function depositResolverStake(uint256 amount) external;
-    function activateResolver() external;
+    function openResolverEpochRotation() external returns (uint64 epochId);
+    function optIntoResolverEpoch(bytes32 randomnessCommitment) external returns (uint64 epochId);
+    function commitResolverEpochRandomness(uint64 epochId, bytes32 randomnessCommitment) external;
+    function closeResolverEpochRandomnessCommit(uint64 epochId) external;
+    function revealResolverEpochRandomness(uint64 epochId, bytes32 value, bytes32 salt) external;
+    function finalizeResolverEpochSeed(uint64 epochId) external returns (bytes32 seed);
+    function submitResolverEpochCandidateScore(uint64 epochId, uint256 identityId) external returns (uint256 score);
+    function finalizeResolverEpochSelection(uint64 epochId) external;
+    function activateFinalizedResolverEpoch(uint64 epochId) external;
     function requestResolverExit() external;
     function withdrawResolverStake() external;
+    function finalizeResolverTradingRewards(uint64 epochId, address token) external returns (uint128 amount);
+    function claimResolverRewards(address token) external returns (uint128 amount);
     function eveIdentity() external view returns (address);
     function resolverDashboard(address owner)
         external
         view
-        returns (ResolverIdentityView memory identity, ResolverJuryConfigView memory config, ResolverPoolView memory pool);
+        returns (
+            ResolverIdentityView memory identity,
+            ResolverJuryConfigView memory config,
+            ResolverEpochPoolView memory epochPool
+        );
     function resolverIdentity(uint256 identityId) external view returns (ResolverIdentityView memory view_);
     function resolverIdentityByOwner(address owner) external view returns (ResolverIdentityView memory view_);
     function resolverJuryConfig() external view returns (ResolverJuryConfigView memory view_);
@@ -117,7 +167,17 @@ interface IResolverRegistryFacet {
     function resolverReputation(uint256 identityId) external view returns (ResolverReputationView memory);
     function eligibleResolverCount() external view returns (uint256);
     function activeResolverCount() external view returns (uint256);
-    function resolverPoolCapacity() external view returns (uint16);
-    function resolverPoolMemberAt(uint256 index) external view returns (uint256 identityId);
+    function activeResolverEpochSize() external view returns (uint16);
+    function activeResolverAt(uint256 index) external view returns (uint256 identityId);
+    function currentResolverEpoch() external view returns (uint64);
+    function resolverEpoch(uint64 epochId) external view returns (ResolverEpochView memory view_);
+    function resolverEpochCandidate(uint64 epochId, uint256 identityId)
+        external
+        view
+        returns (ResolverEpochCandidateView memory view_);
+    function previewResolverRewards(uint256 identityId, address token)
+        external
+        view
+        returns (uint128 accrued, uint128 claimed, uint128 claimable);
     function applyFinalityReputation(bytes32 disputeId, uint8 finalResult) external;
 }

@@ -36,8 +36,7 @@ For the full protocol design — data models, math, fee splits, resolution flow,
 | **Delayed orders** | Block-delayed taker orders with committed routes and protocol/permissionless processing. |
 | **Collateral profiles** | Pluggable collateral (eveUSDC, eveETH, …) selected per product via `…WithCollateralProfile`. |
 | **eveUSDC** | 18-decimal USDC wrapper (minted at a `1e12` scale over 6-decimal USDC). |
-| **sEVEUSDC vault** | ERC4626 staking vault with AUM fees and multi-token revenue sharing. |
-| **Maker lending** | Vault-native lending against sEVEUSDC shares (95% max LTV, seize-and-redeem default recovery). |
+| **Senior capital pool** | eveUSDC capital pool for protocol revenue, reserved capital, and loss accounting. |
 | **OBR + Resolver Jury** | Optimistic bond resolution escalating to a staked, soulbound-identity commit-reveal jury. |
 
 ---
@@ -49,20 +48,18 @@ For the full protocol design — data models, math, fee splits, resolution flow,
    USDC ── wrap ──▶ eveUSDC ──▶  EveMarketDiamond (EIP-2535)  ──▶ Gnosis CTF / EvesPositionManager
    WETH ── wrap ──▶ eveETH       │  facets share storage         ParimutuelShareToken
                         │        │                               ParlayTicketToken
-   eveUSDC ─ deposit ─▶ sEVEUSDC   │
+   eveUSDC ─ deposit ─▶ SeniorCapitalPool
                         │        ├─ Market creation / metadata / groups
-       (vault yield)    │        ├─ Curve CLOB engine + books (spot)
+                        │        ├─ Curve CLOB engine + books (spot)
                         │        ├─ Parimutuel pools (epoch multiplier)
                         │        ├─ Multi-outcome + native/combo positions
                         │        ├─ Parlays (offers / requests / budgets / tickets)
                         │        ├─ Delayed orders (queue + processors)
                         │        ├─ OBR resolution → Resolver Jury
                         │        └─ Fee routing + maker rewards
-                        ▼
-              sEVEUSDC Maker Lending (standalone) ◀─ MakerLendingRouter (standalone)
 ```
 
-Standalone contracts (`EveUSDC`, `EveETH`, `SEveUSDCVault`, `SEveUSDCLending`, `MakerLendingRouter`, `Faucet`) live outside the Diamond and interact with it through its public facet interfaces.
+Standalone contracts (`EveUSDC`, `EveETH`, `SeniorCapitalPool`, `Faucet`) live outside the Diamond and interact with it through their public interfaces.
 
 ---
 
@@ -73,9 +70,7 @@ eve-predict/
 ├── src/
 │   ├── EveMarketDiamond.sol          # EIP-2535 proxy
 │   ├── EveUSDC.sol                    # USDC wrapper (18 decimals)
-│   ├── SEveUSDCVault.sol              # ERC4626 staking vault
-│   ├── SEveUSDCLending.sol            # Vault-native maker lending
-│   ├── MakerLendingRouter.sol        # USDC ↔ market position router
+│   ├── SeniorCapitalPool.sol          # Senior eveUSDC capital pool
 │   ├── Faucet.sol                    # Multi-token testnet faucet
 │   ├── facets/                       # Diamond facets
 │   │   ├── native/                   # Native binary + combinatorial facets
@@ -225,7 +220,7 @@ After expiry the creator may settle; otherwise the community proposes outcomes w
 
 ### Collateral rail
 
-`eveUSDC` (18-decimal USDC wrapper) is the default collateral. `eveETH` (1:1 WETH wrapper) and other tokens are added through collateral profiles. The `sEVEUSDC` ERC4626 vault offers yield on idle eveUSDC; maker lending borrows eveUSDC against sEVEUSDC shares.
+`eveUSDC` (18-decimal USDC wrapper) is the default collateral. `eveETH` (1:1 WETH wrapper) and other tokens are added through collateral profiles. `SeniorCapitalPool` is the active senior eveUSDC capital surface for eligible protocol revenue and margin-layer accounting.
 
 ---
 
@@ -279,12 +274,12 @@ parimutuel.buyShares(marketId, true, 100e18, msg.sender, minOut);
 parimutuel.claimPayout(marketId);
 ```
 
-**Stake in the vault**
+**Provide senior capital**
 
 ```solidity
-IERC20(usdc).approve(diamond, 10_000e6);
-uint256 shares = vaultRouter.wrapAndDeposit(10_000e6, msg.sender);
-uint256 usdcOut = vaultRouter.redeemAndUnwrap(shares, msg.sender);
+IERC20(eveUSDC).approve(address(seniorCapitalPool), 10_000e18);
+uint256 shares = seniorCapitalPool.deposit(10_000e18, msg.sender);
+uint256 assets = seniorCapitalPool.redeem(shares, msg.sender, msg.sender);
 ```
 
 ---

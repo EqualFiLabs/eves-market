@@ -229,14 +229,6 @@ contract GasBench is DeployScript {
         c.market.maxEscalation = 2;
         c.market.permissionlessCreationEnabled = true;
 
-        c.aumFeeBps = 200;
-        c.lendingMaxLtvBps = 9500;
-        c.lendingOriginationFeeBps = 100;
-        c.lendingExtensionFeeBps = 50;
-        c.lendingFeeRecipientBps = 0;
-        c.lendingMinDurationSeconds = uint32(1 days);
-        c.lendingMaxDurationSeconds = uint32(400 days);
-        c.lendingGracePeriodSeconds = uint32(1 days);
         c.initialUsdcMint = 0;
         c.initialEveMint = 1_000_000e18;
         c.faucetOwner = owner;

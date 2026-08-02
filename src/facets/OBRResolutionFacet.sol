@@ -11,6 +11,7 @@ import {IResolverJuryFacet} from "../interfaces/IResolverJuryFacet.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Events} from "../libraries/Events.sol";
 import {LibCTF} from "../libraries/LibCTF.sol";
+import {LibDiamond} from "../libraries/LibDiamond.sol";
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 import {LibMultiOutcome} from "../libraries/LibMultiOutcome.sol";
 import {LibParimutuel} from "../libraries/LibParimutuel.sol";
@@ -68,6 +69,7 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
 
     function openResolution(bytes32 marketId, uint8 outcome) external nonReentrant {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        _requireObrJuryMode(state.config);
         LibEveMarket.Market storage market = _loadPendingExpiredMarket(state, marketId);
         _validateOutcome(state, market, outcome);
 
@@ -93,6 +95,7 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
 
     function disputeResolution(bytes32 marketId, uint8 counterOutcome) external nonReentrant {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        _requireObrJuryMode(state.config);
         LibEveMarket.Market storage market = state.markets[marketId];
 
         if (market.state != LibEveMarket.MarketState.Disputed) {
@@ -136,6 +139,32 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
         }
     }
 
+    function adminFinalizeResolution(bytes32 marketId, uint8 outcome) external nonReentrant {
+        LibDiamond.enforceIsContractOwner();
+
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        if (state.config.resolutionMode != LibEveMarket.ResolutionMode.CreatorAdminBootstrap) {
+            revert Errors.ResolutionModeDisabled(uint8(state.config.resolutionMode));
+        }
+
+        LibEveMarket.Market storage market = state.markets[marketId];
+        if (market.marketId != marketId) {
+            revert Errors.MarketNotFound(marketId);
+        }
+
+        _syncExpiredMarket(market);
+        if (market.state == LibEveMarket.MarketState.Resolved) {
+            revert Errors.MarketAlreadyResolved(marketId);
+        }
+        if (market.state != LibEveMarket.MarketState.Pending && market.state != LibEveMarket.MarketState.Disputed) {
+            revert Errors.ResolutionNotReady(marketId);
+        }
+
+        _validateOutcome(state, market, outcome);
+        _finalizeOutcome(state, market, marketId, outcome, address(0));
+        emit Events.AdminResolutionFinalized(marketId, msg.sender, outcome);
+    }
+
     function getResolutionHistory(bytes32 marketId)
         external
         view
@@ -172,6 +201,7 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
 
     function finalizeResolution(bytes32 marketId) external nonReentrant {
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        _requireObrJuryMode(state.config);
         LibEveMarket.Market storage market = state.markets[marketId];
 
         if (market.marketId != marketId) {
@@ -247,6 +277,10 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
         outcome_ = _storedOutcome(state, market);
         disputeDeadline = state.resolutions[marketId].disputeDeadline;
         creatorFeesEscrowed = market.creatorFeesEscrowed;
+    }
+
+    function resolutionMode() external view returns (uint8 mode) {
+        mode = uint8(LibEveMarket.store().config.resolutionMode);
     }
 
     function _loadPendingExpiredMarket(LibEveMarket.EveMarketStorage storage state, bytes32 marketId)
@@ -442,6 +476,12 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
         _finalizeOutcome(state, market, marketId, OUTCOME_INVALID, address(0));
     }
 
+    function _requireObrJuryMode(LibEveMarket.MarketConfig storage config) internal view {
+        if (config.resolutionMode != LibEveMarket.ResolutionMode.ObrJury) {
+            revert Errors.ResolutionModeDisabled(uint8(config.resolutionMode));
+        }
+    }
+
     function _finalizeOutcome(
         LibEveMarket.EveMarketStorage storage state,
         LibEveMarket.Market storage market,
@@ -449,10 +489,11 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
         uint8 outcome,
         address rewardRecipient
     ) internal {
-        uint8 creatorOutcome = _creatorSettledOutcome(state, marketId, market.creator);
+        (bool hasCreatorOutcome, uint8 creatorOutcome) = _creatorSettledOutcome(state, marketId, market.creator);
         uint128 creatorFeesEscrowedAtFinalization = market.creatorFeesEscrowed;
         uint128 creationBondAtFinalization = market.creationBond;
-        bool creatorSettledHonestly = creatorOutcome != 0 && creatorOutcome == outcome;
+        bool creatorSettledHonestly = hasCreatorOutcome && creatorOutcome == outcome;
+        bool finalOutcomeInvalid = _isInvalidFinalOutcome(market, outcome);
 
         if (market.marketType == LibEveMarket.MarketType.MULTI_OUTCOME_ORDERBOOK) {
             _finalizeMultiOutcomeMarket(state, marketId, outcome);
@@ -466,7 +507,7 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
         market.resolutionTime = uint64(block.timestamp);
         market.creatorSettledHonestly = creatorSettledHonestly;
         market.creatorFeeEligible =
-            creatorSettledHonestly && outcome != OUTCOME_INVALID && creatorFeesEscrowedAtFinalization != 0;
+            creatorSettledHonestly && !finalOutcomeInvalid && creatorFeesEscrowedAtFinalization != 0;
         market.creationBondReturnable = creatorSettledHonestly && creationBondAtFinalization != 0;
 
         _settleRecordedBonds(state, marketId, outcome);
@@ -570,14 +611,14 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
             return;
         }
 
-        uint8 creatorOutcome = _creatorSettledOutcome(state, marketId, market.creator);
+        (bool hasCreatorOutcome, uint8 creatorOutcome) = _creatorSettledOutcome(state, marketId, market.creator);
         uint256 treasuryShare = escrowed;
         IERC20 collateralToken = IERC20(market.collateralToken);
 
         market.creatorFeesEscrowed = 0;
 
         if (
-            creatorOutcome != 0 && creatorOutcome != outcome && outcome != OUTCOME_INVALID
+            hasCreatorOutcome && creatorOutcome != outcome && !_isInvalidFinalOutcome(market, outcome)
                 && rewardRecipient != address(0) && rewardRecipient != market.creator
         ) {
             uint256 challengerReward = uint256(escrowed) / 10;
@@ -592,24 +633,30 @@ contract OBRResolutionFacet is IOBRResolutionFacet {
     function _creatorSettledOutcome(LibEveMarket.EveMarketStorage storage state, bytes32 marketId, address creator)
         internal
         view
-        returns (uint8)
+        returns (bool found, uint8 outcome)
     {
         LibEveMarket.Resolution[] storage history = state.resolutionHistory[marketId];
         for (uint256 index = 0; index < history.length; ++index) {
             LibEveMarket.Resolution storage proposal = history[index];
             if (proposal.proposer == creator && proposal.escalationLevel == 0) {
-                return proposal.proposedOutcome;
+                return (true, proposal.proposedOutcome);
             }
         }
 
-        return 0;
+        return (false, 0);
     }
 
-    function _settleRecordedBonds(
-        LibEveMarket.EveMarketStorage storage state,
-        bytes32 marketId,
-        uint8 finalOutcome
-    ) internal {
+    function _isInvalidFinalOutcome(LibEveMarket.Market storage market, uint8 outcome) internal view returns (bool) {
+        if (market.marketType == LibEveMarket.MarketType.MULTI_OUTCOME_ORDERBOOK) {
+            return outcome == LibMultiOutcome.OUTCOME_INVALID;
+        }
+
+        return outcome == OUTCOME_INVALID;
+    }
+
+    function _settleRecordedBonds(LibEveMarket.EveMarketStorage storage state, bytes32 marketId, uint8 finalOutcome)
+        internal
+    {
         LibEveMarket.Resolution[] storage history = state.resolutionHistory[marketId];
 
         for (uint256 index = 0; index < history.length; ++index) {

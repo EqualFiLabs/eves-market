@@ -2,10 +2,16 @@
 pragma solidity ^0.8.28;
 
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {EveRiskShares} from "../../src/EveRiskShares.sol";
+import {EveUSD} from "../../src/EveUSD.sol";
+import {EveUSDPool} from "../../src/EveUSDPool.sol";
+import {EvRiskStakingRewards} from "../../src/EvRiskStakingRewards.sol";
 import {IFeeRouterFacet} from "../../src/interfaces/IFeeRouterFacet.sol";
 import {IOBRResolutionFacet} from "../../src/interfaces/IOBRResolutionFacet.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {Events} from "../../src/libraries/Events.sol";
+import {CanonicalWETH9} from "../../src/mocks/CanonicalWETH9.sol";
+import {MockETHUSDOracle} from "../../src/mocks/MockETHUSDOracle.sol";
 
 import {SettlementFeeFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 
@@ -243,7 +249,7 @@ contract FeeRouterTest is SettlementFeeFixture {
         uint256 curveId = _postCurveFromMaker(marketId, true, 100_000e6, 500_000_000, 500_000_000, 180, 0);
 
         vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(0, 10_000, 0, 0);
+        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(0, 10_000, 0, 0, 0, 0);
 
         (, uint128 fee,) = _fillCurveFromTaker(curveId, 4_200e6);
         uint128 makerShare = _makerShare(fee);
@@ -257,6 +263,35 @@ contract FeeRouterTest is SettlementFeeFixture {
         assertEq(storedMakerFees, makerShare);
         assertEq(storedCreatorFees, creatorShare);
         assertEq(storedProtocolFees, protocolShare);
+    }
+
+    function test_OrderbookEntryRoutesEvRiskFeeToActiveSeriesStakers() public {
+        address evRiskStaker = makeAddr("evRiskStaker");
+        EvRiskStakingRewards staking = _deployEvRiskStakingRewardsWithStake(evRiskStaker, 0.0006 ether);
+
+        vm.startPrank(owner);
+        OwnershipFacet(address(diamond)).setEvRiskStakingRewards(address(staking));
+        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(0, 0, 0, 0, 0, 10_000);
+        vm.stopPrank();
+
+        uint256 treasuryBefore = collateralToken.balanceOf(treasury);
+        uint128 creationFee = StateProbeFacet(address(diamond)).marketCreationFee();
+        (bytes32 marketId,, uint128 fee) =
+            _createFilledMarketWithFee("evRisk-book-fee", "fees", 7 days, 10_000e6, 500_000_000, 500, 4_200e6);
+
+        (uint128 storedCreatorFees, uint128 storedProtocolFees,,) =
+            StateProbeFacet(address(diamond)).getStoredMarketFees(marketId);
+        (, uint128 storedMakerFees,) = StateProbeFacet(address(diamond)).getStoredMakerAccounting(marketId, maker);
+
+        assertEq(storedMakerFees, 0);
+        assertEq(storedCreatorFees, 0);
+        assertEq(storedProtocolFees, 0);
+        assertEq(collateralToken.balanceOf(treasury), treasuryBefore + creationFee);
+        assertEq(staking.previewClaim(evRiskStaker, 1, address(collateralToken)), fee);
+
+        vm.prank(evRiskStaker);
+        assertEq(staking.claim(1, address(collateralToken)), fee);
+        assertEq(collateralToken.balanceOf(evRiskStaker), fee);
     }
 
     function test_FinalizeResolutionRoutesForfeitureToChallengerAndTreasury() public {
@@ -330,5 +365,32 @@ contract FeeRouterTest is SettlementFeeFixture {
 
     function _creatorShare(uint128 fee) internal pure returns (uint128) {
         return uint128((uint256(fee) * 500) / 10_000);
+    }
+
+    function _deployEvRiskStakingRewardsWithStake(address staker, uint256 collateralAmount)
+        internal
+        returns (EvRiskStakingRewards staking)
+    {
+        CanonicalWETH9 weth = new CanonicalWETH9();
+        MockETHUSDOracle oracle = new MockETHUSDOracle(2_500e18, 1 hours);
+        address predictedPool = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 2);
+        EveUSD eveUSD = new EveUSD(predictedPool);
+        EveRiskShares evRisk = new EveRiskShares(predictedPool, "");
+        EveUSDPool eveUsdPool =
+            new EveUSDPool(address(weth), address(eveUSD), address(evRisk), address(oracle), owner, 15_000, 8_000);
+        assertEq(address(eveUsdPool), predictedPool);
+
+        staking = new EvRiskStakingRewards(
+            address(evRisk), address(eveUsdPool), eveUsdPool.firstCollateralProfileId(), treasury, owner
+        );
+
+        vm.deal(staker, collateralAmount);
+        vm.startPrank(staker);
+        weth.deposit{value: collateralAmount}();
+        weth.approve(address(eveUsdPool), collateralAmount);
+        (,, uint256 sharesMinted) = eveUsdPool.depositCollateral(1, collateralAmount, staker, staker);
+        evRisk.setApprovalForAll(address(staking), true);
+        staking.stake(sharesMinted);
+        vm.stopPrank();
     }
 }

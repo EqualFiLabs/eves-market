@@ -332,7 +332,7 @@ contract MarketViewsTest is SettlementFeeFixture {
         assertEq(config.collateralToken, address(collateralToken));
         assertEq(config.eveToken, address(eveToken));
         assertEq(config.eveTreasury, treasury);
-        assertEq(config.stakingVault, address(0));
+        assertEq(config.seniorCapitalPool, address(0));
         assertEq(config.orderbookFeeConfig.entryFeeBps, StateProbeFacet(address(diamond)).orderbookEntryFeeBps());
         assertEq(config.orderbookFeeConfig.vaultFeeBps, 0);
         assertEq(config.marketCreationFee, StateProbeFacet(address(diamond)).marketCreationFee());

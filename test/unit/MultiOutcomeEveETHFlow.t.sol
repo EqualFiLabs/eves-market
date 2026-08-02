@@ -59,7 +59,7 @@ contract MultiOutcomeEveETHFlowTest is SettlementFeeFixture {
         OwnershipFacet(address(diamond))
             .setCollateralProfile(EVE_ETH_PROFILE_ID, address(eveETH), address(weth), EVE_ETH_PAYOUT_UNIT, 0, true);
         OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(100);
-        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(4_000, 0, 3_000, 3_000);
+        OwnershipFacet(address(diamond)).setOrderbookFeeSplit(4_000, 0, 3_000, 3_000, 0, 0);
         OwnershipFacet(address(diamond)).setDelayedOrderConfig(2, 10, 180);
         OwnershipFacet(address(diamond)).setDelayedOrderProcessing(uint8(LibEveMarket.ProcessingMode.Permissionless), 0);
         vm.stopPrank();

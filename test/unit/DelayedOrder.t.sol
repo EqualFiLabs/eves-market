@@ -14,6 +14,7 @@ import {ICurveInventoryFacet} from "../../src/interfaces/ICurveInventoryFacet.so
 import {ICurveLifecycleFacet} from "../../src/interfaces/ICurveLifecycleFacet.sol";
 import {ICurveViewFacet} from "../../src/interfaces/ICurveViewFacet.sol";
 import {Events} from "../../src/libraries/Events.sol";
+import {Errors} from "../../src/libraries/Errors.sol";
 import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibCurvePacking} from "../../src/libraries/LibCurvePacking.sol";
 import {LibCurveStorage} from "../../src/libraries/LibCurveStorage.sol";
@@ -38,6 +39,7 @@ interface IDelayedOrderFlatCurveHarnessFacet {
     function bookCurveIdAt(bytes32 bookId, uint256 index) external view returns (uint256 curveId);
     function bookCurveCount(bytes32 bookId) external view returns (uint256 count);
     function marketCurveCount(bytes32 marketId) external view returns (uint256 count);
+    function setMarketPayoutUnit(bytes32 marketId, uint128 payoutUnit) external;
 }
 
 interface IDelayedOrderLifecycleFacet {
@@ -51,6 +53,17 @@ interface IDelayedOrderLifecycleFacet {
         DelayedOrderTypes.DelayedOrderRoute[] calldata routes
     ) external returns (DelayedOrderTypes.ProcessDelayedOrderResult memory result);
 
+    function processDelayedOrdersFrom(
+        bytes32 bookId,
+        uint64 expectedHeadSequence,
+        uint256 maxOrders,
+        DelayedOrderTypes.DelayedOrderRoute[] calldata routes
+    ) external returns (DelayedOrderTypes.ProcessDelayedOrderResult memory result);
+
+    function expireDelayedOrders(bytes32 bookId, uint256 maxOrders)
+        external
+        returns (DelayedOrderTypes.ProcessDelayedOrderResult memory result);
+
     function getDelayedOrder(uint256 orderId) external view returns (DelayedOrderTypes.DelayedOrderView memory order);
 
     function getQuoteCredit(address owner, address token)
@@ -62,6 +75,7 @@ interface IDelayedOrderLifecycleFacet {
         view
         returns (DelayedOrderTypes.CreditBalanceView memory credit);
     function getBookQueue(bytes32 bookId) external view returns (DelayedOrderTypes.BookQueueView memory queue);
+    function getDelayedOrderHead(bytes32 bookId) external view returns (DelayedOrderTypes.DelayedOrderHeadView memory view_);
     function withdrawBaseCredit(uint8 assetType, address token, uint256 tokenId, uint128 amount) external;
 }
 
@@ -103,6 +117,10 @@ contract DelayedOrderFlatCurveHarnessFacet {
 
     function marketCurveCount(bytes32 marketId) external view returns (uint256 count) {
         count = LibEveMarket.store().markets[marketId].curveCount;
+    }
+
+    function setMarketPayoutUnit(bytes32 marketId, uint128 payoutUnit) external {
+        LibEveMarket.store().markets[marketId].payoutUnit = payoutUnit;
     }
 }
 
@@ -239,6 +257,159 @@ contract DelayedOrderTest is TestBase {
         assertEq(uint8(order.status), uint8(LibEveMarket.DelayedOrderStatus.Filled));
         assertEq(conditionalTokens.balanceOf(taker, yesPositionId), BASE_VOLUME);
         assertEq(order.remainingAmount, 0);
+    }
+
+    function test_RevertWhen_DelayedRouteExceedsConfiguredCap() public {
+        (, bytes32 bookId,) = _createYesBook();
+        ITestStateFacet(address(diamond)).setDelayedOrderGuardsFixture(64, 0, 0);
+        DelayedOrderTypes.DelayedOrderRoute memory route = _sizedRoute(65);
+
+        DelayedOrderTypes.SubmitDelayedOrderParams memory params = _submitParams(bookId, QUOTE_ESCROW, route);
+        params.kind = LibEveMarket.DelayedOrderKind.MarketBuy;
+
+        vm.startPrank(taker);
+        usdc.approve(address(diamond), QUOTE_ESCROW);
+        vm.expectRevert(abi.encodeWithSelector(Errors.DelayedOrderRouteTooLong.selector, 65, 64));
+        IDelayedOrderLifecycleFacet(address(diamond)).submitDelayedOrder(params);
+        vm.stopPrank();
+    }
+
+    function test_DelayedRouteAcceptsConfiguredCapBoundary() public {
+        (, bytes32 bookId,) = _createYesBook();
+        ITestStateFacet(address(diamond)).setDelayedOrderGuardsFixture(64, 0, 0);
+
+        uint256 orderId = _submitMarketBuy(bookId, QUOTE_ESCROW, _sizedRoute(64));
+
+        DelayedOrderTypes.DelayedOrderView memory order = _delayedOrder(orderId);
+        assertEq(uint8(order.status), uint8(LibEveMarket.DelayedOrderStatus.Pending));
+    }
+
+    function test_RevertWhen_DelayedBuyBelowNormalizedQuoteMinimum() public {
+        (bytes32 marketId, bytes32 bookId,) = _createYesBook();
+        IDelayedOrderFlatCurveHarnessFacet(address(diamond)).setMarketPayoutUnit(marketId, 1e6);
+        ITestStateFacet(address(diamond)).setDelayedOrderGuardsFixture(0, 1e18, 0);
+
+        uint128 amount = 999_999;
+        DelayedOrderTypes.SubmitDelayedOrderParams memory params = _submitParams(bookId, amount, _emptyRoute());
+        params.kind = LibEveMarket.DelayedOrderKind.MarketBuy;
+
+        vm.startPrank(taker);
+        usdc.approve(address(diamond), amount);
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.DelayedOrderQuoteBelowMinimum.selector, 999_999_000_000_000_000, 1e18)
+        );
+        IDelayedOrderLifecycleFacet(address(diamond)).submitDelayedOrder(params);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_DelayedSellBelowNormalizedBaseMinimum() public {
+        (bytes32 marketId, bytes32 bookId,) = _createYesBook();
+        IDelayedOrderFlatCurveHarnessFacet(address(diamond)).setMarketPayoutUnit(marketId, 1e6);
+        ITestStateFacet(address(diamond)).setDelayedOrderGuardsFixture(0, 0, 1e18);
+
+        uint128 amount = 999_999;
+        DelayedOrderTypes.SubmitDelayedOrderParams memory params = _submitParams(bookId, amount, _emptyRoute());
+        params.kind = LibEveMarket.DelayedOrderKind.MarketSell;
+
+        vm.startPrank(taker);
+        conditionalTokens.setApprovalForAll(address(diamond), true);
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.DelayedOrderBaseBelowMinimum.selector, 999_999_000_000_000_000, 1e18)
+        );
+        IDelayedOrderLifecycleFacet(address(diamond)).submitDelayedOrder(params);
+        vm.stopPrank();
+    }
+
+    function test_ProcessDelayedOrdersFromRequiresExpectedHead() public {
+        (bytes32 marketId, bytes32 bookId, uint256 yesPositionId) = _createYesBook();
+        _splitToMakerEscrow(marketId, yesPositionId, BASE_VOLUME);
+        uint256 curveId = _createFlatAsk(bookId, BASE_VOLUME);
+        DelayedOrderTypes.DelayedOrderRoute memory route = _route(curveId);
+        uint256 orderId = _submitMarketBuy(bookId, QUOTE_ESCROW, route);
+        _rollExecutable();
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.DelayedOrderHeadMismatch.selector, bookId, 1, 0));
+        IDelayedOrderLifecycleFacet(address(diamond)).processDelayedOrdersFrom(bookId, 1, 1, _routes(route));
+
+        DelayedOrderTypes.ProcessDelayedOrderResult memory result =
+            IDelayedOrderLifecycleFacet(address(diamond)).processDelayedOrdersFrom(bookId, 0, 1, _routes(route));
+
+        assertEq(result.processedCount, 1);
+        assertEq(uint8(_delayedOrder(orderId).status), uint8(LibEveMarket.DelayedOrderStatus.Filled));
+    }
+
+    function test_ExpireDelayedOrdersExpiresOnlyExpiredHeads() public {
+        (, bytes32 bookId,) = _createYesBook();
+        uint256 firstOrderId = _submitMarketBuy(bookId, QUOTE_ESCROW, _emptyRoute());
+        uint256 secondOrderId = _submitMarketBuy(bookId, QUOTE_ESCROW, _emptyRoute());
+
+        vm.roll(_delayedOrder(firstOrderId).expiryBlock + 1);
+        DelayedOrderTypes.ProcessDelayedOrderResult memory result =
+            IDelayedOrderLifecycleFacet(address(diamond)).expireDelayedOrders(bookId, 10);
+
+        assertEq(result.processedCount, 2);
+        assertEq(result.stoppedOrderId, 0);
+        assertEq(uint8(_delayedOrder(firstOrderId).status), uint8(LibEveMarket.DelayedOrderStatus.Expired));
+        assertEq(uint8(_delayedOrder(secondOrderId).status), uint8(LibEveMarket.DelayedOrderStatus.Expired));
+        assertEq(
+            IDelayedOrderLifecycleFacet(address(diamond)).getQuoteCredit(taker, address(usdc)).withdrawable,
+            QUOTE_ESCROW * 2
+        );
+    }
+
+    function test_ExpireDelayedOrdersStopsAtNonExpiredHead() public {
+        (, bytes32 bookId,) = _createYesBook();
+        uint256 orderId = _submitMarketBuy(bookId, QUOTE_ESCROW, _emptyRoute());
+
+        vm.roll(_delayedOrder(orderId).executableBlock);
+        DelayedOrderTypes.ProcessDelayedOrderResult memory result =
+            IDelayedOrderLifecycleFacet(address(diamond)).expireDelayedOrders(bookId, 10);
+
+        assertEq(result.processedCount, 0);
+        assertEq(result.stoppedOrderId, orderId);
+        assertEq(uint8(_delayedOrder(orderId).status), uint8(LibEveMarket.DelayedOrderStatus.Pending));
+    }
+
+    function test_ExpireDelayedOrdersWorksWhenProcessingPaused() public {
+        (, bytes32 bookId,) = _createYesBook();
+        uint256 orderId = _submitMarketBuy(bookId, QUOTE_ESCROW, _emptyRoute());
+        ITestStateFacet(address(diamond))
+            .setDelayedOrderProcessingFixture(uint8(LibEveMarket.ProcessingMode.Paused), 0);
+
+        vm.roll(_delayedOrder(orderId).expiryBlock + 1);
+        DelayedOrderTypes.ProcessDelayedOrderResult memory result =
+            IDelayedOrderLifecycleFacet(address(diamond)).expireDelayedOrders(bookId, 1);
+
+        assertEq(result.processedCount, 1);
+        assertEq(uint8(_delayedOrder(orderId).status), uint8(LibEveMarket.DelayedOrderStatus.Expired));
+    }
+
+    function test_GetDelayedOrderHeadReportsProcessorState() public {
+        bytes32 emptyBookId = keccak256("empty-delayed-book");
+        DelayedOrderTypes.DelayedOrderHeadView memory head =
+            IDelayedOrderLifecycleFacet(address(diamond)).getDelayedOrderHead(emptyBookId);
+        assertEq(uint8(head.processState), uint8(DelayedOrderTypes.DelayedOrderHeadState.Empty));
+
+        (, bytes32 bookId,) = _createYesBook();
+        uint256 orderId = _submitMarketBuy(bookId, QUOTE_ESCROW, _emptyRoute());
+        head = IDelayedOrderLifecycleFacet(address(diamond)).getDelayedOrderHead(bookId);
+        assertEq(head.orderId, orderId);
+        assertEq(head.head, 0);
+        assertEq(head.tail, 1);
+        assertEq(uint8(head.processState), uint8(DelayedOrderTypes.DelayedOrderHeadState.Waiting));
+
+        vm.roll(_delayedOrder(orderId).executableBlock);
+        head = IDelayedOrderLifecycleFacet(address(diamond)).getDelayedOrderHead(bookId);
+        assertEq(uint8(head.processState), uint8(DelayedOrderTypes.DelayedOrderHeadState.NeedsRoute));
+
+        ITestStateFacet(address(diamond))
+            .setDelayedOrderProcessingFixture(uint8(LibEveMarket.ProcessingMode.Paused), 0);
+        head = IDelayedOrderLifecycleFacet(address(diamond)).getDelayedOrderHead(bookId);
+        assertEq(uint8(head.processState), uint8(DelayedOrderTypes.DelayedOrderHeadState.Paused));
+
+        vm.roll(_delayedOrder(orderId).expiryBlock + 1);
+        head = IDelayedOrderLifecycleFacet(address(diamond)).getDelayedOrderHead(bookId);
+        assertEq(uint8(head.processState), uint8(DelayedOrderTypes.DelayedOrderHeadState.Expired));
     }
 
     function test_DelayedMarketBuyDoesNotProcessBeforeDelay() public {
@@ -750,6 +921,12 @@ contract DelayedOrderTest is TestBase {
         route.expectedCommitments = new bytes32[](0);
     }
 
+    function _sizedRoute(uint256 length) internal pure returns (DelayedOrderTypes.DelayedOrderRoute memory route) {
+        route.curveIds = new uint256[](length);
+        route.expectedGenerations = new uint32[](length);
+        route.expectedCommitments = new bytes32[](length);
+    }
+
     function _routes(DelayedOrderTypes.DelayedOrderRoute memory route)
         internal
         pure
@@ -936,16 +1113,17 @@ contract DelayedOrderTest is TestBase {
     }
 
     function _flatCurveHarnessSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         selectors[0] = IDelayedOrderFlatCurveHarnessFacet.createFlatCurveFromEscrow.selector;
         selectors[1] = IDelayedOrderFlatCurveHarnessFacet.bookCurveIdsLength.selector;
         selectors[2] = IDelayedOrderFlatCurveHarnessFacet.bookCurveIdAt.selector;
         selectors[3] = IDelayedOrderFlatCurveHarnessFacet.bookCurveCount.selector;
         selectors[4] = IDelayedOrderFlatCurveHarnessFacet.marketCurveCount.selector;
+        selectors[5] = IDelayedOrderFlatCurveHarnessFacet.setMarketPayoutUnit.selector;
     }
 
     function _delayedOrderSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](10);
         selectors[0] = IDelayedOrderLifecycleFacet.submitDelayedOrder.selector;
         selectors[1] = IDelayedOrderLifecycleFacet.processDelayedOrders.selector;
         selectors[2] = IDelayedOrderLifecycleFacet.getDelayedOrder.selector;
@@ -953,5 +1131,8 @@ contract DelayedOrderTest is TestBase {
         selectors[4] = DelayedOrderFacet.getBaseCredit.selector;
         selectors[5] = IDelayedOrderLifecycleFacet.withdrawBaseCredit.selector;
         selectors[6] = IDelayedOrderLifecycleFacet.getBookQueue.selector;
+        selectors[7] = IDelayedOrderLifecycleFacet.processDelayedOrdersFrom.selector;
+        selectors[8] = IDelayedOrderLifecycleFacet.expireDelayedOrders.selector;
+        selectors[9] = IDelayedOrderLifecycleFacet.getDelayedOrderHead.selector;
     }
 }

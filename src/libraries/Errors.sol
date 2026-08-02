@@ -74,6 +74,10 @@ library Errors {
     error DelayedOrderRouteRequired(uint256 orderId);
     error DelayedOrderPaused();
     error DelayedOrderProcessorNotAllowed(address processor);
+    error DelayedOrderRouteTooLong(uint256 length, uint256 maxLength);
+    error DelayedOrderQuoteBelowMinimum(uint256 normalizedAmount, uint256 minimum);
+    error DelayedOrderBaseBelowMinimum(uint256 normalizedAmount, uint256 minimum);
+    error DelayedOrderHeadMismatch(bytes32 bookId, uint64 expectedHead, uint64 actualHead);
 
     error MarketNotPending(bytes32 marketId);
     error MarketNotDisputed(bytes32 marketId);
@@ -126,7 +130,17 @@ library Errors {
     error CannotExitFromState(uint8 lifecycle);
     error StakeLocked(uint256 identityId);
     error ActivationDelayNotElapsed(uint256 identityId);
-    error ResolverPoolFull(uint16 cap);
+    error ResolverEpochClosed(uint64 epochId);
+    error ResolverEpochNotReady(uint64 epochId);
+    error ResolverEpochAlreadyFinalized(uint64 epochId);
+    error ResolverEpochCandidateMissing(uint64 epochId, uint256 identityId);
+    error ResolverEpochCandidateExists(uint64 epochId, uint256 identityId);
+    error ResolverEpochCandidateIneligible(uint64 epochId, uint256 identityId);
+    error ResolverEpochScoreSubmitted(uint64 epochId, uint256 identityId);
+    error ResolverEpochUnderfilled(uint64 epochId, uint256 selected, uint256 required);
+    error ResolverSetNotReady(uint256 activeCount, uint256 requiredCount);
+    error ResolutionModeDisabled(uint8 mode);
+    error InsufficientEpochRandomnessReveals(uint64 epochId);
     error InvalidCommitteeSize(uint16 committeeSize);
     error NotCommitteeMember(uint256 identityId);
     error CommitPhaseClosed(bytes32 disputeId);

@@ -100,6 +100,18 @@ contract DelayedOrderConfigTest is TestBase {
         assertEq(uint8(order.status), uint8(LibEveMarket.DelayedOrderStatus.Filled));
     }
 
+    function test_OwnerCanSetDelayedOrderGuards() public {
+        vm.expectEmit(false, false, false, true);
+        emit Events.ConfigUpdated("maxDelayedOrderRouteLength", 0, 64);
+        vm.expectEmit(false, false, false, true);
+        emit Events.ConfigUpdated("minDelayedOrderQuoteWad", 0, 1e18);
+        vm.expectEmit(false, false, false, true);
+        emit Events.ConfigUpdated("minDelayedOrderBaseWad", 0, 1e18);
+
+        vm.prank(owner);
+        OwnershipFacet(address(diamond)).setDelayedOrderGuards(64, 1e18, 1e18);
+    }
+
     function test_DelayedSubmissionRequiresMarketOrBookEnablement() public {
         (bytes32 bookId, uint256 curveId) = _createEnabledBookWithAsk(keccak256("delayed-gated-market"));
         vm.startPrank(owner);
@@ -220,12 +232,13 @@ contract DelayedOrderConfigTest is TestBase {
     }
 
     function _delayedOwnershipSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         selectors[0] = OwnershipFacet.setDelayedOrderConfig.selector;
         selectors[1] = OwnershipFacet.setDelayedOrderProcessing.selector;
-        selectors[2] = OwnershipFacet.setDelayedOrderProtocolProcessor.selector;
-        selectors[3] = OwnershipFacet.setMarketDelayedExecution.selector;
-        selectors[4] = OwnershipFacet.setBookDelayedExecution.selector;
+        selectors[2] = OwnershipFacet.setDelayedOrderGuards.selector;
+        selectors[3] = OwnershipFacet.setDelayedOrderProtocolProcessor.selector;
+        selectors[4] = OwnershipFacet.setMarketDelayedExecution.selector;
+        selectors[5] = OwnershipFacet.setBookDelayedExecution.selector;
     }
 
     function _bookAdminSelectors() internal pure returns (bytes4[] memory selectors) {

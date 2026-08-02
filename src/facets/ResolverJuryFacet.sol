@@ -15,6 +15,7 @@ import {LibEveMarket} from "../libraries/LibEveMarket.sol";
 import {LibMultiOutcome} from "../libraries/LibMultiOutcome.sol";
 import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 import {LibResolverJury} from "../libraries/LibResolverJury.sol";
+import {LibResolverRewards} from "../libraries/LibResolverRewards.sol";
 
 contract ResolverJuryFacet is IResolverJuryFacet {
     using SafeERC20 for IERC20;
@@ -729,7 +730,7 @@ contract ResolverJuryFacet is IResolverJuryFacet {
         IResolverRegistryFacet registry = IResolverRegistryFacet(address(this));
         uint256 activeCount = registry.activeResolverCount();
         for (uint256 index; index < activeCount; ++index) {
-            uint256 identityId = registry.resolverPoolMemberAt(index);
+            uint256 identityId = registry.activeResolverAt(index);
             if (registry.isEligibleResolver(identityId, disputeId)) {
                 ++count;
             }
@@ -741,7 +742,7 @@ contract ResolverJuryFacet is IResolverJuryFacet {
         uint256 activeCount = registry.activeResolverCount();
         uint256 eligibleCount;
         for (uint256 index; index < activeCount; ++index) {
-            if (registry.isEligibleResolver(registry.resolverPoolMemberAt(index), disputeId)) {
+            if (registry.isEligibleResolver(registry.activeResolverAt(index), disputeId)) {
                 ++eligibleCount;
             }
         }
@@ -749,7 +750,7 @@ contract ResolverJuryFacet is IResolverJuryFacet {
         eligible = new uint256[](eligibleCount);
         uint256 writeIndex;
         for (uint256 index; index < activeCount; ++index) {
-            uint256 identityId = registry.resolverPoolMemberAt(index);
+            uint256 identityId = registry.activeResolverAt(index);
             if (registry.isEligibleResolver(identityId, disputeId)) {
                 eligible[writeIndex] = identityId;
                 ++writeIndex;
@@ -926,11 +927,7 @@ contract ResolverJuryFacet is IResolverJuryFacet {
         round.slashedThisRound[identityId] = true;
         if (slashAmount != 0) {
             record.resolverStake -= slashAmount;
-            uint256 nextRewardPool = uint256(dispute.rewardPoolBond) + slashAmount;
-            if (nextRewardPool > type(uint128).max) {
-                revert Errors.InvalidAmount(nextRewardPool);
-            }
-            dispute.rewardPoolBond = uint128(nextRewardPool);
+            LibResolverRewards.distributeSlashedStake(identityId, LibEveMarket.store().config.eveToken, slashAmount);
         }
         record.slashLockActive = true;
         record.slashLockUntil = uint64(block.timestamp + config.slashCooldown);

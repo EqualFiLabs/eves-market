@@ -11,23 +11,32 @@ import {LibFeeRouting} from "../../src/libraries/LibFeeRouting.sol";
 import {LibMarketAccess} from "../../src/libraries/LibMarketAccess.sol";
 import {LibSafeCast} from "../../src/libraries/LibSafeCast.sol";
 
-contract RewardTokenVaultMock {
-    mapping(address => bool) internal activeTokens;
+contract SeniorCapitalPoolMock {
+    address internal poolAsset;
+    uint256 internal supply;
     bool internal shouldRevert;
 
-    function setRewardTokenActive(address token, bool active) external {
-        activeTokens[token] = active;
+    function setAsset(address asset_) external {
+        poolAsset = asset_;
+    }
+
+    function setTotalSupply(uint256 supply_) external {
+        supply = supply_;
     }
 
     function setShouldRevert(bool enabled) external {
         shouldRevert = enabled;
     }
 
-    function isRewardTokenActive(address token) external view returns (bool active) {
+    function asset() external view returns (address asset_) {
         if (shouldRevert) {
-            revert("vault unavailable");
+            revert("pool unavailable");
         }
-        active = activeTokens[token];
+        asset_ = poolAsset;
+    }
+
+    function totalSupply() external view returns (uint256) {
+        return supply;
     }
 }
 
@@ -147,21 +156,21 @@ contract SharedHelperHarness {
         return LibSafeCast.toUint128(value);
     }
 
-    function canRouteVaultFee(address stakingVault, address token) external view returns (bool) {
-        return LibFeeRouting.canRouteVaultFee(stakingVault, token);
+    function canRouteSeniorPoolFee(address seniorCapitalPool, address token) external view returns (bool) {
+        return LibFeeRouting.canRouteSeniorPoolFee(seniorCapitalPool, token);
     }
 }
 
 contract SharedHelperLibrariesTest is Test {
     SharedHelperHarness internal harness;
-    RewardTokenVaultMock internal vault;
+    SeniorCapitalPoolMock internal seniorPool;
 
     address internal token = makeAddr("token");
 
     function setUp() public {
         vm.warp(30 days);
         harness = new SharedHelperHarness();
-        vault = new RewardTokenVaultMock();
+        seniorPool = new SeniorCapitalPoolMock();
     }
 
     function test_SafeCastAllowsUint128Max() public view {
@@ -194,20 +203,23 @@ contract SharedHelperLibrariesTest is Test {
         harness.requireEnabledProfile(9);
     }
 
-    function test_FeeRoutingReturnsActiveRewardTokenStatus() public {
-        vault.setRewardTokenActive(token, true);
+    function test_FeeRoutingReturnsSeniorPoolAssetEligibility() public {
+        seniorPool.setAsset(token);
+        seniorPool.setTotalSupply(1);
 
-        assertTrue(harness.canRouteVaultFee(address(vault), token));
-        assertFalse(harness.canRouteVaultFee(address(vault), makeAddr("inactive")));
+        assertTrue(harness.canRouteSeniorPoolFee(address(seniorPool), token));
+        assertFalse(harness.canRouteSeniorPoolFee(address(seniorPool), makeAddr("inactive")));
     }
 
-    function test_FeeRoutingFailsClosedWhenVaultMissingOrReverts() public {
-        assertFalse(harness.canRouteVaultFee(address(0), token));
+    function test_FeeRoutingFailsClosedWhenSeniorPoolMissingEmptyOrReverts() public {
+        assertFalse(harness.canRouteSeniorPoolFee(address(0), token));
 
-        vault.setRewardTokenActive(token, true);
-        vault.setShouldRevert(true);
+        seniorPool.setAsset(token);
+        assertFalse(harness.canRouteSeniorPoolFee(address(seniorPool), token));
 
-        assertFalse(harness.canRouteVaultFee(address(vault), token));
+        seniorPool.setTotalSupply(1);
+        seniorPool.setShouldRevert(true);
+        assertFalse(harness.canRouteSeniorPoolFee(address(seniorPool), token));
     }
 
     function test_CurveStorageIndexedPathStoresAndIndexesCurve() public {

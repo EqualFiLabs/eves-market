@@ -29,9 +29,13 @@ import {Errors} from "../../src/libraries/Errors.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {ParimutuelShareToken} from "../../src/tokens/ParimutuelShareToken.sol";
 
-import {ResolutionHarnessFacet, SettlementFeeFixture, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
+import {
+    EveUSDCRouterFixture,
+    ResolutionHarnessFacet,
+    SettlementFeeFixture,
+    StateProbeFacet
+} from "../helpers/DiamondFixtures.sol";
 import {MockUSDC} from "../helpers/MockUSDC.sol";
-import {VaultFeeRoutingFixture} from "../helpers/VaultFeeRoutingFixture.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 
 contract LaunchMarketFlowsTest is SettlementFeeFixture {
@@ -62,7 +66,7 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
 
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(0, 10_000, 0);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(0, 10_000, 0, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelEpochWindowCap(30 days);
         vm.stopPrank();
     }
@@ -378,7 +382,7 @@ contract LaunchMarketFlowsTest is SettlementFeeFixture {
     }
 }
 
-contract LaunchRouterFlowsTest is VaultFeeRoutingFixture {
+contract LaunchRouterFlowsTest is EveUSDCRouterFixture {
     ITradeRouter internal tradeRouter;
     ParimutuelShareToken internal shareToken;
     address internal receiver;
@@ -398,7 +402,7 @@ contract LaunchRouterFlowsTest is VaultFeeRoutingFixture {
 
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
-        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(0, 10_000, 0);
+        OwnershipFacet(address(diamond)).setParimutuelFeeSplit(0, 10_000, 0, 0, 0);
         OwnershipFacet(address(diamond)).setParimutuelEpochWindowCap(30 days);
         vm.stopPrank();
     }
@@ -489,7 +493,7 @@ contract LaunchRouterFlowsTest is VaultFeeRoutingFixture {
         ITradeRouter.SellBestResult memory result = tradeRouter.sellWithEveUSDC(sellParams);
 
         assertEq(result.sharesSold, 500_000);
-        assertEq(result.collateralOut, 237_500);
+        assertEq(result.collateralOut, 250_000);
         assertEq(shareToken.balanceOf(maker, yesPositionId), 500_000);
         assertEq(shareToken.balanceOf(receiver, yesPositionId), 0);
     }

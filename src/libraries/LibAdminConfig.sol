@@ -5,13 +5,10 @@ import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IER
 
 import {IGnosisConditionalTokens} from "../interfaces/IGnosisConditionalTokens.sol";
 import {IParimutuelShareToken} from "../interfaces/IParimutuelShareToken.sol";
-import {ISEveUSDCVault} from "../interfaces/ISEveUSDCVault.sol";
 import {Errors} from "./Errors.sol";
 import {Events} from "./Events.sol";
 
 library LibAdminConfig {
-    bytes4 internal constant VAULT_ASSET_SELECTOR = bytes4(keccak256("asset()"));
-
     function enforceContract(address account) internal view {
         if (account == address(0)) {
             revert Errors.ZeroAddress();
@@ -48,17 +45,6 @@ library LibAdminConfig {
         ) {}
         catch {
             revert Errors.InvalidContractInterface(conditionalTokens, IGnosisConditionalTokens.getConditionId.selector);
-        }
-    }
-
-    function enforceVault(address vault) internal view {
-        enforceContract(vault);
-        try ISEveUSDCVault(vault).asset() returns (address asset) {
-            if (asset == address(0)) {
-                revert Errors.ZeroAddress();
-            }
-        } catch {
-            revert Errors.InvalidContractInterface(vault, VAULT_ASSET_SELECTOR);
         }
     }
 

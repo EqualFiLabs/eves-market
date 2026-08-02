@@ -7,11 +7,84 @@ import {Errors} from "../../src/libraries/Errors.sol";
 import {Events} from "../../src/libraries/Events.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibMarketCreation} from "../../src/libraries/LibMarketCreation.sol";
+import {LibMultiOutcome} from "../../src/libraries/LibMultiOutcome.sol";
+import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 
 import {ResolutionFixture, ResolutionHarnessFacet, StateProbeFacet} from "../helpers/DiamondFixtures.sol";
 
 contract OBRResolutionTest is ResolutionFixture {
     // Synthetic harness use is limited to narrow storage setup for otherwise unreachable resolution edges.
+
+    function test_BootstrapModeAllowsCreatorSettlementButRejectsPublicResolution() public {
+        ResolutionHarnessFacet(address(diamond))
+            .setResolutionMode(uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap));
+        (bytes32 settledMarketId,) = _createPendingMarket("Bootstrap creator settle", "resolution", 7 days);
+
+        vm.prank(creator);
+        IOBRResolutionFacet(address(diamond)).settleMarket(settledMarketId, 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.ResolutionModeDisabled.selector, uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap)
+            )
+        );
+        vm.prank(challengerOne);
+        IOBRResolutionFacet(address(diamond)).disputeResolution(settledMarketId, 2);
+
+        (bytes32 openMarketId, uint64 expiryTime) = _createPendingMarket("Bootstrap open blocked", "resolution", 7 days);
+        vm.warp(expiryTime + 24 hours);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.ResolutionModeDisabled.selector, uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap)
+            )
+        );
+        vm.prank(challengerOne);
+        IOBRResolutionFacet(address(diamond)).openResolution(openMarketId, 2);
+    }
+
+    function test_BootstrapModeOwnerCanFinalizeUnresolvedMarket() public {
+        ResolutionHarnessFacet(address(diamond))
+            .setResolutionMode(uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap));
+        (bytes32 marketId,) = _createPendingMarket("Bootstrap admin final", "resolution", 7 days);
+
+        vm.prank(owner);
+        IOBRResolutionFacet(address(diamond)).adminFinalizeResolution(marketId, 2);
+
+        _assertResolvedStatus(marketId, marketId, 2);
+    }
+
+    function test_RevertWhen_NonOwnerAdminFinalizesBootstrapMarket() public {
+        ResolutionHarnessFacet(address(diamond))
+            .setResolutionMode(uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap));
+        (bytes32 marketId,) = _createPendingMarket("Bootstrap admin owner", "resolution", 7 days);
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, challengerOne));
+        vm.prank(challengerOne);
+        IOBRResolutionFacet(address(diamond)).adminFinalizeResolution(marketId, 2);
+    }
+
+    function test_RevertWhen_AdminFinalizationOverridesResolvedMarket() public {
+        ResolutionHarnessFacet(address(diamond))
+            .setResolutionMode(uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap));
+        (bytes32 marketId,) = _createPendingMarket("Bootstrap no override", "resolution", 7 days);
+
+        vm.prank(owner);
+        IOBRResolutionFacet(address(diamond)).adminFinalizeResolution(marketId, 2);
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.MarketAlreadyResolved.selector, marketId));
+        vm.prank(owner);
+        IOBRResolutionFacet(address(diamond)).adminFinalizeResolution(marketId, 1);
+    }
+
+    function test_RevertWhen_EnablingObrJuryBeforeFullResolverSet() public {
+        ResolutionHarnessFacet(address(diamond))
+            .setResolutionMode(uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap));
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.ResolverSetNotReady.selector, 0, 0));
+        vm.prank(owner);
+        OwnershipFacet(address(diamond)).setResolutionMode(uint8(LibEveMarket.ResolutionMode.ObrJury));
+    }
 
     function test_SettleMarketRecordsCreatorProposalAndStartsDisputeWindow() public {
         (bytes32 marketId,) = _createPendingMarket("Creator settle", "resolution", 7 days);
@@ -320,6 +393,75 @@ contract OBRResolutionTest is ResolutionFixture {
         assertEq(collateralToken.balanceOf(treasury), treasuryUsdcBefore + 75e6);
         assertEq(eveToken.balanceOf(creator), 20_000e18);
         _assertPayout(expected.conditionId, 1, 1, 2);
+    }
+
+    function test_FinalizeMultiOutcomeKeepsCreatorFeesWhenOutcomeZeroWins() public {
+        string memory question = "Multi outcome zero honest";
+        string memory category = "resolution";
+        (bytes32 marketId,) = _createPendingMarket(question, category, 9 days);
+        _markMultiOutcomeMarket(marketId, 3);
+        _seedCreatorFees(marketId, 80e6);
+
+        vm.prank(creator);
+        IOBRResolutionFacet(address(diamond)).settleMarket(marketId, 0);
+
+        (,,,,,, uint64 disputeDeadline,) = StateProbeFacet(address(diamond)).getStoredResolution(marketId);
+
+        vm.warp(disputeDeadline);
+        IOBRResolutionFacet(address(diamond)).finalizeResolution(marketId);
+
+        _assertCreatorFeeState(marketId, 80e6, true);
+        _assertCreatorStatus(marketId, true, true, true);
+    }
+
+    function test_FinalizeMultiOutcomeInvalidForfeitsCreatorFees() public {
+        string memory question = "Multi outcome invalid fees";
+        string memory category = "resolution";
+        (bytes32 marketId,) = _createPendingMarket(question, category, 9 days);
+        _markMultiOutcomeMarket(marketId, 3);
+        _seedCreatorFees(marketId, 60e6);
+
+        uint256 treasuryUsdcBefore = collateralToken.balanceOf(treasury);
+
+        vm.prank(creator);
+        IOBRResolutionFacet(address(diamond)).settleMarket(marketId, LibMultiOutcome.OUTCOME_INVALID);
+
+        (,,,,,, uint64 disputeDeadline,) = StateProbeFacet(address(diamond)).getStoredResolution(marketId);
+
+        vm.warp(disputeDeadline);
+        IOBRResolutionFacet(address(diamond)).finalizeResolution(marketId);
+
+        _assertResolvedStatus(marketId, marketId, uint8(LibEveMarket.MarketOutcome.Invalid));
+        _assertCreatorFeeState(marketId, 0, false);
+        _assertCreatorStatus(marketId, true, false, true);
+        assertEq(collateralToken.balanceOf(treasury), treasuryUsdcBefore + 60e6);
+    }
+
+    function test_FinalizeMultiOutcomeOverturnsOutcomeZeroAndRewardsChallenger() public {
+        string memory question = "Multi outcome zero overturned";
+        string memory category = "resolution";
+        (bytes32 marketId,) = _createPendingMarket(question, category, 9 days);
+        _markMultiOutcomeMarket(marketId, 3);
+        _seedCreatorFees(marketId, 100e6);
+
+        vm.prank(creator);
+        IOBRResolutionFacet(address(diamond)).settleMarket(marketId, 0);
+
+        uint256 challengerUsdcBefore = collateralToken.balanceOf(challengerOne);
+        uint256 treasuryUsdcBefore = collateralToken.balanceOf(treasury);
+
+        vm.prank(challengerOne);
+        IOBRResolutionFacet(address(diamond)).disputeResolution(marketId, 1);
+
+        (,,,,,, uint64 disputeDeadline,) = StateProbeFacet(address(diamond)).getStoredResolution(marketId);
+
+        vm.warp(disputeDeadline);
+        IOBRResolutionFacet(address(diamond)).finalizeResolution(marketId);
+
+        _assertCreatorFeeState(marketId, 0, false);
+        _assertCreatorStatus(marketId, false, false, false);
+        assertEq(collateralToken.balanceOf(challengerOne), challengerUsdcBefore + 10e6);
+        assertEq(collateralToken.balanceOf(treasury), treasuryUsdcBefore + 90e6);
     }
 
     function test_FinalizeResolutionForfeitsCreatorFeesWhenCreatorIsOverturned() public {
@@ -660,6 +802,11 @@ contract OBRResolutionTest is ResolutionFixture {
             .setMarketTypeAndPositionToken(
                 marketId, uint256(uint8(LibEveMarket.MarketType.PARIMUTUEL)), address(0x1155)
             );
+    }
+
+    function _markMultiOutcomeMarket(bytes32 marketId, uint256 outcomeCount) internal {
+        ResolutionHarnessFacet(address(diamond))
+            .setMultiOutcomeResolutionMarket(marketId, address(conditionalTokens), outcomeCount);
     }
 
     function _setParimutuelPool(

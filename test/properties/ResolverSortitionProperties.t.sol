@@ -26,9 +26,8 @@ contract ResolverSortitionPropertyHarness is ResolverJuryFacet, ResolverRegistry
         config.bondToken = eveToken;
         config.resolverJuryConfig.identityMintFeeToken = mintFeeToken;
         config.resolverJuryConfig.identityMintFee = 1e6;
-        config.resolverJuryConfig.resolverStakeRequirement = 100e18;
-        config.resolverJuryConfig.resolverStakeCap = 250e18;
-        config.resolverJuryConfig.resolverPoolCap = 50;
+        config.resolverJuryConfig.resolverSeatStake = 100e18;
+        config.resolverJuryConfig.activeEpochSize = 16;
         config.resolverJuryConfig.concurrencyLimit = 2;
         config.resolverJuryConfig.participationGraceCount = 5;
         config.resolverJuryConfig.conflictPositionThreshold = threshold;
@@ -144,6 +143,31 @@ contract ResolverSortitionPropertyHarness is ResolverJuryFacet, ResolverRegistry
     function mintPosition(address positionToken, address to, uint256 positionId, uint256 amount) external {
         IEvesPositionManager(positionToken).mint(to, positionId, amount);
     }
+
+    function seedActiveResolverEpochMember(uint256 identityId) external {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        jury.currentResolverEpoch = 1;
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[1];
+        if (epoch.epochId == 0) {
+            epoch.epochId = 1;
+            epoch.startTime = uint64(block.timestamp);
+            epoch.endTime = uint64(block.timestamp + 180 days);
+            epoch.selectionFinalized = true;
+        }
+        if (epoch.activeIndex[identityId] == 0) {
+            epoch.activeSet.push(identityId);
+            epoch.activeIndex[identityId] = epoch.activeSet.length;
+            epoch.compliantActiveCount += 1;
+        }
+        jury.identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle.ResolverActive;
+    }
+
+    function clearActiveResolverEpochMember(uint256 identityId) external {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[jury.currentResolverEpoch];
+        epoch.activeIndex[identityId] = 0;
+        jury.identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle.ResolverCandidate;
+    }
 }
 
 contract ResolverRandomnessSeedHarness is ResolverJuryFacet {
@@ -223,7 +247,7 @@ contract ResolverSortitionPropertiesTest is Test {
 
         bool roleGate = (gateMask & 1) == 0;
         bool stakeGate = (gateMask & 2) == 0;
-        bool activationGate = (gateMask & 4) == 0;
+        bool activeEpochGate = (gateMask & 4) == 0;
         bool slashGate = (gateMask & 8) == 0;
         bool participationGate = (gateMask & 16) == 0;
         bool concurrencyGate = (gateMask & 32) == 0;
@@ -235,8 +259,8 @@ contract ResolverSortitionPropertiesTest is Test {
         if (!stakeGate) {
             registry.setRecordedStake(identityId, 99e18);
         }
-        if (activationGate) {
-            vm.warp(block.timestamp + activationDelay);
+        if (!activeEpochGate) {
+            registry.clearActiveResolverEpochMember(identityId);
         }
         if (!slashGate) {
             registry.setSlashLock(identityId, block.timestamp + 1 days);
@@ -251,7 +275,7 @@ contract ResolverSortitionPropertiesTest is Test {
             registry.mintPosition(address(positions), owner, 555, threshold + 1);
         }
 
-        bool expected = roleGate && stakeGate && activationGate && slashGate && participationGate && concurrencyGate
+        bool expected = roleGate && stakeGate && activeEpochGate && slashGate && participationGate && concurrencyGate
             && conflictGate;
 
         // Feature: resolver-identity-jury, Property 7: Eligibility is the conjunction of all gates
@@ -327,8 +351,7 @@ contract ResolverSortitionPropertiesTest is Test {
         vm.prank(account);
         registry.depositResolverStake(100e18);
 
-        vm.prank(account);
-        registry.activateResolver();
+        registry.seedActiveResolverEpochMember(identityId);
     }
 
     function _resolverAccount(uint256 index) internal pure returns (address) {

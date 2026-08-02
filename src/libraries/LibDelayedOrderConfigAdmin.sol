@@ -46,6 +46,31 @@ library LibDelayedOrderConfigAdmin {
         config.delayedOrderProcessorFeeShareBps = processorFeeShareBps;
     }
 
+    function setGuards(
+        LibEveMarket.MarketConfig storage config,
+        uint256 maxRouteLength,
+        uint256 minQuoteWad,
+        uint256 minBaseWad
+    ) internal {
+        if (maxRouteLength > type(uint32).max) {
+            revert Errors.InvalidAmount(maxRouteLength);
+        }
+        if (minQuoteWad > type(uint128).max) {
+            revert Errors.InvalidAmount(minQuoteWad);
+        }
+        if (minBaseWad > type(uint128).max) {
+            revert Errors.InvalidAmount(minBaseWad);
+        }
+
+        LibAdminConfig.emitConfigUpdate("maxDelayedOrderRouteLength", config.maxDelayedOrderRouteLength, maxRouteLength);
+        LibAdminConfig.emitConfigUpdate("minDelayedOrderQuoteWad", config.minDelayedOrderQuoteWad, minQuoteWad);
+        LibAdminConfig.emitConfigUpdate("minDelayedOrderBaseWad", config.minDelayedOrderBaseWad, minBaseWad);
+
+        config.maxDelayedOrderRouteLength = uint32(maxRouteLength);
+        config.minDelayedOrderQuoteWad = uint128(minQuoteWad);
+        config.minDelayedOrderBaseWad = uint128(minBaseWad);
+    }
+
     function setProtocolProcessor(address processor, bool allowed) internal {
         if (processor == address(0)) {
             revert Errors.ZeroAddress();

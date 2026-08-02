@@ -25,9 +25,8 @@ contract ResolverJuryEconomicsPropertyHarness is ResolverJuryFacet, ResolverRegi
         config.eveTreasury = address(uint160(uint256(keccak256("resolver-economics-treasury"))));
         config.resolverJuryConfig.identityMintFeeToken = mintFeeToken;
         config.resolverJuryConfig.identityMintFee = 1e6;
-        config.resolverJuryConfig.resolverStakeRequirement = 100e18;
-        config.resolverJuryConfig.resolverStakeCap = 250e18;
-        config.resolverJuryConfig.resolverPoolCap = 50;
+        config.resolverJuryConfig.resolverSeatStake = 100e18;
+        config.resolverJuryConfig.activeEpochSize = 16;
         config.resolverJuryConfig.participationGraceCount = 5;
         config.resolverJuryConfig.concurrencyLimit = 5;
         config.resolverJuryConfig.commitDuration = 1 hours;
@@ -72,6 +71,24 @@ contract ResolverJuryEconomicsPropertyHarness is ResolverJuryFacet, ResolverRegi
         config.resolverJuryConfig.incentiveFinalize = finalize;
     }
 
+    function seedActiveResolverEpochMember(uint256 identityId) external {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        jury.currentResolverEpoch = 1;
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[1];
+        if (epoch.epochId == 0) {
+            epoch.epochId = 1;
+            epoch.startTime = uint64(block.timestamp);
+            epoch.endTime = uint64(block.timestamp + 180 days);
+            epoch.selectionFinalized = true;
+        }
+        if (epoch.activeIndex[identityId] == 0) {
+            epoch.activeSet.push(identityId);
+            epoch.activeIndex[identityId] = epoch.activeSet.length;
+            epoch.compliantActiveCount += 1;
+        }
+        jury.identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle.ResolverActive;
+    }
+
     function configureSlashBps(
         uint256 missedCommitSlashBps,
         uint256 missedRevealSlashBps,
@@ -103,8 +120,7 @@ contract ResolverJuryEconomicsPropertyHarness is ResolverJuryFacet, ResolverRegi
 
     function configureConfigDrivenBehavior(
         address bondToken,
-        uint256 resolverStakeRequirement,
-        uint256 resolverStakeCap,
+        uint256 resolverSeatStake,
         uint256 committeeSize,
         uint256 nextCommitteeSize,
         uint256 commitDuration,
@@ -115,19 +131,18 @@ contract ResolverJuryEconomicsPropertyHarness is ResolverJuryFacet, ResolverRegi
         uint256 closeCommitIncentive
     ) external {
         if (
-            resolverStakeRequirement > type(uint128).max || resolverStakeCap > type(uint128).max
-                || committeeSize > type(uint16).max || nextCommitteeSize > type(uint16).max
-                || commitDuration > type(uint64).max || revealDuration > type(uint64).max || quorum > type(uint32).max
+            resolverSeatStake > type(uint128).max || committeeSize > type(uint16).max
+                || nextCommitteeSize > type(uint16).max || commitDuration > type(uint64).max
+                || revealDuration > type(uint64).max || quorum > type(uint32).max
                 || missedRevealSlashBps > type(uint16).max || appealBondMultiplierBps > type(uint16).max
                 || closeCommitIncentive > type(uint128).max
         ) {
-            revert Errors.InvalidAmount(resolverStakeRequirement);
+            revert Errors.InvalidAmount(resolverSeatStake);
         }
 
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
         config.bondToken = bondToken;
-        config.resolverJuryConfig.resolverStakeRequirement = uint128(resolverStakeRequirement);
-        config.resolverJuryConfig.resolverStakeCap = uint128(resolverStakeCap);
+        config.resolverJuryConfig.resolverSeatStake = uint128(resolverSeatStake);
         delete config.resolverJuryConfig.committeeSizesByRound;
         config.resolverJuryConfig.committeeSizesByRound.push(uint16(committeeSize));
         config.resolverJuryConfig.committeeSizesByRound.push(uint16(nextCommitteeSize));
@@ -259,26 +274,27 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         _openAppealAndAssertConfig(disputeId, caller, config);
     }
 
-    function testFuzz_CappedStakeYieldsEqualWeightVoting(uint128 aliceStakeInput, bytes32 seed, bytes32 salt) public {
-        uint128 aliceStake = uint128(bound(aliceStakeInput, 101e18, 250e18));
+    function testFuzz_FixedSeatStakeYieldsEqualWeightVoting(uint128 extraStakeInput, bytes32 seed, bytes32 salt)
+        public
+    {
+        uint128 extraStake = uint128(bound(extraStakeInput, 1, 150e18));
         uint256 aliceId = _activateResolver(alice);
         uint256 bobId = _activateResolver(bob);
         uint256 carolId = _activateResolver(carol);
-        _addResolverStake(alice, aliceStake - 100e18);
+        _expectStakeTopUpRejected(alice, extraStake);
 
         bytes32 disputeId = jury.seedDisputedMarket(keccak256("equal-weight-voting-market"));
         assertTrue(jury.isEligibleResolver(aliceId, disputeId));
         assertTrue(jury.isEligibleResolver(bobId, disputeId));
         assertTrue(jury.isEligibleResolver(carolId, disputeId));
-        assertGt(jury.resolverStakeOf(aliceId), 100e18);
-        assertLe(jury.resolverStakeOf(aliceId), 250e18);
+        assertEq(jury.resolverStakeOf(aliceId), 100e18);
         assertEq(jury.resolverStakeOf(bobId), 100e18);
         assertEq(jury.resolverStakeOf(carolId), 100e18);
 
         jury.seedSelectionReady(disputeId, seed);
         jury.selectCommittee(disputeId);
 
-        // Feature: resolver-identity-jury, Property 4: Capped stake yields equal-weight voting
+        // Feature: resolver-identity-jury, Property 4: Fixed seat stake yields equal-weight voting
         _commitVote(
             disputeId, alice, aliceId, uint8(LibEveMarket.MarketOutcome.Yes), keccak256(abi.encode(salt, alice))
         );
@@ -574,7 +590,6 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         jury.configureConfigDrivenBehavior(
             address(bondToken),
             stakeRequirement,
-            250e18,
             config.committeeSize,
             config.nextCommitteeSize,
             config.commitDuration,
@@ -708,10 +723,11 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         _commitVoteByIdentity(disputeId, members[1], uint8(LibEveMarket.MarketOutcome.No), "missed-commit");
 
         uint128 stakeBefore = jury.resolverStakeOf(members[2]);
+        (uint256[] memory activeIds, uint128[] memory rewardsBefore, uint256 treasuryBefore) = _rewardSnapshot();
         vm.warp(block.timestamp + 1 hours);
         jury.closeCommit(disputeId);
 
-        _assertSlashedOnce(disputeId, members[2], stakeBefore, slashBps);
+        _assertSlashedOnce(disputeId, members[2], stakeBefore, slashBps, activeIds, rewardsBefore, treasuryBefore);
         assertEq(jury.resolverReputation(members[2]).missedCommitCount, 1);
         assertEq(jury.resolverReputation(members[0]).slashCount, 0);
         assertEq(jury.resolverReputation(members[1]).slashCount, 0);
@@ -730,10 +746,11 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         _revealVoteByIdentity(disputeId, members[1], uint8(LibEveMarket.MarketOutcome.No), salt);
 
         uint128 stakeBefore = jury.resolverStakeOf(members[2]);
+        (uint256[] memory activeIds, uint128[] memory rewardsBefore, uint256 treasuryBefore) = _rewardSnapshot();
         vm.warp(block.timestamp + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
-        _assertSlashedOnce(disputeId, members[2], stakeBefore, slashBps);
+        _assertSlashedOnce(disputeId, members[2], stakeBefore, slashBps, activeIds, rewardsBefore, treasuryBefore);
         assertEq(jury.resolverReputation(members[2]).missedRevealCount, 1);
         assertEq(jury.resolverReputation(members[0]).slashCount, 0);
         assertEq(jury.resolverReputation(members[1]).slashCount, 0);
@@ -751,6 +768,7 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         jury.closeCommit(disputeId);
 
         uint128 stakeBefore = jury.resolverStakeOf(members[0]);
+        (uint256[] memory activeIds, uint128[] memory rewardsBefore, uint256 treasuryBefore) = _rewardSnapshot();
         _revealVoteByIdentity(disputeId, members[0], uint8(LibEveMarket.MarketOutcome.Unresolved), invalidSalt);
         address invalidResolver = identity.ownerOf(members[0]);
         vm.expectRevert(abi.encodeWithSelector(Errors.AlreadyRevealed.selector, members[0]));
@@ -764,24 +782,86 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         vm.warp(block.timestamp + 1 hours);
         jury.closeRevealAndTally(disputeId);
 
-        _assertSlashedOnce(disputeId, members[0], stakeBefore, slashBps);
+        _assertSlashedOnce(disputeId, members[0], stakeBefore, slashBps, activeIds, rewardsBefore, treasuryBefore);
         assertEq(jury.resolverReputation(members[0]).invalidRevealCount, 1);
         assertEq(jury.resolverReputation(members[0]).missedRevealCount, 0);
         assertEq(jury.resolverReputation(members[1]).slashCount, 0);
         assertEq(jury.resolverReputation(members[2]).slashCount, 0);
     }
 
-    function _assertSlashedOnce(bytes32 disputeId, uint256 identityId, uint128 stakeBefore, uint16 slashBps)
-        internal
-        view
-    {
+    function _assertSlashedOnce(
+        bytes32 disputeId,
+        uint256 identityId,
+        uint128 stakeBefore,
+        uint16 slashBps,
+        uint256[] memory activeIds,
+        uint128[] memory rewardsBefore,
+        uint256 treasuryBefore
+    ) internal view {
         uint128 expectedSlash = uint128((uint256(stakeBefore) * slashBps) / 10_000);
         (uint128 stakeAfter, bool slashLockActive, uint64 slashLockUntil) = jury.resolverSlashState(identityId);
         assertEq(stakeAfter, stakeBefore - expectedSlash);
         assertTrue(slashLockActive);
         assertGt(slashLockUntil, block.timestamp);
-        assertEq(jury.disputeView(disputeId).rewardPoolBond, expectedSlash);
+        assertEq(jury.disputeView(disputeId).rewardPoolBond, 0);
+        _assertSlashRewards(identityId, expectedSlash, activeIds, rewardsBefore, treasuryBefore);
         assertEq(jury.resolverReputation(identityId).slashCount, 1);
+    }
+
+    function _assertSlashRewards(
+        uint256 slashedIdentityId,
+        uint128 expectedSlash,
+        uint256[] memory activeIds,
+        uint128[] memory rewardsBefore,
+        uint256 treasuryBefore
+    ) internal view {
+        uint256 totalRewardDelta;
+        uint128 equalRewardDelta;
+        uint256 recipientCount;
+        for (uint256 index; index < activeIds.length; ++index) {
+            (,, uint128 rewardsAfter) = jury.previewResolverRewards(activeIds[index], address(bondToken));
+            uint128 delta = rewardsAfter - rewardsBefore[index];
+            if (activeIds[index] == slashedIdentityId) {
+                assertEq(delta, 0);
+                continue;
+            }
+            if (delta == 0) {
+                continue;
+            }
+            if (equalRewardDelta == 0) {
+                equalRewardDelta = delta;
+            } else {
+                assertEq(delta, equalRewardDelta);
+            }
+            totalRewardDelta += delta;
+            recipientCount += 1;
+        }
+
+        uint256 treasuryDelta = bondToken.balanceOf(_resolverTreasury()) - treasuryBefore;
+        assertEq(totalRewardDelta + treasuryDelta, expectedSlash);
+        if (expectedSlash != 0) {
+            assertGt(recipientCount, 0);
+            assertGt(equalRewardDelta, 0);
+        }
+    }
+
+    function _rewardSnapshot()
+        internal
+        view
+        returns (uint256[] memory activeIds, uint128[] memory rewardsBefore, uint256 treasuryBefore)
+    {
+        uint256 activeCount = jury.activeResolverCount();
+        activeIds = new uint256[](activeCount);
+        rewardsBefore = new uint128[](activeCount);
+        for (uint256 index; index < activeCount; ++index) {
+            activeIds[index] = jury.activeResolverAt(index);
+            (,, rewardsBefore[index]) = jury.previewResolverRewards(activeIds[index], address(bondToken));
+        }
+        treasuryBefore = bondToken.balanceOf(_resolverTreasury());
+    }
+
+    function _resolverTreasury() internal pure returns (address) {
+        return address(uint160(uint256(keccak256("resolver-economics-treasury"))));
     }
 
     function _commitVote(bytes32 disputeId, address owner, uint256 identityId, uint8 outcome, bytes32 salt) internal {
@@ -820,15 +900,15 @@ contract ResolverJuryEconomicsPropertiesTest is Test {
         vm.prank(owner);
         jury.depositResolverStake(100e18);
 
-        vm.prank(owner);
-        jury.activateResolver();
+        jury.seedActiveResolverEpochMember(identityId);
     }
 
-    function _addResolverStake(address owner, uint256 amount) internal {
+    function _expectStakeTopUpRejected(address owner, uint256 amount) internal {
         bondToken.mint(owner, amount);
         vm.prank(owner);
         bondToken.approve(address(jury), amount);
         vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidAmount.selector, 100e18 + amount));
         jury.depositResolverStake(amount);
     }
 }

@@ -5,6 +5,7 @@ import {Test} from "../../lib/forge-std/src/Test.sol";
 
 import {IResolverRegistryFacet} from "src/interfaces/IResolverRegistryFacet.sol";
 import {Errors} from "src/libraries/Errors.sol";
+import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibEveMarket} from "src/libraries/LibEveMarket.sol";
 import {LibResolverJury} from "src/libraries/LibResolverJury.sol";
 import {ResolverRegistryFacet} from "src/facets/ResolverRegistryFacet.sol";
@@ -25,13 +26,7 @@ contract ResolverIdentityReputationHarness {
         )
     {
         LibResolverJury.CreatorReputation storage rep = LibResolverJury.store().creatorRep[identityId];
-        return (
-            rep.marketsCreated,
-            rep.marketsResolved,
-            rep.disputesRaised,
-            rep.outcomesUpheld,
-            rep.outcomesOverturned
-        );
+        return (rep.marketsCreated, rep.marketsResolved, rep.disputesRaised, rep.outcomesUpheld, rep.outcomesOverturned);
     }
 
     function resolverCounts(uint256 identityId)
@@ -63,22 +58,26 @@ contract ResolverIdentityReputationHarness {
 }
 
 contract ResolverRegistryPropertyHarness is ResolverRegistryFacet {
-    function configure(address eveIdentity, address mintFeeToken, address eveToken, uint256 activationDelay, uint256 exitCooldown)
-        external
-    {
+    function configure(
+        address eveIdentity,
+        address mintFeeToken,
+        address eveToken,
+        uint256 activationDelay,
+        uint256 exitCooldown
+    ) external {
         if (activationDelay > type(uint64).max || exitCooldown > type(uint64).max) {
             revert Errors.InvalidConfigValue("resolverPropertyConfig");
         }
 
         LibResolverJury.store().eveIdentity = eveIdentity;
+        LibDiamond.setContractOwner(msg.sender);
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
         config.eveToken = eveToken;
         config.bondToken = eveToken;
         config.resolverJuryConfig.identityMintFeeToken = mintFeeToken;
         config.resolverJuryConfig.identityMintFee = 1e6;
-        config.resolverJuryConfig.resolverStakeRequirement = 100e18;
-        config.resolverJuryConfig.resolverStakeCap = 250e18;
-        config.resolverJuryConfig.resolverPoolCap = 50;
+        config.resolverJuryConfig.resolverSeatStake = 100e18;
+        config.resolverJuryConfig.activeEpochSize = 16;
         config.resolverJuryConfig.activationDelay = uint64(activationDelay);
         config.resolverJuryConfig.exitCooldown = uint64(exitCooldown);
     }
@@ -107,16 +106,31 @@ contract ResolverRegistryPropertyHarness is ResolverRegistryFacet {
         record.slashLockUntil = 0;
     }
 
+    function seedActiveResolverEpochMember(uint256 identityId) external {
+        LibResolverJury.ResolverJuryStorage storage jury = LibResolverJury.store();
+        jury.currentResolverEpoch = 1;
+        LibResolverJury.ResolverEpoch storage epoch = jury.resolverEpochs[1];
+        if (epoch.epochId == 0) {
+            epoch.epochId = 1;
+            epoch.startTime = uint64(block.timestamp);
+            epoch.endTime = uint64(block.timestamp + 180 days);
+            epoch.selectionFinalized = true;
+        }
+        if (epoch.activeIndex[identityId] == 0) {
+            epoch.activeSet.push(identityId);
+            epoch.activeIndex[identityId] = epoch.activeSet.length;
+            epoch.compliantActiveCount += 1;
+        }
+        jury.identities[identityId].lifecycle = LibResolverJury.ResolverLifecycle.ResolverActive;
+    }
+
     function recordedStake(uint256 identityId) external view returns (uint128) {
         return LibResolverJury.store().identities[identityId].resolverStake;
     }
 
-    function seedCreatorFinality(
-        bytes32 disputeId,
-        bytes32 marketId,
-        address creator,
-        uint256 proposedOutcome
-    ) external {
+    function seedCreatorFinality(bytes32 disputeId, bytes32 marketId, address creator, uint256 proposedOutcome)
+        external
+    {
         if (proposedOutcome > type(uint8).max) {
             revert Errors.InvalidAmount(proposedOutcome);
         }
@@ -271,21 +285,21 @@ contract ResolverIdentityPropertiesTest is Test {
         registry.configure(address(registryIdentity), address(feeToken), address(eveToken), activationDelay, 7 days);
         uint256 identityId = _fundedResolverIdentity(owner, 100e18);
 
+        uint64 epochId = registry.openResolverEpochRotation();
         vm.prank(owner);
-        registry.activateResolver();
+        registry.optIntoResolverEpoch(keccak256(abi.encode("candidate", epochId, identityId)));
 
         // Feature: resolver-identity-jury, Property 5: Activation delay boundary
         assertFalse(registry.isEligibleResolver(identityId, bytes32(0)));
         assertEq(
-            registry.resolverLifecycleState(identityId),
-            uint8(LibResolverJury.ResolverLifecycle.ResolverPendingActivation)
+            registry.resolverLifecycleState(identityId), uint8(LibResolverJury.ResolverLifecycle.ResolverCandidate)
         );
 
         vm.warp(block.timestamp + activationDelay - 1);
         assertFalse(registry.isEligibleResolver(identityId, bytes32(0)));
 
         vm.warp(block.timestamp + 1);
-        assertTrue(registry.isEligibleResolver(identityId, bytes32(0)));
+        assertFalse(registry.isEligibleResolver(identityId, bytes32(0)));
         assertEq(registry.resolverLifecycleState(identityId), uint8(LibResolverJury.ResolverLifecycle.ResolverActive));
     }
 
@@ -301,8 +315,7 @@ contract ResolverIdentityPropertiesTest is Test {
         registry.configure(address(registryIdentity), address(feeToken), address(eveToken), 0, exitCooldown);
         uint256 identityId = _fundedResolverIdentity(owner, 100e18);
 
-        vm.prank(owner);
-        registry.activateResolver();
+        registry.openResolverEpochRotation();
         vm.prank(owner);
         registry.requestResolverExit();
 

@@ -38,8 +38,7 @@ contract ResolverJuryMigrationTest is ResolutionFixture {
         vm.prank(creator);
         IOBRResolutionFacet(address(diamond)).settleMarket(preUpgradeMarketId, 1);
 
-        (,,,,,, uint64 disputeDeadline,) =
-            StateProbeFacet(address(diamond)).getStoredResolution(preUpgradeMarketId);
+        (,,,,,, uint64 disputeDeadline,) = StateProbeFacet(address(diamond)).getStoredResolution(preUpgradeMarketId);
 
         _applyResolverJuryMigration();
 
@@ -99,9 +98,10 @@ contract ResolverJuryMigrationTest is ResolutionFixture {
         ResolverJuryInit init = new ResolverJuryInit();
 
         vm.prank(owner);
-        DiamondCutFacet(address(diamond)).diamondCut(
-            cuts, address(init), abi.encodeCall(ResolverJuryInit.initResolverJury, (address(migrationIdentity)))
-        );
+        DiamondCutFacet(address(diamond))
+            .diamondCut(
+                cuts, address(init), abi.encodeCall(ResolverJuryInit.initResolverJury, (address(migrationIdentity)))
+            );
 
         assertEq(
             DiamondLoupeFacet(address(diamond)).facetAddress(IResolverRegistryFacet.mintIdentity.selector),
@@ -126,7 +126,7 @@ contract ResolverJuryMigrationTest is ResolutionFixture {
         selectors[1] = IResolverRegistryFacet.setCreatorRole.selector;
         selectors[2] = IResolverRegistryFacet.setResolverRole.selector;
         selectors[3] = IResolverRegistryFacet.depositResolverStake.selector;
-        selectors[4] = IResolverRegistryFacet.activateResolver.selector;
+        selectors[4] = IResolverRegistryFacet.openResolverEpochRotation.selector;
         selectors[5] = IResolverRegistryFacet.requestResolverExit.selector;
         selectors[6] = IResolverRegistryFacet.withdrawResolverStake.selector;
         selectors[7] = IResolverRegistryFacet.eveIdentity.selector;
@@ -142,8 +142,8 @@ contract ResolverJuryMigrationTest is ResolutionFixture {
         selectors[17] = IResolverRegistryFacet.resolverReputation.selector;
         selectors[18] = IResolverRegistryFacet.eligibleResolverCount.selector;
         selectors[19] = IResolverRegistryFacet.activeResolverCount.selector;
-        selectors[20] = IResolverRegistryFacet.resolverPoolCapacity.selector;
-        selectors[21] = IResolverRegistryFacet.resolverPoolMemberAt.selector;
+        selectors[20] = IResolverRegistryFacet.activeResolverEpochSize.selector;
+        selectors[21] = IResolverRegistryFacet.activeResolverAt.selector;
         selectors[22] = IResolverRegistryFacet.applyFinalityReputation.selector;
     }
 

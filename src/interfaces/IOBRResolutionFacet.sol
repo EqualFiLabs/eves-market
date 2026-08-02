@@ -21,6 +21,8 @@ interface IOBRResolutionFacet {
 
     function disputeResolution(bytes32 marketId, uint8 counterOutcome) external;
 
+    function adminFinalizeResolution(bytes32 marketId, uint8 outcome) external;
+
     function getResolutionHistory(bytes32 marketId)
         external
         view
@@ -34,4 +36,6 @@ interface IOBRResolutionFacet {
         external
         view
         returns (uint8 state, uint8 outcome, uint64 disputeDeadline, uint128 creatorFeesEscrowed);
+
+    function resolutionMode() external view returns (uint8 mode);
 }

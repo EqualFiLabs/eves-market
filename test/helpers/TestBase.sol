@@ -55,6 +55,8 @@ interface ITestStateFacet {
 
     function setDelayedOrderProcessingFixture(uint256 processingMode, uint256 processorFeeShareBps) external;
 
+    function setDelayedOrderGuardsFixture(uint256 maxRouteLength, uint256 minQuoteWad, uint256 minBaseWad) external;
+
     function setDelayedOrderProtocolProcessorFixture(address processor, bool allowed) external;
 
     function setMarketDelayedExecutionFixture(bytes32 marketId, bool enabled) external;
@@ -304,12 +306,29 @@ contract TestStateFacet {
         state.config.marketCreationFee = 50e6;
         state.config.marketCreationBond = 100e18;
         state.config.orderbookFeeConfig = LibEveMarket.BookFeeConfig({
-            entryFeeBps: 0, makerFeeBps: 8_500, creatorFeeBps: 500, protocolFeeBps: 1_000, vaultFeeBps: 0
+            entryFeeBps: 0,
+            makerFeeBps: 8_500,
+            creatorFeeBps: 500,
+            protocolFeeBps: 1_000,
+            vaultFeeBps: 0,
+            resolverFeeBps: 0,
+            evRiskFeeBps: 0
         });
-        state.config.spotFeeConfig =
-            LibEveMarket.SpotFeeConfig({tradeFeeBps: 0, makerFeeBps: 8_500, protocolFeeBps: 1_500, vaultFeeBps: 0});
+        state.config.spotFeeConfig = LibEveMarket.SpotFeeConfig({
+            tradeFeeBps: 0,
+            makerFeeBps: 8_500,
+            protocolFeeBps: 1_500,
+            vaultFeeBps: 0,
+            resolverFeeBps: 0,
+            evRiskFeeBps: 0
+        });
         state.config.parimutuelFeeConfig = LibEveMarket.ParimutuelFeeConfig({
-            entryFeeBps: 0, creatorFeeBps: 500, protocolFeeBps: 9_500, vaultFeeBps: 0
+            entryFeeBps: 0,
+            creatorFeeBps: 500,
+            protocolFeeBps: 9_500,
+            vaultFeeBps: 0,
+            resolverFeeBps: 0,
+            evRiskFeeBps: 0
         });
         state.config.minMarketDuration = 1 hours;
         state.config.maxMarketDuration = 90 days;
@@ -356,7 +375,9 @@ contract TestStateFacet {
             tradeFeeBps: uint16(tradeFeeBps),
             makerFeeBps: uint16(makerFeeBps),
             protocolFeeBps: uint16(protocolFeeBps),
-            vaultFeeBps: uint16(vaultFeeBps)
+            vaultFeeBps: uint16(vaultFeeBps),
+            resolverFeeBps: 0,
+            evRiskFeeBps: 0
         });
     }
 
@@ -378,7 +399,9 @@ contract TestStateFacet {
             makerFeeBps: uint16(makerFeeBps),
             creatorFeeBps: uint16(creatorFeeBps),
             protocolFeeBps: uint16(protocolFeeBps),
-            vaultFeeBps: uint16(vaultFeeBps)
+            vaultFeeBps: uint16(vaultFeeBps),
+            resolverFeeBps: 0,
+            evRiskFeeBps: 0
         });
     }
 
@@ -410,6 +433,17 @@ contract TestStateFacet {
         LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
         config.delayedOrderProcessingMode = LibEveMarket.ProcessingMode(uint8(processingMode));
         config.delayedOrderProcessorFeeShareBps = uint16(processorFeeShareBps);
+    }
+
+    function setDelayedOrderGuardsFixture(uint256 maxRouteLength, uint256 minQuoteWad, uint256 minBaseWad) external {
+        if (maxRouteLength > type(uint32).max) revert Errors.InvalidAmount(maxRouteLength);
+        if (minQuoteWad > type(uint128).max) revert Errors.InvalidAmount(minQuoteWad);
+        if (minBaseWad > type(uint128).max) revert Errors.InvalidAmount(minBaseWad);
+
+        LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
+        config.maxDelayedOrderRouteLength = uint32(maxRouteLength);
+        config.minDelayedOrderQuoteWad = uint128(minQuoteWad);
+        config.minDelayedOrderBaseWad = uint128(minBaseWad);
     }
 
     function setDelayedOrderProtocolProcessorFixture(address processor, bool allowed) external {
@@ -718,13 +752,13 @@ contract TestStateFacet {
         fees.protocolFee = uint128((uint256(fees.totalFee) * feeConfig.protocolFeeBps) / FEE_BPS_DENOMINATOR);
         fees.netShares = amount - fees.totalFee;
 
-        uint128 vaultFee = fees.totalFee - fees.creatorFee - fees.protocolFee;
+        uint128 seniorPoolFee = fees.totalFee - fees.creatorFee - fees.protocolFee;
         if (!config.permissionlessCreationEnabled) {
             fees.protocolFee += fees.creatorFee;
             fees.creatorFee = 0;
         }
-        if (config.stakingVault == address(0)) {
-            fees.protocolFee += vaultFee;
+        if (config.seniorCapitalPool == address(0)) {
+            fees.protocolFee += seniorPoolFee;
         }
     }
 
@@ -1120,7 +1154,7 @@ abstract contract TestBase is Test, ERC1155ReceiverHarness {
         parimutuelShareToken = new ParimutuelShareToken(address(diamond), "uri://parimutuel/{id}");
         stateFacet = new TestStateFacet();
 
-        bytes4[] memory selectors = new bytes4[](41);
+        bytes4[] memory selectors = new bytes4[](42);
         selectors[0] = ITestStateFacet.configure.selector;
         selectors[1] = ITestStateFacet.configureParimutuelFixture.selector;
         selectors[2] = ITestStateFacet.setSpotBookCreationFeeFixture.selector;
@@ -1156,12 +1190,13 @@ abstract contract TestBase is Test, ERC1155ReceiverHarness {
         selectors[32] = ITestStateFacet.materializeMarketSideBookFixture.selector;
         selectors[33] = ITestStateFacet.setDelayedOrderConfigFixture.selector;
         selectors[34] = ITestStateFacet.setDelayedOrderProcessingFixture.selector;
-        selectors[35] = ITestStateFacet.setDelayedOrderProtocolProcessorFixture.selector;
-        selectors[36] = ITestStateFacet.setOrderbookFeeConfigFixture.selector;
-        selectors[37] = ITestStateFacet.setMarketDelayedExecutionFixture.selector;
-        selectors[38] = ITestStateFacet.setBookDelayedExecutionFixture.selector;
-        selectors[39] = ITestStateFacet.getMarketDelayedExecutionFixture.selector;
-        selectors[40] = ITestStateFacet.getBookDelayedExecutionFixture.selector;
+        selectors[35] = ITestStateFacet.setDelayedOrderGuardsFixture.selector;
+        selectors[36] = ITestStateFacet.setDelayedOrderProtocolProcessorFixture.selector;
+        selectors[37] = ITestStateFacet.setOrderbookFeeConfigFixture.selector;
+        selectors[38] = ITestStateFacet.setMarketDelayedExecutionFixture.selector;
+        selectors[39] = ITestStateFacet.setBookDelayedExecutionFixture.selector;
+        selectors[40] = ITestStateFacet.getMarketDelayedExecutionFixture.selector;
+        selectors[41] = ITestStateFacet.getBookDelayedExecutionFixture.selector;
 
         vm.prank(owner);
         diamond.registerFacet(address(stateFacet), selectors);
