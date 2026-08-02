@@ -4,6 +4,10 @@ pragma solidity ^0.8.28;
 import {Test} from "../../lib/forge-std/src/Test.sol";
 
 import {EveUSDC} from "../../src/EveUSDC.sol";
+import {EveRiskShares} from "../../src/EveRiskShares.sol";
+import {EveUSD} from "../../src/EveUSD.sol";
+import {EveUSDPool} from "../../src/EveUSDPool.sol";
+import {EveUSDRouter} from "../../src/EveUSDRouter.sol";
 import {Faucet} from "../../src/Faucet.sol";
 import {MakerLendingRouter} from "../../src/MakerLendingRouter.sol";
 import {SEveUSDCLending} from "../../src/SEveUSDCLending.sol";
@@ -527,6 +531,35 @@ contract DeployScriptTest is Test {
             faucetOwner: protocolOwner,
             wethToken: address(0),
             eveETH: address(0),
+            eveUsd: DeployScript.EveUSDStackConfig({
+                eveUSD: address(0),
+                evRisk: address(0),
+                pool: address(0),
+                router: address(0),
+                oracle: address(0),
+                ethUsdFeed: address(0),
+                sequencerUptimeFeed: address(0),
+                oracleMaxStaleness: 1 hours,
+                oracleMinPriceWad: 0,
+                oracleMaxPriceWad: 0,
+                sequencerGracePeriod: 1 hours,
+                collateralRatioBps: 15_000,
+                recoveryTriggerBps: 8_000,
+                recoveryTimelock: 3 days,
+                mintFeeBps: 25,
+                recombinationFeeBps: 10,
+                payoutUnit: 1e18,
+                marketCreationFee: 2e18,
+                parimutuelCreationSeedAmount: 3e18,
+                parimutuelMinEntry: 1e18,
+                parlayUnderwritingFee: 4e18,
+                deploy: true,
+                enableMarkets: true,
+                deployMockOracle: true,
+                mockOraclePriceWad: 2_500e18,
+                mockOracleMaxStaleness: 1 hours,
+                riskUri: "uri://evrisk/{id}"
+            }),
             eveEthPayoutUnit: 0.0005 ether,
             eveEthMarketCreationFee: 0.01 ether,
             eveEthParimutuelCreationSeedAmount: 0.0003 ether,
@@ -577,6 +610,7 @@ contract DeployScriptTest is Test {
         assertTrue(SEveUSDCLending(deployment.seveUsdcLending).approvedRouters(deployment.makerLendingRouter));
         assertEq(CanonicalWETH9(payable(deployment.wethToken)).symbol(), "WETH");
         assertEq(EveETH(deployment.eveETH).weth(), deployment.wethToken);
+        _assertEveUSDDeployment(deployment, config, protocolOwner, treasury);
 
         assertEq(
             DiamondLoupeFacet(deployment.market.diamond).facetAddress(IVaultRouter.wrapAndDeposit.selector),
@@ -683,6 +717,54 @@ contract DeployScriptTest is Test {
         assertTrue(bookId != bytes32(0));
 
         _assertNativeComboLifecycle(deployment, protocolOwner, config.market.disputeWindow);
+    }
+
+    function _assertEveUSDDeployment(
+        DeployScript.FullDeployment memory deployment,
+        DeployScript.FullDeploymentConfig memory config,
+        address protocolOwner,
+        address treasury
+    ) internal view {
+        assertTrue(deployment.eveUSD != address(0));
+        assertTrue(deployment.evRisk != address(0));
+        assertTrue(deployment.eveUsdPool != address(0));
+        assertTrue(deployment.eveUsdRouter != address(0));
+        assertTrue(deployment.eveUsdOracle != address(0));
+        assertTrue(deployment.eveUsdStackDeployer != address(0));
+
+        assertEq(EveUSD(deployment.eveUSD).pool(), deployment.eveUsdPool);
+        assertEq(EveRiskShares(deployment.evRisk).pool(), deployment.eveUsdPool);
+        assertEq(EveUSDPool(deployment.eveUsdPool).weth(), deployment.wethToken);
+        assertEq(EveUSDPool(deployment.eveUsdPool).eveUSD(), deployment.eveUSD);
+        assertEq(EveUSDPool(deployment.eveUsdPool).evRisk(), deployment.evRisk);
+        assertEq(EveUSDPool(deployment.eveUsdPool).oracle(), deployment.eveUsdOracle);
+        assertEq(EveUSDPool(deployment.eveUsdPool).owner(), protocolOwner);
+        assertEq(EveUSDPool(deployment.eveUsdPool).feeRecipient(), treasury);
+        assertEq(EveUSDPool(deployment.eveUsdPool).nextSeriesCollateralRatioBps(), config.eveUsd.collateralRatioBps);
+        assertEq(EveUSDPool(deployment.eveUsdPool).nextSeriesRecoveryTriggerBps(), config.eveUsd.recoveryTriggerBps);
+        assertEq(EveUSDPool(deployment.eveUsdPool).recoveryTimelock(), config.eveUsd.recoveryTimelock);
+        assertEq(EveUSDPool(deployment.eveUsdPool).mintFeeBps(), config.eveUsd.mintFeeBps);
+        assertEq(EveUSDPool(deployment.eveUsdPool).recombinationFeeBps(), config.eveUsd.recombinationFeeBps);
+        assertEq(EveUSDRouter(payable(deployment.eveUsdRouter)).pool(), deployment.eveUsdPool);
+        assertEq(EveUSDRouter(payable(deployment.eveUsdRouter)).weth(), deployment.wethToken);
+        assertEq(EveUSDRouter(payable(deployment.eveUsdRouter)).eveUSD(), deployment.eveUSD);
+        assertEq(EveUSDRouter(payable(deployment.eveUsdRouter)).evRisk(), deployment.evRisk);
+
+        MarketFactoryTypes.CollateralProfileView memory profile =
+            IMarketFactoryFacet(deployment.market.diamond).getCollateralProfile(2);
+        assertEq(profile.collateralToken, deployment.eveUSD);
+        assertEq(profile.wrapperToken, address(0));
+        assertEq(profile.payoutUnit, config.eveUsd.payoutUnit);
+        assertEq(profile.marketCreationFee, config.eveUsd.marketCreationFee);
+        assertTrue(profile.enabled);
+        (uint128 parimutuelSeed, uint128 parimutuelMinEntry) =
+            IMarketFactoryFacet(deployment.market.diamond).getCollateralProfileParimutuelConfig(2);
+        assertEq(parimutuelSeed, config.eveUsd.parimutuelCreationSeedAmount);
+        assertEq(parimutuelMinEntry, config.eveUsd.parimutuelMinEntry);
+        assertEq(
+            IMarketFactoryFacet(deployment.market.diamond).getCollateralProfileParlayUnderwritingFee(2),
+            config.eveUsd.parlayUnderwritingFee
+        );
     }
 
     function _attachConfigProbe(address diamond, address owner, address probeFacet) internal {
