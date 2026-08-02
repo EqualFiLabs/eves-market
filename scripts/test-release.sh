@@ -79,8 +79,13 @@ for test_shard in "${TEST_SHARDS[@]}"; do
 done
 
 mapfile -t INVARIANT_FILES < <(
-  rg -l 'function invariant_' test/unit test/properties | LC_ALL=C sort
+  grep -Rsl --include='*.sol' 'function invariant_' test/unit test/properties | LC_ALL=C sort
 )
+
+if ((${#INVARIANT_FILES[@]} == 0)); then
+  echo "No invariant test files were discovered" >&2
+  exit 1
+fi
 
 for invariant_file in "${INVARIANT_FILES[@]}"; do
   echo "Security profile: $invariant_file"

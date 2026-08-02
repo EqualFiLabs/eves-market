@@ -40,4 +40,24 @@ grep -q '^security|false|test .*test/properties/MLOSeniorCapitalInvariants.t.sol
 grep -q '^default|true|test .*test/fork/RobinhoodStaticsDollarLifecycle.t.sol' "$TEMP_DIR/forge.log"
 grep -q "Eve release gates passed." "$TEMP_DIR/gate.out"
 
+mkdir -p "$TEMP_DIR/empty-bin"
+cp "$TEMP_DIR/bin/forge" "$TEMP_DIR/empty-bin/forge"
+cat >"$TEMP_DIR/empty-bin/grep" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-Rsl" ]]; then
+  exit 1
+fi
+command -p grep "$@"
+EOF
+chmod +x "$TEMP_DIR/empty-bin/grep"
+
+if FORGE_CALL_LOG="$TEMP_DIR/empty-forge.log" \
+  PATH="$TEMP_DIR/empty-bin:$PATH" \
+  "$REPO_ROOT/scripts/test-release.sh" --rpc-file "$TEMP_DIR/rpc" \
+  >"$TEMP_DIR/empty.out" 2>&1; then
+  echo "release gate accepted an empty invariant set" >&2
+  exit 1
+fi
+grep -q "No invariant test files were discovered" "$TEMP_DIR/empty.out"
+
 echo "Release gate tooling tests passed."
