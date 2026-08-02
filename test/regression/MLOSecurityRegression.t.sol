@@ -51,7 +51,7 @@ contract MLOSeniorRewardSecurityRegression is SeniorCapitalFacetTest {
     function test_FullExitCancellationCannotClaimQueuedFeesTwice() public {
         _deposit(alice, 100e18);
         _deposit(bob, 100e18);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         vm.prank(alice);
         senior.activateSeniorCapital();
         vm.prank(bob);

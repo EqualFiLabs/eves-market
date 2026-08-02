@@ -86,7 +86,10 @@ contract TradingInvariantHandler is Test {
         }
 
         vm.prank(creator);
-        try IMarketFactoryFacet(diamond).createMarket(question, "invariant", DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, 0, true) returns (
+        try IMarketFactoryFacet(diamond)
+            .createMarket(
+                question, "invariant", DEFAULT_RESOLUTION_SOURCE, uint64(block.timestamp), expiryTime, 0, true
+            ) returns (
             bytes32 marketId
         ) {
             marketIds.push(marketId);

@@ -58,6 +58,7 @@ import {DeployScript} from "../../script/Deploy.s.sol";
 import {MockConditionalTokens} from "../helpers/MockConditionalTokens.sol";
 import {StaticsDollarCoreFixture} from "../helpers/StaticsDollarCoreFixture.sol";
 import {MockEveToken} from "../helpers/MockEveToken.sol";
+import {TestnetEVE} from "../../src/mocks/TestnetEVE.sol";
 import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {MarketFactoryTypes} from "../../src/types/MarketFactoryTypes.sol";
 import {MarginTypes} from "../../src/types/MarginTypes.sol";
@@ -673,7 +674,8 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
             mloInsuranceFund: address(0),
             feeRecipient: address(0),
             initialEveMint: 1_000_000e18,
-            initialMloInsuranceBootstrap: 1_000e6,
+            initialMloInsuranceBootstrapUsdg: 1_000e6,
+            initialSeniorCapitalBootstrapUsdg: 2_000e6,
             mloFundingSeniorBps: 5_000,
             mloMaxCleanupBatch: 32,
             faucetOwner: protocolOwner,
@@ -695,8 +697,10 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
             faucetEveFundAmount: 2_500_000e18
         });
 
-        IStaticsDollarCoreTypes.PeggedMintPreview memory bootstrapPreview =
-            launchCore.previewPeggedMint(active.profileId, config.initialMloInsuranceBootstrap * 1e12);
+        IStaticsDollarCoreTypes.PeggedMintPreview memory bootstrapPreview = launchCore.previewPeggedMint(
+            active.profileId,
+            (config.initialMloInsuranceBootstrapUsdg + config.initialSeniorCapitalBootstrapUsdg) * 1e12
+        );
         launchUsdc.mint(temporaryOwner, config.faucetUsdcFundAmount + bootstrapPreview.totalCollateralIn);
         DeployScript.FullDeployment memory deployment = deployScript.deployFullStack(config, temporaryOwner);
         MarketFactoryTypes.MarketConfigView memory marketView =
@@ -711,7 +715,8 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         ISeniorCapitalFacet.SeniorCapitalState memory seniorState =
             ISeniorCapitalFacet(deployment.market.diamond).seniorCapitalState();
         assertEq(seniorState.asset, deployment.staticsDollar);
-        assertEq(seniorState.pendingPrincipal, 0);
+        assertEq(seniorState.activationDelay, 15 minutes);
+        assertEq(seniorState.pendingPrincipal, 2_000e18);
         assertEq(seniorState.totalPrincipal, 0);
         assertEq(MLOInsuranceFund(deployment.mloInsuranceFund).asset(), deployment.staticsDollar);
         assertEq(MLOInsuranceFund(deployment.mloInsuranceFund).owner(), protocolOwner);
@@ -765,10 +770,29 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         assertEq(marketView.resolutionMode, uint8(LibEveMarket.ResolutionMode.CreatorAdminBootstrap));
         assertEq(marketView.bondToken, deployment.staticsDollar);
 
-        assertEq(MockEveToken(deployment.eveToken).balanceOf(protocolOwner), config.initialEveMint);
-        assertEq(MockEveToken(deployment.eveToken).delegates(protocolOwner), protocolOwner);
+        assertEq(TestnetEVE(deployment.eveToken).balanceOf(protocolOwner), config.initialEveMint);
+        assertEq(TestnetEVE(deployment.eveToken).delegates(protocolOwner), protocolOwner);
+        assertEq(TestnetEVE(deployment.eveToken).owner(), protocolOwner);
 
         _assertFaucetDeployment(deployment, config, protocolOwner);
+        _assertRobinhoodReleaseTooling(deployScript, deployment, config, temporaryOwner, launchUsdc);
+
+        uint256 bootstrapEligibleAt = ISeniorCapitalFacet(deployment.market.diamond)
+            .seniorCapitalAccount(temporaryOwner)
+            .pendingSince + seniorState.activationDelay;
+        vm.prank(temporaryOwner);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISeniorCapitalFacet.SeniorCapitalActivationPending.selector, bootstrapEligibleAt)
+        );
+        ISeniorCapitalFacet(deployment.market.diamond).activateSeniorCapital();
+        vm.warp(bootstrapEligibleAt);
+        vm.prank(temporaryOwner);
+        ISeniorCapitalFacet(deployment.market.diamond).activateSeniorCapital();
+        seniorState = ISeniorCapitalFacet(deployment.market.diamond).seniorCapitalState();
+        assertEq(seniorState.pendingPrincipal, 0);
+        assertEq(seniorState.totalPrincipal, 2_000e18);
+        assertEq(seniorState.availableCapital, 2_000e18);
+        deployScript.verifyFullDeployment(deployment, config);
 
         vm.startPrank(protocolOwner);
         IStaticsDollarCoreTypes.PeggedMintPreview memory preview =
@@ -826,7 +850,10 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         vm.startPrank(maker);
         staticsDollar.approve(deployment.market.diamond, 500e18);
         ISeniorCapitalFacet(deployment.market.diamond).depositSeniorCapital(500e18);
-        vm.warp(block.timestamp + 24 hours);
+        uint256 makerEligibleAt = uint256(
+            ISeniorCapitalFacet(deployment.market.diamond).seniorCapitalAccount(maker).pendingSince
+        ) + ISeniorCapitalFacet(deployment.market.diamond).seniorCapitalState().activationDelay;
+        vm.warp(makerEligibleAt);
         ISeniorCapitalFacet(deployment.market.diamond).activateSeniorCapital();
         staticsDollar.approve(deployment.market.diamond, type(uint256).max);
         uint256 materializer = ICurveLifecycleFacet(deployment.market.diamond)
@@ -905,7 +932,7 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         ISeniorCapitalFacet(deployment.market.diamond).claimSeniorCapitalExit(maker);
 
         assertEq(staticsDollar.balanceOf(maker) - makerBalanceBeforeExit, exitClaim);
-        assertEq(ISeniorCapitalFacet(deployment.market.diamond).seniorCapitalState().totalPrincipal, 0);
+        assertEq(ISeniorCapitalFacet(deployment.market.diamond).seniorCapitalState().totalPrincipal, 2_000e18);
     }
 
     function _attachConfigProbe(address diamond, address owner, address probeFacet) internal {
@@ -923,6 +950,54 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         vm.warp(readyAt);
         vm.prank(owner);
         DiamondCutFacet(diamond).diamondCut(cuts, address(0), new bytes(0));
+    }
+
+    function _assertRobinhoodReleaseTooling(
+        DeployScript deployScript,
+        DeployScript.FullDeployment memory deployment,
+        DeployScript.FullDeploymentConfig memory config,
+        address temporaryOwner,
+        MockUSDG launchUsdc
+    ) internal {
+        config.market.conditionalTokens = deployment.market.conditionalTokens;
+        config.market.conditionalTokensArtifactPath =
+        "out/conditional-tokens/ConditionalTokens.sol/ConditionalTokens.json";
+
+        IStaticsDollarCoreTypes.PeggedMintPreview memory preview = IStaticsDollarCore(deployment.staticsDollarCore)
+            .previewPeggedMint(
+                config.staticsDollar.peggedProfileId,
+                (config.initialMloInsuranceBootstrapUsdg + config.initialSeniorCapitalBootstrapUsdg) * 1e12
+            );
+        launchUsdc.mint(temporaryOwner, config.faucetUsdcFundAmount + preview.totalCollateralIn);
+        vm.deal(temporaryOwner, 1 ether);
+
+        vm.expectRevert(bytes("wrong Robinhood testnet chain"));
+        deployScript.verifyRobinhoodPreflight(config, temporaryOwner);
+        vm.chainId(46_630);
+        address expectedUsdg = config.usdcToken;
+        config.usdcToken = deployment.eveToken;
+        vm.expectRevert(bytes("USDG decimals mismatch"));
+        deployScript.verifyRobinhoodPreflight(config, temporaryOwner);
+        config.usdcToken = expectedUsdg;
+        deployScript.verifyRobinhoodPreflight(config, temporaryOwner);
+
+        string memory manifestPath = "cache/eve-predict-robinhood-release-test.json";
+        deployScript.writeFullDeploymentManifest(
+            deployment, config, manifestPath, "eve-release-commit", "statics-release-commit"
+        );
+        (DeployScript.FullDeployment memory decoded,) = deployScript.verifyFullDeploymentManifestFromFile(manifestPath);
+
+        string memory manifest = vm.readFile(manifestPath);
+        assertEq(vm.parseJsonUint(manifest, ".chainId"), 46_630);
+        assertEq(vm.parseJsonAddress(manifest, ".criticalContractAddresses[0]"), deployment.market.diamond);
+        assertEq(vm.parseJsonAddressArray(manifest, ".facetAddresses").length, 67);
+        assertGt(vm.parseJsonBytes32Array(manifest, ".selectors").length, 67);
+        assertEq(vm.parseJsonBytes32Array(manifest, ".absentSelectors").length, 5);
+        assertEq(decoded.market.diamond, deployment.market.diamond);
+        vm.writeJson("1", manifestPath, ".chainId");
+        vm.expectRevert(bytes("manifest chain mismatch"));
+        deployScript.verifyFullDeploymentManifestFromFile(manifestPath);
+        vm.removeFile(manifestPath);
     }
 
     function _assertDiamondFacetSizes(address diamond) internal view {
@@ -975,12 +1050,12 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         assertTrue(eveEnabled);
         assertTrue(eveExists);
         assertEq(MockUSDG(deployment.usdcToken).balanceOf(deployment.faucet), config.faucetUsdcFundAmount);
-        assertEq(MockEveToken(deployment.eveToken).balanceOf(deployment.faucet), config.faucetEveFundAmount);
+        assertEq(IERC20(deployment.eveToken).balanceOf(deployment.faucet), config.faucetEveFundAmount);
 
         address claimer = makeAddr("claimer");
         vm.prank(claimer);
         Faucet(deployment.faucet).claim();
         assertEq(MockUSDG(deployment.usdcToken).balanceOf(claimer), config.faucetUsdcClaimAmount);
-        assertEq(MockEveToken(deployment.eveToken).balanceOf(claimer), config.faucetEveClaimAmount);
+        assertEq(IERC20(deployment.eveToken).balanceOf(claimer), config.faucetEveClaimAmount);
     }
 }

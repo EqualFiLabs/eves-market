@@ -29,9 +29,7 @@ library LibCurveEscrow {
         actualVolume = volume;
     }
 
-    function escrowPostedInventory(IERC1155 positionToken, address maker, uint256 positionId, uint128 volume)
-        internal
-    {
+    function escrowPostedInventory(IERC1155 positionToken, address maker, uint256 positionId, uint128 volume) internal {
         if (volume == 0) {
             return;
         }
@@ -60,12 +58,10 @@ library LibCurveEscrow {
         actualAmount = amount;
     }
 
-    function transferBaseFromSeller(
-        LibEveMarket.Book storage book,
-        address seller,
-        address receiver,
-        uint128 amount
-    ) internal returns (uint128 actualAmount) {
+    function transferBaseFromSeller(LibEveMarket.Book storage book, address seller, address receiver, uint128 amount)
+        internal
+        returns (uint128 actualAmount)
+    {
         if (amount == 0) {
             return 0;
         }
@@ -127,12 +123,11 @@ library LibCurveEscrow {
         }
     }
 
-    function checkedBaseDelta(
-        LibEveMarket.Book storage book,
-        address receiver,
-        uint128 expected,
-        uint256 balanceBefore
-    ) internal view returns (uint128 actualAmount) {
+    function checkedBaseDelta(LibEveMarket.Book storage book, address receiver, uint128 expected, uint256 balanceBefore)
+        internal
+        view
+        returns (uint128 actualAmount)
+    {
         uint256 delta = IERC20(book.baseToken).balanceOf(receiver) - balanceBefore;
         if (book.baseTransferMode == LibEveMarket.BaseTransferMode.EXACT) {
             if (delta != expected) {

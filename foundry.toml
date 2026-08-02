@@ -11,7 +11,9 @@ optimizer_runs = 200
 via_ir = true
 bytecode_hash = "none"
 fs_permissions = [
-	{ access = "read", path = "out/conditional-tokens" }
+	{ access = "read", path = "out/conditional-tokens" },
+	{ access = "read-write", path = "cache" },
+	{ access = "read-write", path = "deployments" }
 ]
 remappings = [
 	"@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
@@ -24,16 +26,25 @@ src = "conditional-tokens/contracts"
 test = "conditional-tokens/contracts"
 script = "conditional-tokens/contracts"
 out = "out/conditional-tokens"
-libs = ["lib"]
+libs = ["lib/openzeppelin-solidity"]
 cache_path = "cache/conditional-tokens"
 solc_version = "0.5.17"
 evm_version = "istanbul"
 optimizer = false
 via_ir = false
 bytecode_hash = "ipfs"
+auto_detect_remappings = false
 remappings = [
 	"openzeppelin-solidity/=lib/openzeppelin-solidity/"
 ]
+
+[profile.security.fuzz]
+runs = 256
+
+[profile.security.invariant]
+runs = 32
+depth = 256
+fail_on_revert = false
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 

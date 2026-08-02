@@ -21,11 +21,7 @@ contract MockConditionalTokens is PlainGnosisCTFMock {
 
         bytes32 conditionId = getConditionId(oracle, questionId, outcomeSlotCount);
         _details[conditionId] = ConditionDetails({
-            oracle: oracle,
-            questionId: questionId,
-            outcomeSlotCount: outcomeSlotCount,
-            prepared: true,
-            reported: false
+            oracle: oracle, questionId: questionId, outcomeSlotCount: outcomeSlotCount, prepared: true, reported: false
         });
     }
 

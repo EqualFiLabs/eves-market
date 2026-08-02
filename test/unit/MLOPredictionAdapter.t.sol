@@ -2582,7 +2582,7 @@ contract MLOPredictionAdapterTest is TestBase {
         vm.startPrank(account);
         collateral.approve(address(diamond), assets);
         ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(assets);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
         vm.stopPrank();
     }

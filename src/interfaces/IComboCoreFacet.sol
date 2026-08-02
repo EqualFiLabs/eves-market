@@ -12,9 +12,7 @@ interface IComboCoreFacet {
         external
         returns (uint256 yesPositionId, uint256 noPositionId);
 
-    function mergeCombo(bytes32 conditionId, uint128 amount, address receiver)
-        external
-        returns (uint128 collateralOut);
+    function mergeCombo(bytes32 conditionId, uint128 amount, address receiver) external returns (uint128 collateralOut);
 
     function wrapCombo(uint256 underlyingPositionId, uint128 amount, address receiver)
         external

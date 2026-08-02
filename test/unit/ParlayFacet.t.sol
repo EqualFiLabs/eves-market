@@ -75,7 +75,7 @@ contract ParlayFacetTest is TestBase {
         vm.startPrank(creator);
         usdc.approve(address(diamond), 100e6);
         ISeniorCapitalFacet(address(diamond)).depositSeniorCapital(100e6);
-        vm.warp(block.timestamp + 24 hours);
+        vm.warp(block.timestamp + 15 minutes);
         ISeniorCapitalFacet(address(diamond)).activateSeniorCapital();
         vm.stopPrank();
 

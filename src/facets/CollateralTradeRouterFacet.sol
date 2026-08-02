@@ -57,15 +57,16 @@ contract CollateralTradeRouterFacet {
         uint128 retainedFeeBalance = LibTradeRouter.previewRetainedBuyFeeBalance(LibTradeRouter.routerParams(params));
 
         if (usePermit) {
-            IERC20Permit(collateralToken).permit(
-                msg.sender,
-                address(this),
-                params.maxCollateralIn,
-                permitSignature.deadline,
-                permitSignature.v,
-                permitSignature.r,
-                permitSignature.s
-            );
+            IERC20Permit(collateralToken)
+                .permit(
+                    msg.sender,
+                    address(this),
+                    params.maxCollateralIn,
+                    permitSignature.deadline,
+                    permitSignature.v,
+                    permitSignature.r,
+                    permitSignature.s
+                );
         }
         IERC20(collateralToken).safeTransferFrom(msg.sender, address(this), params.maxCollateralIn);
         result = ICollateralTradeExecution(address(this))

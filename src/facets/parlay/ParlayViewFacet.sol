@@ -193,10 +193,11 @@ contract ParlayViewFacet is ParlayBase {
         );
     }
 
-    function _ticketPricingJson(
-        LibParlay.ParlayTicketBucket storage bucket,
-        LibParlay.ParlayTemplate storage template_
-    ) private view returns (string memory json) {
+    function _ticketPricingJson(LibParlay.ParlayTicketBucket storage bucket, LibParlay.ParlayTemplate storage template_)
+        private
+        view
+        returns (string memory json)
+    {
         json = string.concat(
             '"premium_per_unit":"',
             Strings.toString(bucket.premiumPerUnit),
