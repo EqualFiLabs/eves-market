@@ -26,13 +26,14 @@ src = "conditional-tokens/contracts"
 test = "conditional-tokens/contracts"
 script = "conditional-tokens/contracts"
 out = "out/conditional-tokens"
-libs = ["lib"]
+libs = ["lib/openzeppelin-solidity"]
 cache_path = "cache/conditional-tokens"
 solc_version = "0.5.17"
 evm_version = "istanbul"
 optimizer = false
 via_ir = false
 bytecode_hash = "ipfs"
+auto_detect_remappings = false
 remappings = [
 	"openzeppelin-solidity/=lib/openzeppelin-solidity/"
 ]

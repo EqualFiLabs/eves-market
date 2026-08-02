@@ -18,6 +18,8 @@ ENV_FILE="$REPO_ROOT/.env.robinhood-testnet"
 RPC_FILE="$WORKSPACE_ROOT/.rpc"
 KEY_FILE="$WORKSPACE_ROOT/.rhdeploy"
 MANIFEST_PATH=""
+CONDITIONAL_TOKENS_STATE_FILE="${CONDITIONAL_TOKENS_STATE_FILE:-$REPO_ROOT/cache/robinhood-testnet-conditional-tokens.env}"
+BROADCAST_RECEIPT_PATH="${ROBINHOOD_BROADCAST_RECEIPT_PATH:-broadcast/Deploy.s.sol/46630/run-latest.json}"
 
 while (($#)); do
   case "$1" in
@@ -67,7 +69,7 @@ if [[ "$MODE" == "check-verification" ]]; then
   "$SCRIPT_DIR/check-blockscout-verification.sh" \
     "$MANIFEST_PATH" \
     "${ROBINHOOD_TESTNET_VERIFIER_URL:-https://explorer.testnet.chain.robinhood.com/api/}" \
-    "broadcast/Deploy.s.sol/46630/run-latest.json"
+    "$BROADCAST_RECEIPT_PATH"
   exit 0
 fi
 
@@ -115,7 +117,7 @@ fi
 export ROBINHOOD_TESTNET_RPC_URL
 
 if [[ "$MODE" == "dry-run" || "$MODE" == "broadcast" ]]; then
-  for required in CONDITIONAL_TOKENS USDC_TOKEN INITIAL_OWNER EVE_TREASURY \
+  for required in USDC_TOKEN INITIAL_OWNER EVE_TREASURY \
     STATICS_DOLLAR_CORE_ADDRESS STATICS_DOLLAR_USDC_PROFILE_ID; do
     if [[ -z "${!required:-}" ]]; then
       echo "Missing required deployment variable: $required" >&2
@@ -131,6 +133,33 @@ if [[ "$actual_chain_id" != "46630" ]]; then
 fi
 
 if [[ "$MODE" == "dry-run" || "$MODE" == "broadcast" ]]; then
+  git -C "$REPO_ROOT" submodule update --init --recursive
+
+  conditional_tokens_args=(
+    --rpc-url "$ROBINHOOD_TESTNET_RPC_URL"
+  )
+  if [[ -z "${CONDITIONAL_TOKENS:-}" && -f "$CONDITIONAL_TOKENS_STATE_FILE" ]]; then
+    CONDITIONAL_TOKENS="$(
+      awk -F= '$1 == "CONDITIONAL_TOKENS" {sub(/^[^=]*=/, ""); print; exit}' \
+        "$CONDITIONAL_TOKENS_STATE_FILE"
+    )"
+  fi
+  if [[ -n "${CONDITIONAL_TOKENS:-}" ]]; then
+    conditional_tokens_args+=(--address "$CONDITIONAL_TOKENS")
+  elif [[ "$MODE" == "broadcast" ]]; then
+    conditional_tokens_args+=(
+      --broadcast
+      --private-key "$PRIVATE_KEY"
+      --verify
+      --verifier-url "${ROBINHOOD_TESTNET_VERIFIER_URL:-https://explorer.testnet.chain.robinhood.com/api/}"
+    )
+  fi
+  CONDITIONAL_TOKENS="$("$SCRIPT_DIR/prepare-conditional-tokens.sh" "${conditional_tokens_args[@]}")"
+  export CONDITIONAL_TOKENS
+  mkdir -p "$(dirname "$CONDITIONAL_TOKENS_STATE_FILE")"
+  printf 'CONDITIONAL_TOKENS=%s\n' "$CONDITIONAL_TOKENS" >"$CONDITIONAL_TOKENS_STATE_FILE"
+  echo "ConditionalTokens ready at $CONDITIONAL_TOKENS" >&2
+
   export RELEASE_COMMIT
   RELEASE_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
   export STATICS_RELEASE_COMMIT
@@ -197,7 +226,7 @@ case "$MODE" in
       "$SCRIPT_DIR/check-blockscout-verification.sh" \
         "$MANIFEST_PATH" \
         "${ROBINHOOD_TESTNET_VERIFIER_URL:-https://explorer.testnet.chain.robinhood.com/api/}" \
-        "broadcast/Deploy.s.sol/46630/run-latest.json"
+        "$BROADCAST_RECEIPT_PATH"
     fi
     ;;
 esac

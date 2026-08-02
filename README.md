@@ -115,7 +115,6 @@ OpenZeppelin Contracts, Gnosis Conditional Tokens, and Statics are tracked as pi
 
 ```shell
 git submodule update --init --recursive
-forge install foundry-rs/forge-std --no-git
 ```
 
 Main protocol remappings are defined in `foundry.toml`:
@@ -239,26 +238,28 @@ Robinhood testnet is chain `46630`. Complete the Statics deployment and create
 its USDG pegged profile first. Keep the existing `USDC_*` configuration names
 for this testnet release, but point them to Mock USDG.
 
-Build, deploy, and verify canonical Gnosis ConditionalTokens explicitly. The
-isolated profile preserves its Solidity `0.5.17`, Istanbul, and
-optimizer-disabled build:
+The release wrapper initializes the pinned submodules and builds canonical
+Gnosis ConditionalTokens with its isolated Solidity `0.5.17`, Istanbul, and
+optimizer-disabled profile. When `CONDITIONAL_TOKENS` is blank during
+`--broadcast`, it deploys and verifies that contract first, validates that the
+new address has runtime code, exports the address, and then deploys the Solidity
+`0.8.33` Eves stack.
+
+To deploy only ConditionalTokens before an Eves simulation, use the same helper
+directly and retain its stdout as the deployment address:
 
 ```shell
-FOUNDRY_PROFILE=conditional-tokens forge build
-
-BASESCAN_API_KEY=unused FOUNDRY_PROFILE=conditional-tokens \
-forge create conditional-tokens/contracts/ConditionalTokens.sol:ConditionalTokens \
+export CONDITIONAL_TOKENS="$(scripts/prepare-conditional-tokens.sh \
   --rpc-url "$ROBINHOOD_TESTNET_RPC_URL" \
-  --chain-id 46630 \
-  --private-key "$PRIVATE_KEY" \
   --broadcast \
   --verify \
-  --verifier blockscout \
-  --verifier-url "$ROBINHOOD_TESTNET_VERIFIER_URL"
+  --verifier-url "$ROBINHOOD_TESTNET_VERIFIER_URL")"
 ```
 
-Record the confirmed address as `CONDITIONAL_TOKENS`. Deploy and verify the
-six-decimal, permit-enabled Mock USDG, then record it as `USDC_TOKEN`.
+An unbroadcast dry run cannot persist the separate ConditionalTokens
+transaction, so it requires an existing `CONDITIONAL_TOKENS` address. Deploy
+and verify the six-decimal, permit-enabled Mock USDG, then record it as
+`USDC_TOKEN`.
 `MOCK_USDG_INITIAL_RECIPIENT` must be the deployment broadcaster when the Eve
 launcher will transfer `FAUCET_USDC_FUND_AMOUNT` from that balance:
 
@@ -273,16 +274,16 @@ BASESCAN_API_KEY=unused forge script script/DeployMockUSDG.s.sol:DeployMockUSDG 
   -vv
 ```
 
-After filling every required value in the ignored
+After filling the remaining required values in the ignored
 `.env.robinhood-testnet`, use the release wrapper. It loads the RPC and
 deployment key from the workspace files by default, checks chain `46630`,
-normalizes the private-key prefix without printing the key, validates the
-ConditionalTokens/Mock USDG/Statics Dollar dependencies, and simulates without
-broadcasting:
+normalizes the private-key prefix without printing the key, and validates the
+ConditionalTokens/Mock USDG/Statics Dollar dependencies. A simulation requires
+an existing ConditionalTokens address:
 
 ```shell
 cp .env.example .env.robinhood-testnet
-# Fill the dependency addresses, owner, and treasury first.
+# Fill the existing dependency addresses, owner, and treasury first.
 scripts/robinhood-testnet-release.sh
 ```
 
@@ -293,7 +294,11 @@ continue to use the chain `46630` testnet endpoint.
 
 The simulation writes an ignored manifest under `cache/` and immediately
 replays the post-deployment verifier against it. With separate authorization
-for the public deployment, `--broadcast` writes
+for the public deployment, `--broadcast` can start with `CONDITIONAL_TOKENS`
+blank. It performs the pinned Solidity `0.5.17` ConditionalTokens deployment
+before the Solidity `0.8.33` Eves deployment. The confirmed address is retained
+in ignored `cache/robinhood-testnet-conditional-tokens.env`, allowing a retry to
+reuse the same deployment if a later release step fails. The wrapper then writes
 `deployments/robinhood-testnet-46630.json`, requests Blockscout verification,
 rechecks every configured relationship and selector route, and polls
 Blockscout for the standalone contracts and all 67 facets:
