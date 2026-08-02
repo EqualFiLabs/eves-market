@@ -11,6 +11,7 @@ import {ISEveUSDCLending} from "./interfaces/ISEveUSDCLending.sol";
 import {ISEveUSDCVault} from "./interfaces/ISEveUSDCVault.sol";
 import {ISEveUSDCVaultLending} from "./interfaces/ISEveUSDCVaultLending.sol";
 
+/// @notice Deprecated vault-share lending module retained until the senior margin pool replacement lands.
 contract SEveUSDCLending is ReentrancyGuard, ISEveUSDCLending {
     using SafeERC20 for IERC20;
 

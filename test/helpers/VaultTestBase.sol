@@ -143,7 +143,7 @@ abstract contract VaultTestBase is Test {
     }
 
     function _ownershipSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](37);
+        selectors = new bytes4[](38);
         selectors[0] = OwnershipFacet.transferOwnership.selector;
         selectors[1] = OwnershipFacet.owner.selector;
         selectors[2] = OwnershipFacet.setOrderbookEntryFeeBps.selector;
@@ -181,6 +181,7 @@ abstract contract VaultTestBase is Test {
         selectors[34] = OwnershipFacet.setDelayedOrderProtocolProcessor.selector;
         selectors[35] = OwnershipFacet.setMarketDelayedExecution.selector;
         selectors[36] = OwnershipFacet.setBookDelayedExecution.selector;
+        selectors[37] = OwnershipFacet.setSecondaryStakingVault.selector;
     }
 
     function _routerSelectors() internal pure returns (bytes4[] memory selectors) {

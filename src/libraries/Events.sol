@@ -178,8 +178,26 @@ library Events {
         uint128 averagePrice,
         uint256 curveCount
     );
+    event MarkOracleObservationRecorded(
+        bytes32 indexed bookId,
+        bytes32 indexed marketId,
+        bool indexed isYesSide,
+        uint128 price,
+        uint128 baseVolume,
+        uint128 quoteNotional,
+        uint64 timestamp,
+        uint64 blockNumber
+    );
     event CurveCancelled(uint256 indexed curveId);
     event CurveExpired(uint256 indexed curveId);
+    event AdapterCurveMetadataSet(
+        uint256 indexed curveId,
+        bytes32 indexed bucketId,
+        bytes32 indexed riskDomainId,
+        uint8 adapterKind,
+        bytes32 adapterDataKey,
+        bool active
+    );
     event UserCreditChanged(
         address indexed owner, uint8 indexed creditAssetType, address indexed token, uint256 tokenId, int256 delta
     );

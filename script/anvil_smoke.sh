@@ -205,7 +205,7 @@ $CAST_CALL "$DIAMOND" "previewCurveQuote(uint256,uint128)" 0 100000000 >/dev/nul
 $CAST_CALL "$DIAMOND" "previewBestExecution(bytes32,bool,uint128,uint256[])" "$MARKET_ID" true 100000000 "[0,3]" >/dev/null && ok "previewBestExecution"
 $CAST_CALL "$DIAMOND" "getMarketTopOfBook(bytes32)" "$MARKET_ID" >/dev/null && ok "getMarketTopOfBook"
 
-step "fillCurve / fillBest / fillBestFor"
+step "fillCurve / fillBest"
 read -r GEN0 COMMIT0 _ <<<"$($CAST_CALL "$DIAMOND" "getCurveCommitment(uint256)(uint32,bytes32)" 0 | tr '\n' ' ')"
 $CAST_SEND "$DIAMOND" "fillCurve(uint256,uint128,uint128,uint32,bytes32)" 0 50000000 0 "$GEN0" "$COMMIT0" >/dev/null && ok "fillCurve(0)"
 
@@ -215,10 +215,6 @@ read -r GEN3 COMMIT3 _ <<<"$($CAST_CALL "$DIAMOND" "getCurveCommitment(uint256)(
 MAXP=340282366920938463463374607431768211455
 $CAST_SEND "$DIAMOND" "fillBest((bytes32,bool,uint128,uint128,uint128,uint256[],uint32[],bytes32[],address,address))" \
   "($MARKET_ID,true,100000000,0,$MAXP,[0,3],[$GEN0,$GEN3],[$COMMIT0,$COMMIT3],$ME,$RECEIVER)" >/dev/null && ok "fillBest"
-
-read -r GEN0 COMMIT0 _ <<<"$($CAST_CALL "$DIAMOND" "getCurveCommitment(uint256)(uint32,bytes32)" 0 | tr '\n' ' ')"
-$CAST_SEND "$DIAMOND" "fillBestFor((bytes32,bool,uint128,uint128,uint128,uint256[],uint32[],bytes32[],address,address))" \
-  "($MARKET_ID,true,50000000,0,$MAXP,[0],[$GEN0],[$COMMIT0],$ME,$RECEIVER)" >/dev/null && ok "fillBestFor"
 
 step "cancelCurve / cancelCurvesBatch"
 $CAST_SEND "$DIAMOND" "cancelCurve(uint256)" 1 >/dev/null && ok "cancelCurve(1)"

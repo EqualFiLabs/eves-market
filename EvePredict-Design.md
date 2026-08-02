@@ -1,7 +1,7 @@
 # Eves Market — Design Document
 ## On-Chain Prediction Market Protocol
 
-**Version:** 3.1
+**Version:** 3.2
 **Module:** Eves Market — On-Chain Prediction Market Protocol
 
 ---
@@ -127,8 +127,10 @@ The protocol's default collateral token is **eveUSDC**, an 18-decimal ERC-20 wra
 eve-predict/src/
 ├── EveMarketDiamond.sol              # EIP-2535 Diamond proxy
 ├── EveUSDC.sol                        # USDC wrapper (ERC-20, 18 decimals)
-├── SEveUSDCVault.sol                  # ERC4626 staking vault
-├── SEveUSDCLending.sol                # Vault-native maker lending
+├── SEveUSDCVault.sol                  # ERC4626 staking vault (primary, eveUSDC)
+├── SEveUSDCLending.sol                # Vault-native maker lending (eveUSDC)
+├── SEveUSDVault.sol                   # ERC4626 staking vault (secondary, eveUSD)
+├── SEveUSDLending.sol                 # Vault-native maker lending (eveUSD)
 ├── MakerLendingRouter.sol            # USDC ↔ market position router (standalone)
 ├── EveUSD.sol                        # ETH-backed senior stablecoin (ERC-20, pool-minted)
 ├── EveRiskShares.sol                 # Junior risk shares (ERC-1155 per series, pool-minted)
@@ -151,7 +153,8 @@ eve-predict/src/
 │   ├── MultiOutcomeOrderbookFacet.sol     # N-way outcome markets (create/split/merge/redeem)
 │   ├── MultiOutcomeOrderbookViewFacet.sol # Multi-outcome views
 │   ├── DelayedOrderFacet.sol         # Block-delayed taker orders
-│   ├── TradeRouterFacet.sol          # Buy/sell with eveUSDC, USDC, or profile collateral
+│   ├── TradeRouterFacet.sol          # Buy/split with eveUSDC, USDC, or profile collateral
+│   ├── TradeRouterSellFacet.sol      # Sell positions with eveUSDC, USDC, or profile collateral
 │   ├── VaultRouterFacet.sol          # USDC ↔ sEVEUSDC and ETH → eveETH one-click flows
 │   ├── FeeRouterFacet.sol            # Fee claims (maker + creator), maker rewards
 │   ├── MarketSettlementFacet.sol     # CTF / parimutuel / multi-outcome settlement previews
@@ -205,7 +208,7 @@ The Diamond supports DiamondCut (add/replace/remove facet functions), selector f
 
 The CLOB engine is decomposed across multiple facets for bytecode-size management. `CurveCLOBFacet` is an aggregating entry point; `CurveInventoryFacet`, `CurveLifecycleFacet`, and `CurveViewFacet` provide split/merge, posting/lifecycle, and views respectively. Standalone book operations live in `BookFacet` / `BookOrderFacet` / `BookTradeFacet` / `BookViewFacet`.
 
-Standalone contracts (`EveUSDC`, `EveETH`, `SEveUSDCVault`, `SEveUSDCLending`, `MakerLendingRouter`, `EveUSD`, `EveRiskShares`, `EveUSDPool`, `EveUSDRouter`, `ChainlinkETHUSDOracle`, `Faucet`) operate outside the Diamond and interact with it (or with each other) through their public interfaces.
+Standalone contracts (`EveUSDC`, `EveETH`, `SEveUSDCVault`, `SEveUSDCLending`, `SEveUSDVault`, `SEveUSDLending`, `MakerLendingRouter`, `EveUSD`, `EveRiskShares`, `EveUSDPool`, `EveUSDRouter`, `ChainlinkETHUSDOracle`, `Faucet`) operate outside the Diamond and interact with it (or with each other) through their public interfaces.
 
 > **Note on renames since v2.1:** the former `SpotBook*Facet` family is now `Book*Facet`, and the former `EveTokenGateFacet` is now `BondTokenGateFacet`. The bond gate no longer locks an EVE governance token — it locks a generic `config.bondToken` for resolution bonds.
 
@@ -1172,11 +1175,11 @@ fee       = grossCost × entryFeeBps / 10,000
 makerFee    = fee × makerFeeBps / 10,000
 creatorFee  = fee × creatorFeeBps / 10,000
 protocolFee = fee - makerFee - creatorFee
-  └─ vaultFee = protocolFee × vaultFeeBps / 10,000  // to sEVEUSDC vault (if reward token active)
+  └─ vaultFee = protocolFee × vaultFeeBps / 10,000  // routed across eligible vaults (see Dual-Vault Fee Routing)
   └─ treasury = protocolFee - vaultFee
 ```
 
-Fee distribution reads from the **book's** snapshotted fee config. When permissionless creation is disabled, the creator share is redirected to the protocol fee pool. When `stakingVault == address(0)`, `vaultFeeBps == 0`, or the collateral is not an active vault reward token, all protocol fees go to treasury.
+Fee distribution reads from the **book's** snapshotted fee config. When permissionless creation is disabled, the creator share is redirected to the protocol fee pool. The vault share is routed by `LibFeeRouting.previewVaultFeeRoute` across the primary (`stakingVault`) and secondary (`secondaryStakingVault`) vaults, split pro rata by each eligible vault's staked supply; if neither vault is eligible (zero address, token not an active reward token, or zero supply), the vault share falls back to the treasury.
 
 ### Parimutuel Entry Fee Split
 
@@ -1429,7 +1432,8 @@ struct MarketConfig {
     address collateralToken;                // default = eveUSDC
     address eveToken;
     address eveTreasury;
-    address stakingVault;                   // sEVEUSDC vault
+    address stakingVault;                   // primary sEVEUSDC vault
+    address secondaryStakingVault;          // secondary sEVEUSD vault (dual-vault fee routing)
     // Fee configs
     BookFeeConfig orderbookFeeConfig;
     SpotFeeConfig spotFeeConfig;
@@ -1572,7 +1576,7 @@ previewParimutuelPayout(marketId, user);
 
 ### TradeRouterFacet
 
-A Diamond facet wrapping the CLOB engine with convenience buy/sell flows that handle wrapping, approval, and selling in single calls.
+A Diamond facet wrapping the CLOB engine with convenience buy/sell flows that handle wrapping, approval, and selling in single calls. Buy/split entry points live on `TradeRouterFacet`; the sell entry points live on the companion `TradeRouterSellFacet` (shared internals in `LibTradeRouter`). Both are exposed through the same Diamond and the `ITradeRouter` interface.
 
 ```solidity
 // Buy (eveUSDC / USDC auto-wrap / arbitrary profile collateral)
@@ -1638,7 +1642,8 @@ WETH <-> eveETH
 |---|---|---|
 | EveUSDC | `src/EveUSDC.sol` | ERC-20 wrapper (immutable) |
 | EveETH | `src/tokens/EveETH.sol` | ERC-20 wrapper (immutable) |
-| SEveUSDCVault | `src/SEveUSDCVault.sol` | ERC4626 vault |
+| SEveUSDCVault | `src/SEveUSDCVault.sol` | ERC4626 vault (primary) |
+| SEveUSDVault | `src/SEveUSDVault.sol` | ERC4626 vault over eveUSD (secondary) |
 | VaultRouterFacet | `src/facets/VaultRouterFacet.sol` | Diamond facet |
 
 ### sEVEUSDC Vault
@@ -1649,9 +1654,12 @@ interface ISEveUSDCVault is IERC4626 {
     function accrueAum() external returns (uint256 feeAssets);
     function previewAccruedAum() external view returns (uint256 feeAssets, uint256 epochs);
     function unpaidAumFees() external view returns (uint256);
-    // Revenue
+    // Revenue (notifier-restricted)
     function notifyRevenue(uint256 assets) external;                 // native asset (eveUSDC)
     function notifyRevenue(address token, uint256 amount) external;  // any registered reward token
+    // Sponsored revenue (permissionless)
+    function sponsorAssetRevenue(uint256 assets) external;           // anyone donates asset into NAV
+    function sponsorReward(address token, uint256 amount) external returns (uint256 received); // anyone funds a reward token
     // Multi-token rewards
     function registerRewardToken(address token) external;
     function disableRewardToken(address token) external;
@@ -1671,7 +1679,9 @@ interface ISEveUSDCVault is IERC4626 {
 
 **AUM fee engine:** `epochLength = 1 days`; `dailyRateWad = aumFeeBps × 1e18 / (365 × 10_000)`; fee = `totalAssets × (1 - rpow(1 - dailyRate, epochs))`; sub-unit remainders carried in `feeRemainderWad`; `_accrueAum()` runs before every mutation (permissionless).
 
-**Revenue:** `notifyRevenue(assets)` adds eveUSDC to NAV without minting shares; `notifyRevenue(token, amount)` distributes a registered reward token pro-rata via a per-share accumulator. Restricted to the revenue notifier (the Diamond). eveUSDC is pre-registered as a reward token.
+**Revenue:** `notifyRevenue(assets)` adds eveUSDC to NAV without minting shares; `notifyRevenue(token, amount)` distributes a registered reward token pro-rata via a per-share accumulator. Both are restricted to the revenue notifier (the Diamond). eveUSDC is pre-registered as a reward token.
+
+**Sponsored revenue (permissionless):** anyone can top up the vault directly — `sponsorAssetRevenue(assets)` donates the underlying asset into NAV (raising the share price for all stakers) and `sponsorReward(token, amount)` funds a registered reward token pro-rata. The asset token must use `sponsorAssetRevenue` (reverts with `AssetRewardMustUseAssetRevenue` if passed to the reward path). Events: `AssetRevenueSponsored`, `RewardSponsored`.
 
 **Managed assets (with lending):**
 ```
@@ -1682,6 +1692,21 @@ totalAssets() = eveUSDC.balanceOf(vault) + outstandingPrincipal - recognizedLoss
 
 **Key constraint:** eveUSDC locked in CTF positions, native positions, or parimutuel pools does not earn vault yield — only eveUSDC deposited in the vault does.
 
+### Dual-Vault Fee Routing
+
+The protocol config carries two staking vaults — a **primary** (`stakingVault`) and a **secondary** (`secondaryStakingVault`, set via `OwnershipFacet.setSecondaryStakingVault`). When protocol fees route a vault share, `LibFeeRouting.previewVaultFeeRoute` splits it across whichever vaults are eligible for that token:
+
+- A vault is eligible only if it is non-zero, has the fee token registered as an active reward token, and has non-zero `totalSupply`.
+- If **both** vaults are eligible, the vault share is split **pro rata by each vault's `totalSupply`**.
+- If **one** is eligible, it receives the whole vault share.
+- If **neither** is eligible, the vault share falls back to the treasury.
+
+This lets the eveUSDC (`sEVEUSDC`) and eveUSD (`sEVEUSD`) vaults share trading-fee revenue proportional to their staked size. All fee paths (orderbook books, parimutuel entries, parlay flat fees) use the same routing helper.
+
+### Second Vault — sEVEUSD (eveUSD-backed)
+
+A second ERC4626 vault, `SEveUSDVault` (share token `sEVEUSD`), stakes the ETH-backed **eveUSD** senior stablecoin. It reuses the `SEveUSDCVault` implementation and shares the same `ISEveUSDCVault` interface (AUM fee, multi-token rewards, sponsored revenue). Its companion lending contract `SEveUSDLending` extends `SEveUSDCLending` and additionally exposes `eveUSD()`. Both are wired as the secondary vault/lending pair for dual-vault fee routing.
+
 
 ---
 
@@ -1689,7 +1714,7 @@ totalAssets() = eveUSDC.balanceOf(vault) + outstandingPrincipal - recognizedLoss
 
 ### Overview
 
-Vault-native lending where makers lock sEVEUSDC shares as collateral and borrow eveUSDC against them. There is no external pool — borrowers access value already backing their own locked shares. Max LTV is 95% (`maxLtvBps = 9500`), with second-based maturities.
+Vault-native lending where makers lock sEVEUSDC shares as collateral and borrow eveUSDC against them. There is no external pool — borrowers access value already backing their own locked shares. Max LTV is 95% (`maxLtvBps = 9500`), with second-based maturities. The same model is reused by `SEveUSDLending` for the sEVEUSD (eveUSD) vault.
 
 ### Contract
 
@@ -1733,7 +1758,7 @@ struct Loan {
 - **Self-borrow model** — no external lending pool.
 - **Exact borrow amounts** — `debtPrincipal = borrowAmount + originationFee`.
 - **95% max LTV** — at least 5% of pledged value stays in the vault.
-- **Seize-and-redeem default recovery** — no oracle liquidation; after maturity + grace anyone may trigger recovery, the vault redeems seized collateral, covers debt, retains surplus in NAV, and records any shortfall as `recognizedLosses`.
+- **Seize-and-redeem default recovery** — no oracle-triggered forced sale; after maturity + grace anyone may trigger recovery, the vault redeems seized collateral, covers debt, retains surplus in NAV, and records any shortfall as `recognizedLosses`.
 - **Asymmetric pause** — pausing blocks new borrows/extensions but allows repayment, delegated repayment, and recovery.
 - **Config snapshots** — each loan records grace period and fee bps at origination.
 
@@ -1831,7 +1856,7 @@ Config setters: `setOracle`, `setNextSeriesConfig`, `setRecoveryTimelock`, `setF
 ### Series Lifecycle
 
 ```solidity
-enum SeriesStatus { None, Active, RecoveryPending, RecoveryFinalized, Liquidatable, Retired }
+enum SeriesStatus { None, Active, RecoveryPending, RecoveryFinalized, OperatorRecoverable, Retired }
 ```
 
 ```
@@ -1843,9 +1868,9 @@ Active
 RecoveryPending
   ├─ returnRiskShares / reclaimReturnedRiskShares   (junior holders opt in/out of migration)
   ├─ cancelRecovery (price recovers above trigger)  → Active
-  └─ finalizeRecovery (after timelock, still impaired) → Liquidatable + new Active series
+  └─ finalizeRecovery (after timelock, still impaired) → OperatorRecoverable + new Active series
 
-Liquidatable (old series)
+OperatorRecoverable (old series)
   ├─ claimRecoveredRiskShares    (returned holders migrate into the new series)
   └─ recoverExpiredRisk          (operator sweeps stragglers into the new series)
 ```
@@ -1876,7 +1901,7 @@ uint256 newSeriesId = pool.finalizeRecovery(seriesId);         // after timelock
 
 ### Recovery Claim Modes
 
-When a returned junior holder migrates from a `Liquidatable` old series into the new series:
+When a returned junior holder migrates from an `OperatorRecoverable` old series into the new series:
 
 ```solidity
 enum RecoveryClaimMode { WETHDifference, MorePairs }
@@ -2136,7 +2161,7 @@ event ExpiredRiskRecovered(address indexed operator, address indexed holder, uin
 18. **Reentrancy protection.** Vault, lending, Diamond router/mutating facets, and the eveUSD pool/router use reentrancy guards (`nonReentrant` / `LibReentrancy`).
 19. **Network-exposed surfaces.** All on/off-ramp mint/burn paths are gated to immutable onramp/offramp addresses (eveUSDC) or require backing transfers (eveETH). `eveUSD` / `EvRisk` mint/burn are gated to the pool (`NotMinter` / `NotBurner` / `NotPool`).
 20. **eveUSD oracle safety.** `ChainlinkETHUSDOracle` rejects non-positive, future-dated, stale, and out-of-bounds prices, and honors an optional L2 sequencer-uptime feed with a grace period. The pool re-reads the oracle on every deposit, recovery transition, and recombine preview.
-21. **eveUSD series isolation.** Junior risk is series-scoped ERC-1155; an impaired (`Liquidatable`) series can never claim junior equity minted for a later series. `finalizeRecovery` requires the new series to be non-dilutive to the old series' per-pair claim.
+21. **eveUSD series isolation.** Junior risk is series-scoped ERC-1155; an impaired (`OperatorRecoverable`) series can never claim junior equity minted for a later series. `finalizeRecovery` requires the new series to be non-dilutive to the old series' per-pair claim.
 22. **eveUSD collateral integrity.** The pool tracks `accountedCollateral` (global and per-series) rather than raw WETH balances, so donations cannot distort share pricing; recombine and recovery burn tokens before transferring WETH.
 23. **eveUSD config immutability option.** `lockConfig()` permanently freezes oracle, series, timelock, fee-recipient, and fee-bps changes.
 
@@ -2339,6 +2364,14 @@ Market-linked book and market fee/volume accounting update in lockstep
 Standalone books snapshot fee config at creation and accrue independently
 ```
 
+### Property 30b: Dual-Vault Fee Routing
+```
+vaultShare is split across primary + secondary staking vaults by each eligible vault's totalSupply
+A vault is eligible iff non-zero, token is an active reward token, and totalSupply > 0
+primaryAmount + secondaryAmount + treasuryAmount == vaultShare (exhaustive)
+If neither vault is eligible, the whole vaultShare falls back to the treasury
+```
+
 ### Property 31: eveUSD Pair Backing
 ```
 Each deposit mints eveUSDMinted == sharesMinted against netWeth at series.wethPerPairWad
@@ -2350,7 +2383,7 @@ Fees are taken from WETH only; senior/junior units are never minted unbacked
 ### Property 32: eveUSD Series Isolation
 ```
 Junior risk is ERC-1155 keyed by seriesId
-A Liquidatable series never receives junior equity minted for a later series
+An OperatorRecoverable series never receives junior equity minted for a later series
 finalizeRecovery reverts (RecoveryClaimValueInsufficient) if the new series' wethPerPairWad
   exceeds the old series' per-pair claim (non-dilution guard)
 ```
@@ -2379,5 +2412,5 @@ Feed answers are scaled to 18-decimal WAD
 
 ---
 
-**Document Version:** 3.1
+**Document Version:** 3.2
 **Module:** Eves Market — On-Chain Prediction Market Protocol

@@ -21,7 +21,7 @@ import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 import {LibSafeCast} from "../libraries/LibSafeCast.sol";
 import {MarketFactoryTypes} from "../types/MarketFactoryTypes.sol";
 
-contract ParimutuelFacet is IParimutuelFacet {
+contract ParimutuelFacet {
     using SafeERC20 for IERC20;
     using LibParimutuel for LibParimutuel.Storage;
 
@@ -42,6 +42,7 @@ contract ParimutuelFacet is IParimutuelFacet {
         uint128 creatorFee;
         uint128 protocolFee;
         uint128 vaultFee;
+        uint128 secondaryVaultFee;
         uint128 netShares;
     }
 
@@ -64,7 +65,7 @@ contract ParimutuelFacet is IParimutuelFacet {
         bool emitProfileEvent;
     }
 
-    function createParimutuelMarket(CreateParimutuelMarketParams calldata params)
+    function createParimutuelMarket(IParimutuelFacet.CreateParimutuelMarketParams calldata params)
         external
         nonReentrant
         returns (bytes32 marketId)
@@ -94,11 +95,10 @@ contract ParimutuelFacet is IParimutuelFacet {
         );
     }
 
-    function createParimutuelMarketWithCollateralProfile(uint8 profileId, CreateParimutuelMarketParams calldata params)
-        external
-        nonReentrant
-        returns (bytes32 marketId)
-    {
+    function createParimutuelMarketWithCollateralProfile(
+        uint8 profileId,
+        IParimutuelFacet.CreateParimutuelMarketParams calldata params
+    ) external nonReentrant returns (bytes32 marketId) {
         marketId = _createProfileParimutuelMarket(profileId, _createParimutuelArgs(params));
     }
 
@@ -126,7 +126,7 @@ contract ParimutuelFacet is IParimutuelFacet {
         );
     }
 
-    function _createParimutuelArgs(CreateParimutuelMarketParams calldata params)
+    function _createParimutuelArgs(IParimutuelFacet.CreateParimutuelMarketParams calldata params)
         internal
         pure
         returns (CreateParimutuelArgs memory args)
@@ -327,127 +327,6 @@ contract ParimutuelFacet is IParimutuelFacet {
         swept = _sweepParimutuelDust(LibEveMarket.store(), parimutuel, marketId);
     }
 
-    function previewPayout(bytes32 marketId, address user)
-        external
-        view
-        returns (uint256 claimableAmount, uint256 userWinningShares, uint256 totalWinningShares, uint256 payoutPool)
-    {
-        LibEveMarket.Market storage market = _requireParimutuelMarket(LibEveMarket.store(), marketId);
-        LibParimutuel.Pool storage pool = LibParimutuel.store().pools[marketId];
-
-        payoutPool = pool.payoutPool;
-        if (market.state != LibEveMarket.MarketState.Resolved) {
-            return (0, 0, 0, payoutPool);
-        }
-
-        return _previewPayout(market, pool, user);
-    }
-
-    function previewEntryFee(bytes32 marketId, uint128 amount)
-        external
-        view
-        returns (uint128 totalFee, uint128 creatorFee, uint128 protocolFee, uint128 vaultFee, uint128 netShares)
-    {
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        LibEveMarket.Market storage market = _requireParimutuelMarket(state, marketId);
-        EntryFeeBreakdown memory fees = _entryFeeBreakdown(market, state.config, amount);
-        totalFee = fees.totalFee;
-        creatorFee = fees.creatorFee;
-        protocolFee = fees.protocolFee;
-        vaultFee = fees.vaultFee;
-        netShares = fees.netShares;
-    }
-
-    function previewParimutuelEntry(bytes32 marketId, bool isYes, uint128 amount)
-        external
-        view
-        returns (EntryPreview memory preview)
-    {
-        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        LibEveMarket.Market storage market = _requireParimutuelMarket(state, marketId);
-        EntryFeeBreakdown memory fees = _entryFeeBreakdown(market, state.config, amount);
-        LibParimutuel.Pool storage pool = LibParimutuel.store().pools[marketId];
-
-        uint256 epoch = _currentEpoch(market.tradingStartTime, market.parimutuelEpochWindow);
-        uint256 multiplierBps = _parimutuelMultiplierBps(epoch);
-        uint256 computedShares = (uint256(fees.netShares) * multiplierBps) / EPOCH_MULTIPLIER_SCALE;
-        uint128 sharesMinted = computedShares == 0 ? 0 : LibSafeCast.toUint128(computedShares);
-        uint128 totalYesSharesAfter = pool.totalYesShares;
-        uint128 totalNoSharesAfter = pool.totalNoShares;
-        if (isYes) {
-            totalYesSharesAfter = LibSafeCast.toUint128(uint256(totalYesSharesAfter) + sharesMinted);
-        } else {
-            totalNoSharesAfter = LibSafeCast.toUint128(uint256(totalNoSharesAfter) + sharesMinted);
-        }
-
-        preview = EntryPreview({
-            amountIn: amount,
-            totalFee: fees.totalFee,
-            creatorFee: fees.creatorFee,
-            protocolFee: fees.protocolFee,
-            vaultFee: fees.vaultFee,
-            netCollateral: fees.netShares,
-            sharesMinted: sharesMinted,
-            multiplierBps: multiplierBps,
-            epoch: epoch,
-            effectiveBasisWad: sharesMinted == 0 ? type(uint256).max : (uint256(fees.netShares) * 1e18) / sharesMinted,
-            totalYesSharesAfter: totalYesSharesAfter,
-            totalNoSharesAfter: totalNoSharesAfter,
-            payoutPoolAfter: LibSafeCast.toUint128(uint256(pool.payoutPool) + fees.netShares)
-        });
-    }
-
-    function getParimutuelPool(bytes32 marketId) external view returns (PoolView memory pool) {
-        _requireParimutuelMarket(LibEveMarket.store(), marketId);
-
-        LibParimutuel.Pool storage storedPool = LibParimutuel.store().pools[marketId];
-        (uint128 impliedYesProbability, uint128 impliedNoProbability) =
-            _impliedProbabilities(storedPool.totalYesShares, storedPool.totalNoShares);
-
-        pool = PoolView({
-            totalYesShares: storedPool.totalYesShares,
-            totalNoShares: storedPool.totalNoShares,
-            payoutPool: storedPool.payoutPool,
-            claimedPayout: storedPool.claimedPayout,
-            claimedClaimableShares: storedPool.claimedClaimableShares,
-            rawResolvedOutcome: uint8(storedPool.rawResolvedOutcome),
-            effectivePayoutOutcome: uint8(storedPool.effectivePayoutOutcome),
-            payoutPoolAtResolution: storedPool.payoutPoolAtResolution,
-            totalClaimableSharesAtResolution: storedPool.totalClaimableSharesAtResolution,
-            dustSwept: storedPool.dustSwept,
-            finalized: storedPool.finalized,
-            impliedYesProbability: impliedYesProbability,
-            impliedNoProbability: impliedNoProbability
-        });
-    }
-
-    function getParimutuelBalances(bytes32 marketId, address user)
-        external
-        view
-        returns (uint256 yesShares, uint256 noShares)
-    {
-        LibEveMarket.Market storage market = _requireParimutuelMarket(LibEveMarket.store(), marketId);
-        (yesShares, noShares) = _balances(market, user);
-    }
-
-    function isParimutuelMarket(bytes32 marketId) external view returns (bool) {
-        LibEveMarket.Market storage market = LibEveMarket.store().markets[marketId];
-        return market.marketId == marketId && market.marketType == LibEveMarket.MarketType.PARIMUTUEL;
-    }
-
-    function getParimutuelEpochWindow(bytes32 marketId) external view returns (uint64 epochWindow) {
-        LibEveMarket.Market storage market = _requireParimutuelMarket(LibEveMarket.store(), marketId);
-        epochWindow = market.parimutuelEpochWindow;
-    }
-
-    function getParimutuelEpochMultipliers() external view returns (uint16[8] memory multipliersBps) {
-        LibEveMarket.MarketConfig storage config = LibEveMarket.store().config;
-        for (uint256 index = 0; index < EPOCH_COUNT; ++index) {
-            uint16 configured = config.parimutuelEpochMultipliersBps[index];
-            multipliersBps[index] = configured == 0 ? _defaultParimutuelMultiplierBps(index) : configured;
-        }
-    }
-
     function _buyShares(
         LibEveMarket.EveMarketStorage storage state,
         LibParimutuel.Storage storage parimutuel,
@@ -502,6 +381,10 @@ contract ParimutuelFacet is IParimutuelFacet {
         if (fees.vaultFee != 0) {
             collateralToken.forceApprove(config.stakingVault, fees.vaultFee);
             ISEveUSDCVault(config.stakingVault).notifyRevenue(market.collateralToken, fees.vaultFee);
+        }
+        if (fees.secondaryVaultFee != 0) {
+            collateralToken.forceApprove(config.secondaryStakingVault, fees.secondaryVaultFee);
+            ISEveUSDCVault(config.secondaryStakingVault).notifyRevenue(market.collateralToken, fees.secondaryVaultFee);
         }
 
         IParimutuelShareToken(market.positionToken)
@@ -667,33 +550,6 @@ contract ParimutuelFacet is IParimutuelFacet {
         emit Events.ParimutuelDustSwept(marketId, recipient, swept);
     }
 
-    function _previewPayout(LibEveMarket.Market storage market, LibParimutuel.Pool storage pool, address user)
-        internal
-        view
-        returns (uint256 claimableAmount, uint256 userWinningShares, uint256 totalWinningShares, uint256 payoutPool)
-    {
-        LibParimutuel.requireFinalized(pool, market.marketId);
-        LibEveMarket.MarketOutcome payoutOutcome = pool.effectivePayoutOutcome;
-        payoutPool = pool.payoutPoolAtResolution;
-
-        if (payoutOutcome == LibEveMarket.MarketOutcome.Yes) {
-            userWinningShares = IERC1155(market.positionToken).balanceOf(user, market.yesPositionId);
-            totalWinningShares = pool.totalClaimableSharesAtResolution;
-            claimableAmount = (userWinningShares * payoutPool) / totalWinningShares;
-        } else if (payoutOutcome == LibEveMarket.MarketOutcome.No) {
-            userWinningShares = IERC1155(market.positionToken).balanceOf(user, market.noPositionId);
-            totalWinningShares = pool.totalClaimableSharesAtResolution;
-            claimableAmount = (userWinningShares * payoutPool) / totalWinningShares;
-        } else {
-            (uint256 yesShares, uint256 noShares) = _balances(market, user);
-            userWinningShares = yesShares + noShares;
-            totalWinningShares = pool.totalClaimableSharesAtResolution;
-            if (totalWinningShares != 0) {
-                claimableAmount = (userWinningShares * payoutPool) / totalWinningShares;
-            }
-        }
-    }
-
     function _entryFeeBreakdown(
         LibEveMarket.Market storage market,
         LibEveMarket.MarketConfig storage config,
@@ -715,17 +571,20 @@ contract ParimutuelFacet is IParimutuelFacet {
 
         fees.creatorFee = uint128((uint256(fees.totalFee) * feeConfig.creatorFeeBps) / FEE_BPS_DENOMINATOR);
         fees.protocolFee = uint128((uint256(fees.totalFee) * feeConfig.protocolFeeBps) / FEE_BPS_DENOMINATOR);
-        fees.vaultFee = fees.totalFee - fees.creatorFee - fees.protocolFee;
+        uint128 rawVaultFee = fees.totalFee - fees.creatorFee - fees.protocolFee;
         fees.netShares = amount - fees.totalFee;
 
         if (!config.permissionlessCreationEnabled) {
             fees.protocolFee += fees.creatorFee;
             fees.creatorFee = 0;
         }
-        if (!LibFeeRouting.canRouteVaultFee(config.stakingVault, market.collateralToken)) {
-            fees.protocolFee += fees.vaultFee;
-            fees.vaultFee = 0;
-        }
+
+        LibFeeRouting.VaultFeeRoute memory route = LibFeeRouting.previewVaultFeeRoute(
+            config.stakingVault, config.secondaryStakingVault, market.collateralToken, rawVaultFee
+        );
+        fees.vaultFee = uint128(route.primaryAmount);
+        fees.secondaryVaultFee = uint128(route.secondaryAmount);
+        fees.protocolFee += uint128(route.treasuryAmount);
     }
 
     function _remainingClaimableShares(LibParimutuel.Pool storage pool, bytes32 marketId)
@@ -797,26 +656,6 @@ contract ParimutuelFacet is IParimutuelFacet {
         IERC1155 positionToken = IERC1155(market.positionToken);
         yesShares = positionToken.balanceOf(user, market.yesPositionId);
         noShares = positionToken.balanceOf(user, market.noPositionId);
-    }
-
-    function _impliedProbabilities(uint128 totalYesShares, uint128 totalNoShares)
-        internal
-        pure
-        returns (uint128 impliedYesProbability, uint128 impliedNoProbability)
-    {
-        uint256 totalShares = uint256(totalYesShares) + totalNoShares;
-        if (totalShares == 0) {
-            return (0, 0);
-        }
-
-        impliedYesProbability = uint128((uint256(totalYesShares) * PROBABILITY_SCALE) / totalShares);
-        impliedNoProbability = uint128(PROBABILITY_SCALE - impliedYesProbability);
-    }
-
-    function getEpochMultiplier(bytes32 marketId) external view returns (uint256 multiplierBps, uint256 epoch) {
-        LibEveMarket.Market storage market = _requireParimutuelMarket(LibEveMarket.store(), marketId);
-        epoch = _currentEpoch(market.tradingStartTime, market.parimutuelEpochWindow);
-        multiplierBps = _parimutuelMultiplierBps(epoch);
     }
 
     function _epochMultiplier(uint64 tradingStartTime, uint64 epochWindow) internal view returns (uint256) {

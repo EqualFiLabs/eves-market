@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
+import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
 import {IParimutuelFacet} from "../../src/interfaces/IParimutuelFacet.sol";
 import {ParimutuelShareToken} from "../../src/tokens/ParimutuelShareToken.sol";
@@ -21,6 +22,7 @@ contract ParimutuelViewPropertiesTest is CurveTradingFixture {
         shareToken = new ParimutuelShareToken(address(diamond), "uri://parimutuel/{id}");
 
         _addFacet(address(parimutuelFacet), _parimutuelSelectors());
+        _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
         ResolutionHarnessFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
 
         vm.startPrank(owner);

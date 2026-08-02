@@ -65,7 +65,7 @@ contract ChainlinkETHUSDOracle is IETHUSDOracle {
         feedDecimals = decimals_;
     }
 
-    function ethUsdPriceWad() external view returns (uint256 priceWad) {
+    function priceWad() public view returns (uint256 normalizedPriceWad) {
         _requireSequencerUp();
 
         (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
@@ -78,16 +78,20 @@ contract ChainlinkETHUSDOracle is IETHUSDOracle {
             revert StalePrice(updatedAt, maxStaleness);
         }
 
-        priceWad = uint256(answer);
+        normalizedPriceWad = uint256(answer);
         if (feedDecimals < 18) {
-            priceWad *= 10 ** (18 - feedDecimals);
+            normalizedPriceWad *= 10 ** (18 - feedDecimals);
         }
         if (
-            (minPriceWad != 0 && priceWad <= minPriceWad)
-                || (maxPriceWad != 0 && priceWad >= maxPriceWad)
+            (minPriceWad != 0 && normalizedPriceWad <= minPriceWad)
+                || (maxPriceWad != 0 && normalizedPriceWad >= maxPriceWad)
         ) {
-            revert PriceOutOfBounds(priceWad, minPriceWad, maxPriceWad);
+            revert PriceOutOfBounds(normalizedPriceWad, minPriceWad, maxPriceWad);
         }
+    }
+
+    function ethUsdPriceWad() external view returns (uint256) {
+        return priceWad();
     }
 
     function _requireSequencerUp() internal view {

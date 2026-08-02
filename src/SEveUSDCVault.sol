@@ -12,6 +12,7 @@ import {ISEveUSDCVault} from "./interfaces/ISEveUSDCVault.sol";
 import {ISEveUSDCVaultLending} from "./interfaces/ISEveUSDCVaultLending.sol";
 import {LibFixedPointMath} from "./libraries/LibFixedPointMath.sol";
 
+/// @notice Deprecated experimental staking vault retained until the senior margin pool replacement lands.
 contract SEveUSDCVault is ERC20, ReentrancyGuard, ISEveUSDCVault, ISEveUSDCVaultLending {
     using SafeERC20 for IERC20;
 
@@ -207,16 +208,33 @@ contract SEveUSDCVault is ERC20, ReentrancyGuard, ISEveUSDCVault, ISEveUSDCVault
 
     function notifyRevenue(uint256 assets) external override nonReentrant {
         _enforceRevenueNotifier();
-        _notifyAssetRevenue(assets);
+        _receiveAssetRevenue(assets);
+        emit RevenueNotified(msg.sender, assets);
     }
 
     function notifyRevenue(address token, uint256 amount) external override nonReentrant {
         _enforceRevenueNotifier();
         if (token == _asset) {
-            _notifyAssetRevenue(amount);
+            _receiveAssetRevenue(amount);
+            emit RevenueNotified(msg.sender, amount);
             return;
         }
-        _notifyRewardRevenue(token, amount);
+        uint256 received = _receiveRewardRevenue(token, amount);
+        emit RewardRevenueNotified(msg.sender, token, received);
+    }
+
+    function sponsorAssetRevenue(uint256 assets) external override nonReentrant {
+        _receiveAssetRevenue(assets);
+        emit AssetRevenueSponsored(msg.sender, assets);
+    }
+
+    function sponsorReward(address token, uint256 amount) external override nonReentrant returns (uint256 received) {
+        if (token == _asset) {
+            revert AssetRewardMustUseAssetRevenue(token);
+        }
+
+        received = _receiveRewardRevenue(token, amount);
+        emit RewardSponsored(msg.sender, token, received);
     }
 
     function registerRewardToken(address token) external override nonReentrant {
@@ -302,7 +320,7 @@ contract SEveUSDCVault is ERC20, ReentrancyGuard, ISEveUSDCVault, ISEveUSDCVault
         active = rewardTokenStatus[token] == RewardTokenStatus.ACTIVE;
     }
 
-    function _notifyAssetRevenue(uint256 assets) internal {
+    function _receiveAssetRevenue(uint256 assets) internal {
         if (assets == 0) {
             revert ZeroAmount();
         }
@@ -313,11 +331,9 @@ contract SEveUSDCVault is ERC20, ReentrancyGuard, ISEveUSDCVault, ISEveUSDCVault
         _accrueAum();
         IERC20(_asset).safeTransferFrom(msg.sender, address(this), assets);
         _settlePayableAum();
-
-        emit RevenueNotified(msg.sender, assets);
     }
 
-    function _notifyRewardRevenue(address token, uint256 amount) internal {
+    function _receiveRewardRevenue(address token, uint256 amount) internal returns (uint256 received) {
         if (amount == 0) {
             revert ZeroAmount();
         }
@@ -334,7 +350,7 @@ contract SEveUSDCVault is ERC20, ReentrancyGuard, ISEveUSDCVault, ISEveUSDCVault
 
         uint256 balanceBefore = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        uint256 received = IERC20(token).balanceOf(address(this)) - balanceBefore;
+        received = IERC20(token).balanceOf(address(this)) - balanceBefore;
         if (received == 0) {
             revert ZeroAmount();
         }
@@ -343,8 +359,6 @@ contract SEveUSDCVault is ERC20, ReentrancyGuard, ISEveUSDCVault, ISEveUSDCVault
         accRewardPerShare[token] += scaledReward / totalSupply();
         rewardRemainder[token] = scaledReward % totalSupply();
         rewardLiability[token] += received;
-
-        emit RewardRevenueNotified(msg.sender, token, received);
     }
 
     function setAumFeeBps(uint16 newFeeBps) external override {

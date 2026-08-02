@@ -14,6 +14,7 @@ import {CurveCLOBTypes} from "../../src/types/CurveCLOBTypes.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
+import {SEveUSDCVault} from "../../src/SEveUSDCVault.sol";
 
 import {MockUSDC} from "../helpers/MockUSDC.sol";
 import {VaultFeeRoutingFixture} from "../helpers/VaultFeeRoutingFixture.sol";
@@ -22,6 +23,7 @@ contract VaultFeeRoutingTest is VaultFeeRoutingFixture {
     uint72 internal constant TWO_USDC = 2_000_000_000_000_000_000;
 
     event StakingVaultSet(address indexed previousStakingVault, address indexed newStakingVault);
+    event SecondaryStakingVaultSet(address indexed previousStakingVault, address indexed newStakingVault);
     event OrderbookFeeSplitSet(uint16 makerFeeBps, uint16 creatorFeeBps, uint16 protocolFeeBps, uint16 vaultFeeBps);
     event RevenueNotified(address indexed caller, uint256 assets);
 
@@ -50,6 +52,61 @@ contract VaultFeeRoutingTest is VaultFeeRoutingFixture {
         assertEq(vault.totalAssets() - vaultAssetsBefore, expectedVaultShare);
         assertEq(vault.totalSupply(), vaultSupplyBefore);
         assertEq(protocolFeesAccrued, expectedTreasuryShare);
+    }
+
+    function test_FillSplitsVaultFeeByPrimaryAndSecondaryVaultSupply() public {
+        uint16 vaultBps = 100;
+        SEveUSDCVault secondaryVault = _deploySecondaryVault();
+        _depositStake(1_000e6);
+        _depositStake(secondaryVault, 1_000e6);
+        _configureVaultRouting(address(vault), vaultBps);
+        _configureSecondaryVault(address(secondaryVault));
+
+        (bytes32 marketId,) = _createTradingMarket("vault-split-fill", 7 days);
+        _splitFromMaker(marketId, DEFAULT_MAKER_INVENTORY);
+        _approvePositions(maker);
+        uint256 curveId =
+            _postCurveFromMaker(marketId, true, DEFAULT_MAKER_INVENTORY, DEFAULT_FLAT_PRICE, DEFAULT_FLAT_PRICE, 180);
+
+        uint256 primaryAssetsBefore = vault.totalAssets();
+        uint256 secondaryAssetsBefore = secondaryVault.totalAssets();
+        uint256 treasuryBalanceBefore = eveUSDC.balanceOf(treasury);
+
+        (, uint128 fee,) = _fillCurveFromTaker(curveId, DEFAULT_FILL_COLLATERAL);
+        uint128 expectedVaultShare = _vaultShare(fee, vaultBps);
+        uint256 expectedPrimaryShare = expectedVaultShare / 2;
+        uint256 expectedSecondaryShare = expectedVaultShare - expectedPrimaryShare;
+        uint128 expectedTreasuryShare = _treasuryShare(fee, vaultBps);
+
+        assertEq(vault.totalAssets() - primaryAssetsBefore, expectedPrimaryShare);
+        assertEq(secondaryVault.totalAssets() - secondaryAssetsBefore, expectedSecondaryShare);
+        assertEq(eveUSDC.balanceOf(treasury) - treasuryBalanceBefore, expectedTreasuryShare);
+    }
+
+    function test_FillRoutesFullVaultFeeToOnlyFundedSecondaryVault() public {
+        uint16 vaultBps = 100;
+        SEveUSDCVault secondaryVault = _deploySecondaryVault();
+        _depositStake(secondaryVault, 1_000e6);
+        _configureVaultRouting(address(vault), vaultBps);
+        _configureSecondaryVault(address(secondaryVault));
+
+        (bytes32 marketId,) = _createTradingMarket("secondary-only-vault-fill", 7 days);
+        _splitFromMaker(marketId, DEFAULT_MAKER_INVENTORY);
+        _approvePositions(maker);
+        uint256 curveId =
+            _postCurveFromMaker(marketId, true, DEFAULT_MAKER_INVENTORY, DEFAULT_FLAT_PRICE, DEFAULT_FLAT_PRICE, 180);
+
+        uint256 primaryAssetsBefore = vault.totalAssets();
+        uint256 secondaryAssetsBefore = secondaryVault.totalAssets();
+        uint256 treasuryBalanceBefore = eveUSDC.balanceOf(treasury);
+
+        (, uint128 fee,) = _fillCurveFromTaker(curveId, DEFAULT_FILL_COLLATERAL);
+        uint128 expectedVaultShare = _vaultShare(fee, vaultBps);
+        uint128 expectedTreasuryShare = _treasuryShare(fee, vaultBps);
+
+        assertEq(vault.totalAssets() - primaryAssetsBefore, 0);
+        assertEq(secondaryVault.totalAssets() - secondaryAssetsBefore, expectedVaultShare);
+        assertEq(eveUSDC.balanceOf(treasury) - treasuryBalanceBefore, expectedTreasuryShare);
     }
 
     function test_FillRoutesVaultFeeWhenAumFeesExceedIdleVaultLiquidity() public {
@@ -200,9 +257,15 @@ contract VaultFeeRoutingTest is VaultFeeRoutingFixture {
     }
 
     function test_GovernanceSettersAreOwnerOnlyAndEmitEvents() public {
+        SEveUSDCVault secondaryVault = _deploySecondaryVault();
+
         vm.prank(outsider);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
         OwnershipFacet(address(diamond)).setStakingVault(address(vault));
+
+        vm.prank(outsider);
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
+        OwnershipFacet(address(diamond)).setSecondaryStakingVault(address(secondaryVault));
 
         vm.prank(outsider);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotContractOwner.selector, outsider));
@@ -213,6 +276,12 @@ contract VaultFeeRoutingTest is VaultFeeRoutingFixture {
 
         vm.prank(owner);
         OwnershipFacet(address(diamond)).setStakingVault(address(vault));
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit SecondaryStakingVaultSet(address(0), address(secondaryVault));
+
+        vm.prank(owner);
+        OwnershipFacet(address(diamond)).setSecondaryStakingVault(address(secondaryVault));
 
         vm.expectEmit(false, false, false, true, address(diamond));
         emit OrderbookFeeSplitSet(8_500, 400, 1_000, 100);
@@ -226,8 +295,26 @@ contract VaultFeeRoutingTest is VaultFeeRoutingFixture {
         OwnershipFacet(address(diamond)).setOrderbookFeeSplit(8_500, 500, 1_000, 100);
 
         assertEq(_marketConfig().stakingVault, address(vault));
+        assertEq(_marketConfig().secondaryStakingVault, address(secondaryVault));
         assertEq(_marketConfig().orderbookFeeConfig.vaultFeeBps, 100);
         assertEq(_marketConfig().orderbookFeeConfig.makerFeeBps, 8_500);
+    }
+
+    function _deploySecondaryVault() internal returns (SEveUSDCVault secondaryVault) {
+        secondaryVault = new SEveUSDCVault(address(eveUSDC), owner, vaultFeeRecipient, 0, address(diamond));
+    }
+
+    function _configureSecondaryVault(address stakingVault) internal {
+        vm.prank(owner);
+        OwnershipFacet(address(diamond)).setSecondaryStakingVault(stakingVault);
+    }
+
+    function _depositStake(SEveUSDCVault targetVault, uint256 assets) internal returns (uint256 shares) {
+        _wrapFor(staker, assets);
+        vm.startPrank(staker);
+        eveUSDC.approve(address(targetVault), assets);
+        shares = targetVault.deposit(assets, staker);
+        vm.stopPrank();
     }
 
     function _fillSpotAsk(MockUSDC spotBase, MockUSDC quoteToken, uint128 quoteIn)

@@ -1131,62 +1131,12 @@ contract CurveCLOBTest is CurveTradingFixture {
         assertEq(secondRemaining, 2_000);
     }
 
-    function test_FillBestForRevertsFromExternalCallerWithApprovedVictimPayer() public {
-        address victim = makeAddr("fill-best-victim");
-        address attacker = makeAddr("fill-best-attacker");
-        (bytes32 marketId,,) = _createTradingMarket("Victim allowance fill", "curve", 7 days);
+    function test_FillBestForSelectorIsNotRegistered() public view {
+        (bool ok, bytes memory data) =
+            address(diamond).staticcall(abi.encodeWithSignature("facetAddress(bytes4)", _fillBestForSelector()));
 
-        _splitFrom(maker, marketId, 5_000);
-        _approvePositions(maker);
-
-        vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
-
-        uint256 curveId = _postCurveFromMaker(marketId, true, 5_000, 500_000_000, 500_000_000, 120, 0);
-        (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
-
-        collateralToken.mint(victim, 1_000e6);
-        vm.prank(victim);
-        collateralToken.approve(address(diamond), 1_000e6);
-
-        uint256 victimCollateralBefore = collateralToken.balanceOf(victim);
-
-        vm.expectRevert(abi.encodeWithSelector(Errors.InternalCallOnly.selector, attacker));
-        vm.prank(attacker);
-        ICurveTradeFacet(address(diamond))
-            .fillBestFor(
-                _singleCurveFillBestParams(marketId, true, 1_000e6, curveId, generation, commitment, victim, attacker)
-            );
-
-        assertEq(collateralToken.balanceOf(victim), victimCollateralBefore);
-    }
-
-    function test_FillBestForRevertsFromExternalCallerWithDiamondPayer() public {
-        address attacker = makeAddr("fill-best-diamond-payer-attacker");
-        (bytes32 marketId,,) = _createTradingMarket("Diamond payer fill", "curve", 7 days);
-
-        _splitFrom(maker, marketId, 5_000);
-        _approvePositions(maker);
-
-        vm.prank(owner);
-        OwnershipFacet(address(diamond)).setOrderbookEntryFeeBps(0);
-
-        uint256 curveId = _postCurveFromMaker(marketId, true, 5_000, 500_000_000, 500_000_000, 120, 0);
-        (uint32 generation, bytes32 commitment) = ICurveViewFacet(address(diamond)).getCurveCommitment(curveId);
-
-        collateralToken.mint(address(diamond), 1_000e6);
-        uint256 diamondCollateralBefore = collateralToken.balanceOf(address(diamond));
-
-        vm.expectRevert(abi.encodeWithSelector(Errors.InternalCallOnly.selector, attacker));
-        vm.prank(attacker);
-        ICurveTradeFacet(address(diamond))
-            .fillBestFor(
-                _singleCurveFillBestParams(
-                    marketId, true, 1_000e6, curveId, generation, commitment, address(diamond), attacker
-                )
-            );
-
-        assertEq(collateralToken.balanceOf(address(diamond)), diamondCollateralBefore);
+        assertTrue(ok);
+        assertEq(abi.decode(data, (address)), address(0));
     }
 
     function test_CancelCurveReturnsRemainingInventory() public {
@@ -1625,5 +1575,13 @@ contract CurveCLOBTest is CurveTradingFixture {
         params = CurveCLOBTypes.CurveUpdateParams({
             curveId: curveId, newPacked: newPacked, expectedGeneration: expectedGeneration
         });
+    }
+
+    function _fillBestForSelector() internal pure returns (bytes4) {
+        return bytes4(
+            keccak256(
+                "fillBestFor((bytes32,bool,uint128,uint128,uint128,uint256[],uint32[],bytes32[],address,address))"
+            )
+        );
     }
 }

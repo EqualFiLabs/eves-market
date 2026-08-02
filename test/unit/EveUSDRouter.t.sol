@@ -17,6 +17,7 @@ contract EveUSDRouterTest is Test {
     uint256 internal constant MAX_STALENESS = 1 hours;
     uint256 internal constant COLLATERAL_RATIO_BPS = 15_000;
     uint256 internal constant RECOVERY_TRIGGER_BPS = 8_000;
+    uint256 internal constant WETH_PROFILE = 1;
     uint256 internal constant SERIES_ONE = 1;
     uint256 internal constant ONE_PAIR_COLLATERAL = 0.0006 ether;
     uint256 internal constant ONE_ETH_MINT = 1_666_666_666_666_666_666_666;
@@ -39,7 +40,7 @@ contract EveUSDRouterTest is Test {
         weth = new CanonicalWETH9();
         oracle = new MockETHUSDOracle(PRICE_WAD, MAX_STALENESS);
         (eveUSD, evRisk, pool) = _deployPool(COLLATERAL_RATIO_BPS, RECOVERY_TRIGGER_BPS);
-        router = new EveUSDRouter(address(pool), address(weth), address(eveUSD), address(evRisk));
+        router = new EveUSDRouter(address(pool), address(weth), address(eveUSD), address(evRisk), WETH_PROFILE);
         vm.deal(alice, 10 ether);
     }
 
@@ -48,10 +49,11 @@ contract EveUSDRouterTest is Test {
         assertEq(router.weth(), address(weth));
         assertEq(router.eveUSD(), address(eveUSD));
         assertEq(router.evRisk(), address(evRisk));
+        assertEq(router.wethProfileId(), WETH_PROFILE);
     }
 
     function test_DepositETHWrapsAndMintsCurrentSeriesSharesToReceivers() public {
-        IEveUSDPool.DepositPreview memory preview = pool.previewDeposit(1 ether);
+        IEveUSDPool.DepositPreview memory preview = pool.previewDeposit(WETH_PROFILE, 1 ether);
 
         vm.prank(alice);
         (uint256 seriesId, uint256 eveUSDMinted, uint256 sharesMinted) =
@@ -69,7 +71,7 @@ contract EveUSDRouterTest is Test {
     }
 
     function test_DepositWETHPullsCollateralAndMintsToReceivers() public {
-        IEveUSDPool.DepositPreview memory preview = pool.previewDeposit(2 ether);
+        IEveUSDPool.DepositPreview memory preview = pool.previewDeposit(WETH_PROFILE, 2 ether);
         _wrapAndApprove(alice, 2 ether, address(router));
 
         vm.prank(alice);
@@ -116,7 +118,7 @@ contract EveUSDRouterTest is Test {
     }
 
     function test_RevertWhen_DepositMinimumOutputIsMissed() public {
-        IEveUSDPool.DepositPreview memory preview = pool.previewDeposit(1 ether);
+        IEveUSDPool.DepositPreview memory preview = pool.previewDeposit(WETH_PROFILE, 1 ether);
 
         vm.prank(alice);
         vm.expectRevert(

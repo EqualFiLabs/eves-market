@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {LibEveMarket} from "../libraries/LibEveMarket.sol";
+import {ProductAdapterTypes} from "./ProductAdapterTypes.sol";
 
 abstract contract CurveCLOBTypes {
     struct FillBestParams {
@@ -118,6 +119,12 @@ abstract contract CurveCLOBTypes {
         uint64 createdAt;
         uint64 expiresAt;
         uint32 generation;
+        ProductAdapterTypes.CurveBackingKind backingKind;
+        ProductAdapterTypes.ProductAdapterKind adapterKind;
+        bytes32 adapterBucketId;
+        bytes32 adapterRiskDomainId;
+        bytes32 adapterDataKey;
+        bool adapterActive;
     }
 
     struct BookInfo {

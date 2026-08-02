@@ -82,8 +82,10 @@ contract ProtocolScaffoldingTest is TestBase {
                 keccak256("createMarketWithCollateralProfile(uint8,string,string,string,uint64,uint64,uint128,bool)")
             ),
             bytes4(
-                keccak256("createMarketWithCollateralProfile(uint8,string,string,string,uint64,uint64,uint128,bool)")
-            )
+                    keccak256(
+                        "createMarketWithCollateralProfile(uint8,string,string,string,uint64,uint64,uint128,bool)"
+                    )
+                )
         );
         assertEq(
             IMarketFactoryFacet.createMarketGroupFromExisting.selector,
@@ -131,14 +133,6 @@ contract ProtocolScaffoldingTest is TestBase {
             )
         );
         assertEq(
-            ICurveTradeFacet.fillBestFor.selector,
-            bytes4(
-                keccak256(
-                    "fillBestFor((bytes32,bool,uint128,uint128,uint128,uint256[],uint32[],bytes32[],address,address))"
-                )
-            )
-        );
-        assertEq(
             ICurveTradeFacet.fillBest.selector,
             bytes4(
                 keccak256(
@@ -147,7 +141,8 @@ contract ProtocolScaffoldingTest is TestBase {
             )
         );
         assertEq(
-            ICurveLifecycleFacet.updateCurveFromNow.selector, bytes4(keccak256("updateCurveFromNow(uint256,uint256,uint32)"))
+            ICurveLifecycleFacet.updateCurveFromNow.selector,
+            bytes4(keccak256("updateCurveFromNow(uint256,uint256,uint32)"))
         );
         assertEq(
             ICurveLifecycleFacet.updateCurvesFromNowBatch.selector,
@@ -316,12 +311,8 @@ contract ProtocolScaffoldingTest is TestBase {
     }
 
     function test_TestBaseWiresMockDiamondAndFixtures() public {
-        (
-            address configuredConditionalTokens,
-            address collateralToken,
-            address eve,
-            address eveTreasury
-        ) = ITestStateFacet(address(diamond)).getConfigAddresses();
+        (address configuredConditionalTokens, address collateralToken, address eve, address eveTreasury) =
+            ITestStateFacet(address(diamond)).getConfigAddresses();
 
         assertEq(configuredConditionalTokens, address(conditionalTokens));
         assertEq(collateralToken, address(usdc));

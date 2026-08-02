@@ -3,7 +3,9 @@ pragma solidity ^0.8.28;
 
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
+import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {TradeRouterFacet} from "../../src/facets/TradeRouterFacet.sol";
+import {TradeRouterSellFacet} from "../../src/facets/TradeRouterSellFacet.sol";
 import {IBookAdminFacet} from "../../src/interfaces/IBookAdminFacet.sol";
 import {IBookOrderFacet} from "../../src/interfaces/IBookOrderFacet.sol";
 import {IBookTradeFacet} from "../../src/interfaces/IBookTradeFacet.sol";
@@ -34,7 +36,9 @@ contract GenericCLOBTest is CurveTradingFixture {
         shareToken = new ParimutuelShareToken(address(diamond), "uri://parimutuel/{id}");
 
         _addFacet(address(parimutuelFacet), _parimutuelSelectors());
+        _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
         _addFacet(address(new TradeRouterFacet()), _tradeRouterSelectors());
+        _addFacet(address(new TradeRouterSellFacet()), _tradeRouterSellSelectors());
         ResolutionHarnessFacet(address(diamond)).setParimutuelConfig(address(shareToken), 0, 1);
 
         vm.startPrank(owner);
@@ -52,15 +56,10 @@ contract GenericCLOBTest is CurveTradingFixture {
         _approveCreator(creationFee);
 
         vm.prank(creator);
-        bytes32 marketId = IMarketFactoryFacet(address(diamond)).createMarket(
-            "scheduled clob",
-            "scheduled",
-            DEFAULT_RESOLUTION_SOURCE,
-            tradingStartTime,
-            expiryTime,
-            0,
-            true
-        );
+        bytes32 marketId = IMarketFactoryFacet(address(diamond))
+            .createMarket(
+                "scheduled clob", "scheduled", DEFAULT_RESOLUTION_SOURCE, tradingStartTime, expiryTime, 0, true
+            );
 
         (,,,,,, uint8 state,) = StateProbeFacet(address(diamond)).getStoredMarketStatus(marketId);
         assertEq(state, uint8(LibEveMarket.MarketState.Scheduled));
@@ -315,14 +314,15 @@ contract GenericCLOBTest is CurveTradingFixture {
         _approveCreatorWithEve(StateProbeFacet(address(diamond)).marketCreationFee(), type(uint256).max);
 
         vm.prank(creator);
-        marketId = IParimutuelFacet(address(diamond)).createParimutuelMarket(
-            "generic clob parimutuel",
-            "generic-clob",
-            DEFAULT_RESOLUTION_SOURCE,
-            uint64(block.timestamp),
-            uint64(block.timestamp + 7 days),
-            7 days
-        );
+        marketId = IParimutuelFacet(address(diamond))
+            .createParimutuelMarket(
+                "generic clob parimutuel",
+                "generic-clob",
+                DEFAULT_RESOLUTION_SOURCE,
+                uint64(block.timestamp),
+                uint64(block.timestamp + 7 days),
+                7 days
+            );
 
         (,,,, yesPositionId, noPositionId) = StateProbeFacet(address(diamond)).getStoredMarketCore(marketId);
         (uint8 marketType, address positionToken) =
@@ -353,14 +353,18 @@ contract GenericCLOBTest is CurveTradingFixture {
     }
 
     function _tradeRouterSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](4);
         selectors[0] = ITradeRouter.buyWithEveUSDC.selector;
         selectors[1] = ITradeRouter.buyWithUSDC.selector;
-        selectors[2] = ITradeRouter.sellWithEveUSDC.selector;
-        selectors[3] = ITradeRouter.sellWithUSDC.selector;
-        selectors[4] = ITradeRouter.previewSellBest.selector;
-        selectors[5] = ITradeRouter.splitWithUSDC.selector;
-        selectors[6] = ITradeRouter.buyWithCollateral.selector;
-        selectors[7] = ITradeRouter.sellWithCollateral.selector;
+        selectors[2] = ITradeRouter.splitWithUSDC.selector;
+        selectors[3] = ITradeRouter.buyWithCollateral.selector;
+    }
+
+    function _tradeRouterSellSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = ITradeRouter.sellWithEveUSDC.selector;
+        selectors[1] = ITradeRouter.sellWithUSDC.selector;
+        selectors[2] = ITradeRouter.previewSellBest.selector;
+        selectors[3] = ITradeRouter.sellWithCollateral.selector;
     }
 }

@@ -15,8 +15,4 @@ interface ICurveTradeFacet {
     function fillBest(CurveCLOBTypes.FillBestParams calldata params)
         external
         returns (CurveCLOBTypes.FillBestResult memory result);
-
-    function fillBestFor(CurveCLOBTypes.FillBestParams calldata params)
-        external
-        returns (CurveCLOBTypes.FillBestResult memory result);
 }

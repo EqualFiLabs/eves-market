@@ -8,6 +8,8 @@ import {LibCTF} from "./LibCTF.sol";
 import {LibCurveMath} from "./LibCurveMath.sol";
 import {LibCurvePacking} from "./LibCurvePacking.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
+import {LibProductAdapter} from "./LibProductAdapter.sol";
+import {ProductAdapterTypes} from "../types/ProductAdapterTypes.sol";
 
 library LibCLOBView {
     enum PreviewRouteMode {
@@ -40,6 +42,8 @@ library LibCLOBView {
 
         LibEveMarket.Book storage book = state.books[curve.bookId];
         LibCurvePacking.CurveParams memory params = LibCurvePacking.unpack(curve.packed);
+        ProductAdapterTypes.AdapterCurveMetadata memory adapterMetadata =
+            LibProductAdapter.adapterCurveMetadata(state, curveId);
 
         info = CurveCLOBTypes.CurveInfo({
             curveId: curveId,
@@ -64,7 +68,13 @@ library LibCLOBView {
             packed: curve.packed,
             createdAt: curve.createdAt,
             expiresAt: LibCurveMath.expiresAt(state, curve, params.durationMinutes),
-            generation: curve.generation
+            generation: curve.generation,
+            backingKind: adapterMetadata.backingKind,
+            adapterKind: adapterMetadata.adapterKind,
+            adapterBucketId: adapterMetadata.bucketId,
+            adapterRiskDomainId: adapterMetadata.riskDomainId,
+            adapterDataKey: adapterMetadata.adapterDataKey,
+            adapterActive: adapterMetadata.active
         });
     }
 

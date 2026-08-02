@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
+/// @notice Deprecated vault-share lending interface retained for transition to the senior margin pool.
 interface ISEveUSDCLending {
     struct Loan {
         address borrower;

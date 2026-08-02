@@ -24,6 +24,7 @@ import {LibRouter} from "./libraries/LibRouter.sol";
 import {MarketFactoryTypes} from "./types/MarketFactoryTypes.sol";
 
 /// @notice Standalone maker-lending router for deposit-borrow-position workflows kept outside the diamond.
+/// @dev Deprecated directionally; retained until the senior margin pool replaces vault-share lending.
 contract MakerLendingRouter is ReentrancyGuard, IERC1155Receiver, IMakerLendingRouter {
     using SafeERC20 for IERC20;
 

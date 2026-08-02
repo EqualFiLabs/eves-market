@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {MarketFactoryFacet} from "../../src/facets/MarketFactoryFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {ParimutuelFacet} from "../../src/facets/ParimutuelFacet.sol";
+import {ParimutuelViewFacet} from "../../src/facets/ParimutuelViewFacet.sol";
 import {Vm} from "../../lib/forge-std/src/Vm.sol";
 import {Base64} from "../../lib/openzeppelin-contracts/contracts/utils/Base64.sol";
 import {IMarketFactoryFacet} from "../../src/interfaces/IMarketFactoryFacet.sol";
@@ -51,6 +52,7 @@ contract ParimutuelFacetTest is ResolutionFixture {
         eveETH = new EveETH(address(weth));
 
         _addFacet(address(parimutuelFacet), _parimutuelSelectors());
+        _addFacet(address(new ParimutuelViewFacet()), _parimutuelViewSelectors());
 
         vm.startPrank(owner);
         OwnershipFacet(address(diamond)).setParimutuelFeeSplit(500, 1_000, 8_500);

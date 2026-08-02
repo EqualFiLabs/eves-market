@@ -20,6 +20,7 @@ library LibBookAccounting {
         uint128 makerFeeShare;
         uint128 creatorFeeShare;
         uint128 vaultFeeShare;
+        uint128 secondaryVaultFeeShare;
         uint128 treasuryFeeShare;
         uint128 processorFeeShare;
         address processor;
@@ -42,17 +43,20 @@ library LibBookAccounting {
 
         fees.makerFeeShare = uint128((remainingFee * feeConfig.makerFeeBps) / FEE_BPS_DENOMINATOR);
         fees.creatorFeeShare = uint128((remainingFee * feeConfig.creatorFeeBps) / FEE_BPS_DENOMINATOR);
-        fees.vaultFeeShare = uint128((remainingFee * feeConfig.vaultFeeBps) / FEE_BPS_DENOMINATOR);
-        fees.treasuryFeeShare = uint128(remainingFee - fees.makerFeeShare - fees.creatorFeeShare - fees.vaultFeeShare);
+        uint128 rawVaultFeeShare = uint128((remainingFee * feeConfig.vaultFeeBps) / FEE_BPS_DENOMINATOR);
+        fees.treasuryFeeShare = uint128(remainingFee - fees.makerFeeShare - fees.creatorFeeShare - rawVaultFeeShare);
 
         if (!state.config.permissionlessCreationEnabled && book.marketId != bytes32(0)) {
             fees.treasuryFeeShare += fees.creatorFeeShare;
             fees.creatorFeeShare = 0;
         }
-        if (!LibFeeRouting.canRouteVaultFee(state.config.stakingVault, book.quoteToken)) {
-            fees.treasuryFeeShare += fees.vaultFeeShare;
-            fees.vaultFeeShare = 0;
-        }
+
+        LibFeeRouting.VaultFeeRoute memory route = LibFeeRouting.previewVaultFeeRoute(
+            state.config.stakingVault, state.config.secondaryStakingVault, book.quoteToken, rawVaultFeeShare
+        );
+        fees.vaultFeeShare = uint128(route.primaryAmount);
+        fees.secondaryVaultFeeShare = uint128(route.secondaryAmount);
+        fees.treasuryFeeShare += uint128(route.treasuryAmount);
     }
 
     function payBookQuoteFees(
@@ -70,6 +74,11 @@ library LibBookAccounting {
         if (fees.vaultFeeShare != 0) {
             quoteToken.forceApprove(state.config.stakingVault, fees.vaultFeeShare);
             ISEveUSDCVault(state.config.stakingVault).notifyRevenue(book.quoteToken, fees.vaultFeeShare);
+        }
+        if (fees.secondaryVaultFeeShare != 0) {
+            quoteToken.forceApprove(state.config.secondaryStakingVault, fees.secondaryVaultFeeShare);
+            ISEveUSDCVault(state.config.secondaryStakingVault)
+                .notifyRevenue(book.quoteToken, fees.secondaryVaultFeeShare);
         }
     }
 

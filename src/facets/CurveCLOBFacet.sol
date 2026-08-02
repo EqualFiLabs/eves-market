@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import {CurveCLOBTypes} from "../types/CurveCLOBTypes.sol";
 import {LibBuyExecution} from "../libraries/LibBuyExecution.sol";
-import {Errors} from "../libraries/Errors.sol";
 import {LibReentrancy} from "../libraries/LibReentrancy.sol";
 
 contract CurveCLOBFacet is CurveCLOBTypes {
@@ -29,18 +28,5 @@ contract CurveCLOBFacet is CurveCLOBTypes {
         FillBestParams memory requestParams = params;
         requestParams.payer = msg.sender;
         result = LibBuyExecution.fillBest(requestParams, LibBuyExecution.FillMode.RouteOrder);
-    }
-
-    function fillBestFor(FillBestParams calldata params) external returns (FillBestResult memory result) {
-        _enforceSelfCall();
-
-        FillBestParams memory requestParams = params;
-        result = LibBuyExecution.fillBest(requestParams, LibBuyExecution.FillMode.RouteOrder);
-    }
-
-    function _enforceSelfCall() internal view {
-        if (msg.sender != address(this)) {
-            revert Errors.InternalCallOnly(msg.sender);
-        }
     }
 }

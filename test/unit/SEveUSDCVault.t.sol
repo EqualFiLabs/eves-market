@@ -44,6 +44,8 @@ contract MockReentrantAsset is ERC20 {
 contract SEveUSDCVaultTest is VaultTestBase {
     event RevenueNotified(address indexed caller, uint256 assets);
     event RewardRevenueNotified(address indexed caller, address indexed token, uint256 amount);
+    event AssetRevenueSponsored(address indexed sponsor, uint256 assets);
+    event RewardSponsored(address indexed sponsor, address indexed token, uint256 amount);
     event RewardTokenRegistered(address indexed token, address indexed registrant, uint256 fee);
     event RewardTokenStatusDisabled(address indexed token);
     event RewardsClaimed(address indexed account, address indexed receiver, address indexed token, uint256 amount);
@@ -70,6 +72,12 @@ contract SEveUSDCVaultTest is VaultTestBase {
         vm.prank(revenueNotifier);
         vm.expectRevert(ISEveUSDCVault.ZeroAmount.selector);
         vault.notifyRevenue(0);
+
+        vm.expectRevert(ISEveUSDCVault.ZeroAmount.selector);
+        vault.sponsorAssetRevenue(0);
+
+        vm.expectRevert(ISEveUSDCVault.ZeroAmount.selector);
+        vault.sponsorReward(address(usdc), 0);
     }
 
     function test_RevertWhen_WithdrawOrRedeemExceedsOwnerShares() public {
@@ -156,6 +164,17 @@ contract SEveUSDCVaultTest is VaultTestBase {
         eveUSDC.approve(address(vault), assets);
         vm.expectRevert(ISEveUSDCVault.VaultUninitialized.selector);
         vault.notifyRevenue(assets);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_SponsorAssetRevenueBeforeBootstrap() public {
+        uint256 assets = 100e6;
+        _seedEveUSDC(alice, assets);
+
+        vm.startPrank(alice);
+        eveUSDC.approve(address(vault), assets);
+        vm.expectRevert(ISEveUSDCVault.VaultUninitialized.selector);
+        vault.sponsorAssetRevenue(assets);
         vm.stopPrank();
     }
 
@@ -321,6 +340,33 @@ contract SEveUSDCVaultTest is VaultTestBase {
         vm.stopPrank();
     }
 
+    function test_SponsorAssetRevenueRaisesShareValueWithoutMintingShares() public {
+        vault = _deployVault(0);
+
+        uint256 aliceDeposit = 100e6;
+        uint256 sponsoredAssets = 20e6;
+        uint256 aliceShares = _depositSeeded(alice, aliceDeposit, alice);
+        _seedEveUSDC(carol, sponsoredAssets);
+
+        uint256 supplyBefore = vault.totalSupply();
+        uint256 assetsBefore = vault.totalAssets();
+
+        vm.startPrank(carol);
+        eveUSDC.approve(address(vault), sponsoredAssets);
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit AssetRevenueSponsored(carol, sponsoredAssets);
+        vault.sponsorAssetRevenue(sponsoredAssets);
+        vm.stopPrank();
+
+        assertEq(vault.totalSupply(), supplyBefore);
+        assertEq(vault.totalAssets(), assetsBefore + sponsoredAssets);
+
+        vm.prank(alice);
+        uint256 aliceAssetsOut = vault.redeem(aliceShares, alice, alice);
+
+        assertApproxEqAbs(aliceAssetsOut, aliceDeposit + sponsoredAssets, 1_000);
+    }
+
     function test_RegisterRewardTokenPaysRegistrationFeeToTreasury() public {
         _depositSeeded(alice, 100e6, alice);
         uint256 registrationFee = vault.rewardTokenRegistrationFee();
@@ -372,6 +418,27 @@ contract SEveUSDCVaultTest is VaultTestBase {
         assertEq(usdc.balanceOf(receiver) - aliceBefore, 10e6);
         assertEq(vault.previewRewards(alice, address(usdc)), 0);
         assertEq(vault.rewardLiability(address(usdc)), 30e6);
+    }
+
+    function test_SponsorRewardIsPermissionlessAndClaimableProRata() public {
+        _depositSeeded(alice, 100e6, alice);
+        _depositSeeded(bob, 300e6, bob);
+        _registerUsdcRewardToken(alice);
+
+        uint256 rewardAmount = 40e6;
+        usdc.mint(carol, rewardAmount);
+
+        vm.startPrank(carol);
+        usdc.approve(address(vault), rewardAmount);
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit RewardSponsored(carol, address(usdc), rewardAmount);
+        uint256 received = vault.sponsorReward(address(usdc), rewardAmount);
+        vm.stopPrank();
+
+        assertEq(received, rewardAmount);
+        assertEq(vault.previewRewards(alice, address(usdc)), 10e6);
+        assertEq(vault.previewRewards(bob, address(usdc)), 30e6);
+        assertEq(vault.rewardLiability(address(usdc)), rewardAmount);
     }
 
     function test_RewardCheckpointingPreservesAccrualAcrossShareTransfers() public {
@@ -428,6 +495,21 @@ contract SEveUSDCVaultTest is VaultTestBase {
         assertEq(usdc.balanceOf(alice), 10e6);
     }
 
+    function test_RevertWhen_DisabledRewardTokenIsSponsored() public {
+        _depositSeeded(alice, 100e6, alice);
+        _registerUsdcRewardToken(alice);
+
+        vm.prank(owner);
+        vault.disableRewardToken(address(usdc));
+
+        usdc.mint(carol, 1e6);
+        vm.startPrank(carol);
+        usdc.approve(address(vault), 1e6);
+        vm.expectRevert(abi.encodeWithSelector(ISEveUSDCVault.RewardTokenDisabled.selector, address(usdc)));
+        vault.sponsorReward(address(usdc), 1e6);
+        vm.stopPrank();
+    }
+
     function test_RevertWhen_UnregisteredRewardTokenRevenueIsNotified() public {
         _depositSeeded(alice, 100e6, alice);
         usdc.mint(revenueNotifier, 1e6);
@@ -436,6 +518,28 @@ contract SEveUSDCVaultTest is VaultTestBase {
         usdc.approve(address(vault), 1e6);
         vm.expectRevert(abi.encodeWithSelector(ISEveUSDCVault.RewardTokenNotActive.selector, address(usdc)));
         vault.notifyRevenue(address(usdc), 1e6);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_UnregisteredRewardTokenIsSponsored() public {
+        _depositSeeded(alice, 100e6, alice);
+        usdc.mint(carol, 1e6);
+
+        vm.startPrank(carol);
+        usdc.approve(address(vault), 1e6);
+        vm.expectRevert(abi.encodeWithSelector(ISEveUSDCVault.RewardTokenNotActive.selector, address(usdc)));
+        vault.sponsorReward(address(usdc), 1e6);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_AssetTokenIsSponsoredAsClaimableReward() public {
+        _depositSeeded(alice, 100e6, alice);
+        _seedEveUSDC(carol, 1e6);
+
+        vm.startPrank(carol);
+        eveUSDC.approve(address(vault), 1e6);
+        vm.expectRevert(abi.encodeWithSelector(ISEveUSDCVault.AssetRewardMustUseAssetRevenue.selector, address(eveUSDC)));
+        vault.sponsorReward(address(eveUSDC), 1e6);
         vm.stopPrank();
     }
 
