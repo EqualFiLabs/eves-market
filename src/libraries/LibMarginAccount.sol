@@ -9,6 +9,7 @@ import {IMLOProfitShareFacet} from "../interfaces/IMLOProfitShareFacet.sol";
 import {LibEveMarket} from "./LibEveMarket.sol";
 import {LibRiskEngine} from "./LibRiskEngine.sol";
 import {LibMLOProfitShare} from "./LibMLOProfitShare.sol";
+import {LibSeniorCapital} from "./LibSeniorCapital.sol";
 import {MarginTypes} from "../types/MarginTypes.sol";
 import {MLOProfitShareTypes} from "../types/MLOProfitShareTypes.sol";
 
@@ -33,13 +34,24 @@ library LibMarginAccount {
             revert IMarginAccountFacet.ContractHasNoCode(asset);
         }
         address previousAsset = state.marginAsset;
+        if (previousAsset == asset) return;
         if (previousAsset != address(0)) {
-            if (previousAsset != asset) revert IMarginAccountFacet.MarginAssetImmutable(previousAsset, asset);
-            return;
+            uint256 liabilities = _marginAssetLiabilities(state);
+            if (liabilities != 0) revert IMarginAccountFacet.MarginAssetInUse(liabilities);
         }
         state.marginAsset = asset;
 
         emit IMarginAccountFacet.MarginAssetSet(previousAsset, asset);
+    }
+
+    function _marginAssetLiabilities(LibEveMarket.EveMarketStorage storage state)
+        private
+        view
+        returns (uint256 liabilities)
+    {
+        LibSeniorCapital.Storage storage senior = LibSeniorCapital.s();
+        liabilities = state.totalMarginLiabilities + senior.pendingPrincipal + senior.totalPrincipal
+            + senior.totalExitClaims + senior.totalFeeReserve + LibMLOProfitShare.s().totalSeniorRewardReserve;
     }
 
     function setWarningRiskIncreaseAllowed(LibEveMarket.EveMarketStorage storage state, bool allowed) internal {

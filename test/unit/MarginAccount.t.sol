@@ -564,7 +564,7 @@ contract MarginAccountTest is TestBase {
         assertFalse(IMarginAccountFacet(address(diamond)).canBucketIncreaseRisk(bucketId));
     }
 
-    function test_MarginAssetBindingIsImmutable() public {
+    function test_MarginAssetReplacementRequiresSettledLiabilities() public {
         _fundCollateral(maker, 1e6);
 
         vm.startPrank(maker);
@@ -575,16 +575,15 @@ contract MarginAccountTest is TestBase {
         MockCollateral otherAsset = new MockCollateral();
 
         vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IProductionMarginAccountFacet.MarginAssetImmutable.selector, address(collateral), address(otherAsset)
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IProductionMarginAccountFacet.MarginAssetInUse.selector, 1e18));
         IMarginAccountFacet(address(diamond)).setMarginAsset(address(otherAsset));
 
+        vm.prank(maker);
+        IMarginAccountFacet(address(diamond)).withdrawMargin(1e18, maker);
+
         vm.prank(owner);
-        IMarginAccountFacet(address(diamond)).setMarginAsset(address(collateral));
-        assertEq(IMarginAccountFacet(address(diamond)).marginConfig().marginAsset, address(collateral));
+        IMarginAccountFacet(address(diamond)).setMarginAsset(address(otherAsset));
+        assertEq(IMarginAccountFacet(address(diamond)).marginConfig().marginAsset, address(otherAsset));
     }
 
     function test_RecordProfitIsBackedAndLossReducesClaims() public {
