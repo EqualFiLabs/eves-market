@@ -251,7 +251,8 @@ contract ComboCoreFacet is IComboCoreFacet {
             IGnosisConditionalTokens(metadata.positionToken)
                 .splitPosition(collateral, bytes32(0), metadata.conditionId, _binaryPartition(), amount);
             collateral.forceApprove(metadata.positionToken, 0);
-        } else if (metadata.settlementAdapter == state.negRiskAdapter) {
+            // Route by the position's snapshotted module, not the replaceable global adapter.
+        } else if (state.nativePositionMetadata[leg].moduleId == LibNativePosition.MODULE_NEGRISK) {
             collateral.forceApprove(metadata.settlementAdapter, amount);
             IEvesNegRiskAdapter(metadata.settlementAdapter).splitPosition(metadata.conditionId, amount);
             collateral.forceApprove(metadata.settlementAdapter, 0);
@@ -288,7 +289,8 @@ contract ComboCoreFacet is IComboCoreFacet {
                 .mergePositions(
                     IERC20(metadata.collateralToken), bytes32(0), metadata.conditionId, _binaryPartition(), amount
                 );
-        } else if (metadata.settlementAdapter == state.negRiskAdapter) {
+            // Route by the position's snapshotted module, not the replaceable global adapter.
+        } else if (state.nativePositionMetadata[leg].moduleId == LibNativePosition.MODULE_NEGRISK) {
             IERC1155(metadata.positionToken).setApprovalForAll(metadata.settlementAdapter, true);
             IEvesNegRiskAdapter(metadata.settlementAdapter).mergePositions(metadata.conditionId, amount);
             IERC1155(metadata.positionToken).setApprovalForAll(metadata.settlementAdapter, false);

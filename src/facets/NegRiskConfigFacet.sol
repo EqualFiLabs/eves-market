@@ -17,10 +17,6 @@ contract NegRiskConfigFacet is INegRiskConfigFacet {
         if (adapter == address(0)) revert Errors.ZeroAddress();
 
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        if (state.negRiskAdapter != address(0)) {
-            revert Errors.NegRiskAdapterAlreadyConfigured(state.negRiskAdapter);
-        }
-
         IEvesNegRiskAdapter configuredAdapter = IEvesNegRiskAdapter(adapter);
         if (
             configuredAdapter.oracle() != address(this)
@@ -42,9 +38,6 @@ contract NegRiskConfigFacet is INegRiskConfigFacet {
         if (adapter == address(0)) revert Errors.ZeroAddress();
 
         LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
-        if (state.ctfSettlementAdapter != address(0)) {
-            revert Errors.CTFSettlementAdapterAlreadyConfigured(state.ctfSettlementAdapter);
-        }
         IEvesCTFSettlementAdapter configuredAdapter = IEvesCTFSettlementAdapter(adapter);
         if (
             configuredAdapter.conditionalTokens() != state.config.defaultConditionalTokens

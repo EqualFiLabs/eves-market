@@ -232,7 +232,6 @@ library Errors {
     error NativePositionConditionMismatch(uint256 positionId, bytes32 expectedConditionId, bytes32 actualConditionId);
     error EvesPositionManagerAlreadyConfigured(address currentManager);
     error EvesPositionManagerDiamondMismatch(address manager, address expectedDiamond, address actualDiamond);
-    error NegRiskAdapterAlreadyConfigured(address currentAdapter);
     error NegRiskAdapterConfigMismatch(address adapter);
 
     error ComboConditionNotFound(bytes32 conditionId);
@@ -244,7 +243,6 @@ library Errors {
     error ComboLegMarketResolved(bytes32 marketId);
     error ComboUnsupportedPosition(uint256 positionId);
     error ComboCTFEscrowInsufficient(uint256 positionId, uint256 available, uint256 required);
-    error CTFSettlementAdapterAlreadyConfigured(address adapter);
     error ComboCollateralMismatch(address expectedCollateral, address actualCollateral);
     error ComboCollateralProfileMismatch(uint8 expectedProfileId, uint8 actualProfileId);
     error ComboPositionNotRedeemable(uint256 positionId);

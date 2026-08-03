@@ -8,12 +8,17 @@ import {IERC1155Receiver} from "../../lib/openzeppelin-contracts/contracts/token
 import {ComboCoreFacet} from "../../src/facets/native/ComboCoreFacet.sol";
 import {ComboSettlementFacet} from "../../src/facets/native/ComboSettlementFacet.sol";
 import {ComboMarketFacet} from "../../src/facets/native/ComboMarketFacet.sol";
+import {NegRiskConfigFacet} from "../../src/facets/NegRiskConfigFacet.sol";
 import {IComboCoreFacet} from "../../src/interfaces/IComboCoreFacet.sol";
 import {IComboSettlementFacet} from "../../src/interfaces/IComboSettlementFacet.sol";
 import {IComboMarketFacet} from "../../src/interfaces/IComboMarketFacet.sol";
+import {IEvesNegRiskAdapter} from "../../src/interfaces/IEvesNegRiskAdapter.sol";
+import {INegRiskConfigFacet} from "../../src/interfaces/INegRiskConfigFacet.sol";
 import {EvesCTFSettlementAdapter} from "../../src/EvesCTFSettlementAdapter.sol";
+import {EvesNegRiskAdapter} from "../../src/EvesNegRiskAdapter.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
 import {LibMarketMetadata} from "../../src/libraries/LibMarketMetadata.sol";
+import {LibNativePosition} from "../../src/libraries/LibNativePosition.sol";
 import {EvesPositionManager} from "../../src/tokens/EvesPositionManager.sol";
 import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {PlainGnosisCTFMock} from "../helpers/PlainGnosisCTFMock.sol";
@@ -66,6 +71,73 @@ contract ComboCTFCustodyStateFacet {
         payouts[0] = yesPayout;
         payouts[1] = noPayout;
         PlainGnosisCTFMock(LibEveMarket.store().config.defaultConditionalTokens).reportPayouts(questionId, payouts);
+    }
+
+    function seedNegRiskMarket(address adapter, bytes32 marketId, bytes32 eventKey)
+        external
+        returns (bytes32 eventId, bytes32 conditionId, uint256 yesPositionId, uint256 noPositionId)
+    {
+        LibEveMarket.EveMarketStorage storage state = LibEveMarket.store();
+        IEvesNegRiskAdapter negRisk = IEvesNegRiskAdapter(adapter);
+        eventId = negRisk.prepareEvent(eventKey, 2);
+        conditionId = negRisk.conditionIdFor(eventId, 0);
+        yesPositionId = negRisk.positionIdFor(eventId, 0, true);
+        noPositionId = negRisk.positionIdFor(eventId, 0, false);
+
+        LibEveMarket.Market storage market = state.markets[marketId];
+        market.marketId = marketId;
+        market.creator = address(this);
+        market.collateralToken = state.config.collateralToken;
+        market.questionId = eventKey;
+        market.conditionId = eventId;
+        market.yesPositionId = yesPositionId;
+        market.noPositionId = noPositionId;
+        market.tradingStartTime = uint64(block.timestamp);
+        market.expiryTime = uint64(block.timestamp + 30 days);
+        market.state = LibEveMarket.MarketState.Trading;
+        market.marketType = LibEveMarket.MarketType.MULTI_OUTCOME_ORDERBOOK;
+        market.positionTokenType = LibEveMarket.PositionTokenType.CTF;
+        market.positionToken = state.config.defaultConditionalTokens;
+        market.payoutUnit = 1e6;
+
+        state.nativePositionMetadata[yesPositionId] = LibEveMarket.NativePositionMetadata({
+            moduleId: LibNativePosition.MODULE_NEGRISK,
+            conditionId: conditionId,
+            outcomeIndex: LibNativePosition.OUTCOME_YES,
+            marketId: marketId,
+            exists: true
+        });
+        state.nativePositionMetadata[noPositionId] = LibEveMarket.NativePositionMetadata({
+            moduleId: LibNativePosition.MODULE_NEGRISK,
+            conditionId: conditionId,
+            outcomeIndex: LibNativePosition.OUTCOME_NO,
+            marketId: marketId,
+            exists: true
+        });
+        state.ctfPositionMetadata[yesPositionId] = LibEveMarket.CTFPositionMetadata({
+            positionToken: state.config.defaultConditionalTokens,
+            collateralToken: state.config.collateralToken,
+            settlementAdapter: adapter,
+            conditionId: conditionId,
+            complementPositionId: noPositionId,
+            payoutUnit: 1e6,
+            exists: true
+        });
+        state.ctfPositionMetadata[noPositionId] = LibEveMarket.CTFPositionMetadata({
+            positionToken: state.config.defaultConditionalTokens,
+            collateralToken: state.config.collateralToken,
+            settlementAdapter: adapter,
+            conditionId: conditionId,
+            complementPositionId: yesPositionId,
+            payoutUnit: 1e6,
+            exists: true
+        });
+        state.ctfConditionYesPositionId[conditionId] = yesPositionId;
+        state.ctfConditionNoPositionId[conditionId] = noPositionId;
+    }
+
+    function resolveNegRiskEvent(address adapter, bytes32 eventId, uint256 outcome) external {
+        IEvesNegRiskAdapter(adapter).resolveEvent(eventId, outcome);
     }
 
     function escrowed(uint256 positionId) external view returns (uint256) {
@@ -159,6 +231,7 @@ contract ComboCTFCustodyTest is DiamondFixture {
         _addFacet(address(new ComboCoreFacet()), _comboCoreSelectors());
         _addFacet(address(new ComboSettlementFacet()), _comboSettlementSelectors());
         _addFacet(address(new ComboMarketFacet()), _comboMarketSelectors());
+        _addFacet(address(new NegRiskConfigFacet()), _negRiskConfigSelectors());
         _addFacet(address(custodyStateFacet), _custodyStateSelectors());
         positions = new EvesPositionManager(address(diamond), "");
         ComboCTFCustodyStateFacet(address(diamond))
@@ -225,6 +298,44 @@ contract ComboCTFCustodyTest is DiamondFixture {
         assertEq(collateral.balanceOf(alice), beforeBalance);
         assertEq(ComboCTFCustodyStateFacet(address(diamond)).escrowed(aYes), 0);
         assertEq(ComboCTFCustodyStateFacet(address(diamond)).escrowed(aNo), 0);
+    }
+
+    function test_HistoricalNegRiskComboRoutingSurvivesAdapterRotation() public {
+        EvesNegRiskAdapter historicalAdapter =
+            new EvesNegRiskAdapter(address(ctf), address(collateral), address(diamond));
+        EvesNegRiskAdapter replacementAdapter =
+            new EvesNegRiskAdapter(address(ctf), address(collateral), address(diamond));
+
+        vm.prank(owner);
+        INegRiskConfigFacet(address(diamond)).setNegRiskAdapter(address(historicalAdapter));
+
+        bytes32 historicalMarket = keccak256("historical-neg-risk-market");
+        (bytes32 eventId,, uint256 yesPositionId,) = ComboCTFCustodyStateFacet(address(diamond))
+            .seedNegRiskMarket(address(historicalAdapter), historicalMarket, keccak256("historical-event"));
+        uint256[] memory legs = _single(yesPositionId);
+        (bytes32 comboCondition, uint256 comboYes,) = IComboCoreFacet(address(diamond)).prepareComboCondition(legs);
+
+        vm.startPrank(alice);
+        collateral.approve(address(diamond), 2 * AMOUNT);
+        IComboCoreFacet(address(diamond)).splitCombo(comboCondition, AMOUNT, alice, alice);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        INegRiskConfigFacet(address(diamond)).setNegRiskAdapter(address(replacementAdapter));
+
+        vm.startPrank(alice);
+        IComboCoreFacet(address(diamond)).splitCombo(comboCondition, AMOUNT, alice, alice);
+        IComboCoreFacet(address(diamond)).mergeCombo(comboCondition, AMOUNT, alice);
+        vm.stopPrank();
+
+        ComboCTFCustodyStateFacet(address(diamond)).resolveNegRiskEvent(address(historicalAdapter), eventId, 0);
+        uint256 balanceBefore = collateral.balanceOf(alice);
+        vm.prank(alice);
+        uint128 payout = IComboSettlementFacet(address(diamond)).redeemCombo(comboYes, AMOUNT, alice);
+
+        assertEq(payout, AMOUNT);
+        assertEq(collateral.balanceOf(alice) - balanceBefore, AMOUNT);
+        assertEq(INegRiskConfigFacet(address(diamond)).negRiskAdapter(), address(replacementAdapter));
     }
 
     function test_PartialSingleLegRedemptionConsumesOnlyRequestedCTFBacking() public {
@@ -365,11 +476,19 @@ contract ComboCTFCustodyTest is DiamondFixture {
         selectors[4] = IComboMarketFacet.getComboBook.selector;
     }
 
+    function _negRiskConfigSelectors() internal pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = INegRiskConfigFacet.setNegRiskAdapter.selector;
+        selectors[1] = INegRiskConfigFacet.negRiskAdapter.selector;
+    }
+
     function _custodyStateSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](6);
         selectors[0] = ComboCTFCustodyStateFacet.configure.selector;
         selectors[1] = ComboCTFCustodyStateFacet.seedCTFMarket.selector;
         selectors[2] = ComboCTFCustodyStateFacet.reportPayouts.selector;
         selectors[3] = ComboCTFCustodyStateFacet.escrowed.selector;
+        selectors[4] = ComboCTFCustodyStateFacet.seedNegRiskMarket.selector;
+        selectors[5] = ComboCTFCustodyStateFacet.resolveNegRiskEvent.selector;
     }
 }

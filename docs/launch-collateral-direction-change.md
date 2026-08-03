@@ -41,6 +41,19 @@ StaticsDiamond gateway ----------------> StaticsDollarCoreDiamond
 - Eve stores the Core, the Diamond and token derived from that Core, the USDG
   token, and the pegged profile ID needed to identify the rail.
 
+## Governance reconfiguration
+
+The configured margin asset, NegRisk adapter, and CTF settlement adapter may be
+replaced only through the Diamond's finalized calldata timelock. Margin-asset
+replacement additionally requires all user-margin, Senior principal, exit,
+fee, and MLO Senior-reward liabilities to be settled first.
+
+Existing markets and CTF positions retain their stored collateral and adapter
+addresses. Adapter rotation therefore affects new markets without changing the
+settlement route for historical positions. A margin-asset migration must also
+stage the matching collateral, Statics Core, and MLO insurance configuration;
+governance should keep new exposure disabled until that sequence is complete.
+
 ## Deployment inputs
 
 Production launch requires explicit values for:

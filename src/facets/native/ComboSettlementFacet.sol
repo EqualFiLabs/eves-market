@@ -97,7 +97,8 @@ contract ComboSettlementFacet is IComboSettlementFacet {
 
         IERC1155(ctfMetadata.positionToken).setApprovalForAll(ctfMetadata.settlementAdapter, true);
         uint256 actualPayout;
-        if (ctfMetadata.settlementAdapter == state.negRiskAdapter) {
+        // Historical positions keep their adapter, so classification cannot use the current global pointer.
+        if (state.nativePositionMetadata[underlyingPositionId].moduleId == LibNativePosition.MODULE_NEGRISK) {
             actualPayout = IEvesNegRiskAdapter(ctfMetadata.settlementAdapter)
                 .redeemPositions(ctfMetadata.conditionId, amounts, receiver);
         } else {

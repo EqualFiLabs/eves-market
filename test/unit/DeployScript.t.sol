@@ -9,6 +9,8 @@ import {IStaticsDollarCore} from "@statics/dollar/core/interfaces/IStaticsDollar
 import {IStaticsDollarCoreTypes} from "@statics/dollar/interfaces/IStaticsDollarCoreTypes.sol";
 
 import {Faucet} from "../../src/Faucet.sol";
+import {EvesCTFSettlementAdapter} from "../../src/EvesCTFSettlementAdapter.sol";
+import {EvesNegRiskAdapter} from "../../src/EvesNegRiskAdapter.sol";
 import {MLOInsuranceFund} from "../../src/MLOInsuranceFund.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {DiamondLoupeFacet} from "../../src/facets/DiamondLoupeFacet.sol";
@@ -47,6 +49,7 @@ import {IComboMarketFacet} from "../../src/interfaces/IComboMarketFacet.sol";
 import {ITradeRouter} from "../../src/interfaces/ITradeRouter.sol";
 import {LibCLOBBook} from "../../src/libraries/LibCLOBBook.sol";
 import {LibEveMarket} from "../../src/libraries/LibEveMarket.sol";
+import {Errors} from "../../src/libraries/Errors.sol";
 import {IConditionalTokens} from "../../src/interfaces/IConditionalTokens.sol";
 import {EvesPositionManager} from "../../src/tokens/EvesPositionManager.sol";
 import {EveIdentity} from "../../src/tokens/EveIdentity.sol";
@@ -422,6 +425,8 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         assertTrue(_isGnosisConditionalTokensBytecode(deployment.conditionalTokens));
         vm.expectRevert(bytes("condition already prepared"));
         IConditionalTokens(deployment.conditionalTokens).prepareCondition(address(this), questionId, 2);
+
+        _assertTimelockedIntegrationReconfiguration(deployment, protocolOwner, address(collateralToken));
     }
 
     function test_DeployUsesExplicitConditionalTokensAddressWhenProvided() public {
@@ -792,6 +797,7 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         assertEq(seniorState.pendingPrincipal, 0);
         assertEq(seniorState.totalPrincipal, 2_000e18);
         assertEq(seniorState.availableCapital, 2_000e18);
+        _assertMarginAssetReplacementBlockedBySeniorCapital(deployment, protocolOwner, seniorState.totalPrincipal);
         deployScript.verifyFullDeployment(deployment, config);
 
         vm.startPrank(protocolOwner);
@@ -950,6 +956,68 @@ contract DeployScriptTest is Test, StaticsDollarCoreFixture {
         vm.warp(readyAt);
         vm.prank(owner);
         DiamondCutFacet(diamond).diamondCut(cuts, address(0), new bytes(0));
+    }
+
+    function _assertTimelockedIntegrationReconfiguration(
+        DeployScript.Deployment memory deployment,
+        address protocolOwner,
+        address collateralToken
+    ) internal {
+        EvesNegRiskAdapter replacementNegRisk = new EvesNegRiskAdapter(
+            deployment.conditionalTokens, collateralToken, deployment.diamond
+        );
+        EvesCTFSettlementAdapter replacementSettlement =
+            new EvesCTFSettlementAdapter(deployment.conditionalTokens, collateralToken);
+        MockUSDG replacementMarginAsset = new MockUSDG();
+
+        bytes memory negRiskCall = abi.encodeCall(INegRiskConfigFacet.setNegRiskAdapter, (address(replacementNegRisk)));
+        bytes memory settlementCall =
+            abi.encodeCall(INegRiskConfigFacet.setCTFSettlementAdapter, (address(replacementSettlement)));
+        bytes memory marginCall = abi.encodeCall(IMarginAccountFacet.setMarginAsset, (address(replacementMarginAsset)));
+
+        bytes32 negRiskOperationId = DiamondCutFacet(deployment.diamond).governanceOperationId(negRiskCall);
+        bytes32 settlementOperationId = DiamondCutFacet(deployment.diamond).governanceOperationId(settlementCall);
+        bytes32 marginOperationId = DiamondCutFacet(deployment.diamond).governanceOperationId(marginCall);
+
+        vm.startPrank(protocolOwner);
+        vm.expectRevert(abi.encodeWithSelector(Errors.GovernanceOperationNotScheduled.selector, negRiskOperationId));
+        INegRiskConfigFacet(deployment.diamond).setNegRiskAdapter(address(replacementNegRisk));
+        vm.expectRevert(abi.encodeWithSelector(Errors.GovernanceOperationNotScheduled.selector, settlementOperationId));
+        INegRiskConfigFacet(deployment.diamond).setCTFSettlementAdapter(address(replacementSettlement));
+        vm.expectRevert(abi.encodeWithSelector(Errors.GovernanceOperationNotScheduled.selector, marginOperationId));
+        IMarginAccountFacet(deployment.diamond).setMarginAsset(address(replacementMarginAsset));
+
+        (, uint256 readyAt) = DiamondCutFacet(deployment.diamond).scheduleGovernanceOperation(negRiskCall);
+        DiamondCutFacet(deployment.diamond).scheduleGovernanceOperation(settlementCall);
+        DiamondCutFacet(deployment.diamond).scheduleGovernanceOperation(marginCall);
+        vm.stopPrank();
+
+        vm.warp(readyAt);
+        vm.startPrank(protocolOwner);
+        INegRiskConfigFacet(deployment.diamond).setNegRiskAdapter(address(replacementNegRisk));
+        INegRiskConfigFacet(deployment.diamond).setCTFSettlementAdapter(address(replacementSettlement));
+        IMarginAccountFacet(deployment.diamond).setMarginAsset(address(replacementMarginAsset));
+        vm.stopPrank();
+
+        assertEq(INegRiskConfigFacet(deployment.diamond).negRiskAdapter(), address(replacementNegRisk));
+        assertEq(INegRiskConfigFacet(deployment.diamond).ctfSettlementAdapter(), address(replacementSettlement));
+        assertEq(IMarginAccountFacet(deployment.diamond).marginConfig().marginAsset, address(replacementMarginAsset));
+    }
+
+    function _assertMarginAssetReplacementBlockedBySeniorCapital(
+        DeployScript.FullDeployment memory deployment,
+        address protocolOwner,
+        uint256 expectedLiabilities
+    ) internal {
+        MockUSDG replacementMarginAsset = new MockUSDG();
+        bytes memory marginCall = abi.encodeCall(IMarginAccountFacet.setMarginAsset, (address(replacementMarginAsset)));
+
+        vm.prank(protocolOwner);
+        (, uint256 readyAt) = DiamondCutFacet(deployment.market.diamond).scheduleGovernanceOperation(marginCall);
+        vm.warp(readyAt);
+        vm.prank(protocolOwner);
+        vm.expectRevert(abi.encodeWithSelector(IMarginAccountFacet.MarginAssetInUse.selector, expectedLiabilities));
+        IMarginAccountFacet(deployment.market.diamond).setMarginAsset(address(replacementMarginAsset));
     }
 
     function _assertRobinhoodReleaseTooling(

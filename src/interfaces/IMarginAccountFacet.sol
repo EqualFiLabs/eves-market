@@ -11,7 +11,6 @@ interface IMarginAccountFacet {
     error ContractHasNoCode(address account);
     error MarginAssetNotSet();
     error MarginAssetInUse(uint256 liabilities);
-    error MarginAssetImmutable(address currentAsset, address proposedAsset);
     error NonExactMarginTransfer(uint256 expected, uint256 actual);
     error InvalidRiskDomain(bytes32 riskDomainId);
     error MarginBucketNotFound(bytes32 bucketId);
