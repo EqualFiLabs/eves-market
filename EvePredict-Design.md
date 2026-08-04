@@ -375,6 +375,8 @@ function getCollateralProfileParlayUnderwritingFee(uint8 profileId) external vie
 
 Eve does not deploy a protocol-specific stablecoin wrapper. The configured `staticsDollarCore` is authoritative for the `StaticsDollar` token and shared `StaticsDiamond` gateway. `StaticsDollarTradeRouterFacet` previews the configured pegged profile, pulls the exact USDG principal plus static mint fee, mints Statics Dollar, executes the purchase, and returns unfilled Statics Dollar to the buyer. The permit variant authorizes only the previewed input amount.
 
+> The example entrypoints below keep the `USDC` identifier from the internal pegged-collateral profile. On the Robinhood testnet launch rail that profile is bound to USDG, not mainnet USDC; the `USDC` suffix is retained only as the historical internal name for the pegged token.
+
 ```solidity
 FillBestResult memory result = tradeRouter.mintAndBuyWithUSDC(params);
 FillBestResult memory result = tradeRouter.mintAndBuyWithUSDCPermit(params, permitSignature);
@@ -1590,7 +1592,7 @@ previewParimutuelPayout(marketId, user);
 
 ## Trade Router
 
-The current router surface is split by execution responsibility while remaining exposed through the Diamond and `ITradeRouter`:
+The current router surface is split by execution responsibility while remaining exposed through the Diamond. Market routers (mint-and-buy, collateral buy/sell, exact-fill, preview) are declared on `ITradeRouter`; book-addressed routers live on the separate `ITradeRouterBook` interface. Both interfaces are cut into the same Diamond proxy, so callers address them through the Diamond and select the facet by selector:
 
 - `StaticsDollarTradeRouterFacet` — exact USDG pegged mint followed by a Statics-Dollar market buy, with approval and permit variants.
 - `CollateralTradeRouterFacet` / `CollateralTradeRouterExactFacet` — direct collateral buys, optional permit, and exact-fill enforcement.
@@ -2210,28 +2212,28 @@ MLO reservations cannot exceed availableCapital
 FIFO exits cannot pay more principal than unreservedPrincipal
 ```
 
-### Property 15: Senior Fee Index Conservation
+### Property 16: Senior Fee Index Conservation
 ```
 fee accrual increases feeReserve and the epoch accumulator without increasing principal
 pending deposits and future activations receive none of the prior index increment
 direct etUSD transfers to the Diamond do not alter stored units, principal, or feeReserve
 ```
 
-### Property 15: Senior Principal Accounting
+### Property 17: Senior Principal Accounting
 ```
 totalPrincipal = unreservedPrincipal + reservedCapital + activeExposure
 realized MLO loss reduces totalPrincipal and the epoch scale pro rata
 full loss exhausts the principal epoch but preserves its earned fee reserve
 ```
 
-### Property 15: Internal Senior Authority
+### Property 18: Internal Senior Authority
 ```
 Only production MLO/funding/fee code linked into the Diamond can mutate reservations,
 active exposure, realized loss, and indexed fee state through LibSeniorCapital
 There is no owner-configurable external riskManager or Senior pool address
 ```
 
-### Property 15: Bucket Accounting Conservation
+### Property 19: Bucket Accounting Conservation
 ```
 For each bucket:
 reservedCapital + activeExposure + recovery/insurance allocations are bounded by pool accounting
@@ -2239,52 +2241,52 @@ Deploying reserved bucket capital decreases bucket reserved capital and increase
 Repayment decreases bucket active exposure; realized loss decreases active exposure and increases losses
 ```
 
-### Property 15: Router Residual Balance
+### Property 20: Router Residual Balance
 ```
 ∀ successful router operation: router holds zero residual USDC / eveUSDC / position tokens
 ```
 
-### Property 15: Parimutuel Payout Solvency
+### Property 21: Parimutuel Payout Solvency
 ```
 Σ claimed payouts ≤ payoutPool; claimedPayout monotonically increasing
 claimedClaimableShares ≤ totalClaimableSharesAtResolution
 ```
 
-### Property 15: Zero-Winning-Side Safety
+### Property 22: Zero-Winning-Side Safety
 ```
 Resolved YES with totalYesShares == 0 (or NO with totalNoShares == 0) → effectiveOutcome = Invalid
 All participants receive pro-rata refund from payoutPool
 ```
 
-### Property 15: Epoch Multiplier Solvency
+### Property 23: Epoch Multiplier Solvency
 ```
 payoutPool += netCollateral (not inflated shares)
 sharesMinted = netCollateral × multiplierBps / 10,000
 The multiplier never creates unbacked obligations; Σ payouts ≤ payoutPool
 ```
 
-### Property 15: Multi-Outcome Set Conservation
+### Property 24: Multi-Outcome Set Conservation
 ```
 splitOutcomeSet mints one token per outcome backed 1:1 by collateral
 mergeOutcomeSet burns a full set and releases collateral
 Only the resolved outcome (or full set for INVALID) is redeemable post-resolution
 ```
 
-### Property 15: Combinatorial Position Backing
+### Property 25: Combinatorial Position Backing
 ```
 Combo split/merge preserve collateral backing across legs
 wrap/unwrap and split/merge preserve the backing assigned to combo conditions
 redeemCombo pays out only when the underlying legs resolve favorably
 ```
 
-### Property 15: Parlay Escrow Solvency
+### Property 26: Parlay Escrow Solvency
 ```
 Offers escrow maxPayoutPerUnit × units; ticket payouts are bounded by escrowRemaining
 finalize resolves payoutPerUnit from the tier schedule and invalid policy
 Σ claimed ≤ escrow reserved at finalization
 ```
 
-### Property 15: Delayed Order Integrity
+### Property 27: Delayed Order Integrity
 ```
 An order is executable only at/after executableBlock and before expiryBlock
 Processing must supply a route whose hash equals the committed routeHash
@@ -2292,7 +2294,7 @@ ProtocolOnly mode restricts processing to registered processors
 Unfilled/expired escrow is returned as withdrawable credit
 ```
 
-### Property 15: MLO Profit-Split Delay
+### Property 28: MLO Profit-Split Delay
 ```
 new proposals become executable at block.timestamp + profitSplitDelay
 execution is valid only during the following two-day window
@@ -2300,20 +2302,20 @@ existing buckets retain their snapshotted split version
 changing profitSplitDelay requires the active Diamond governance delay
 ```
 
-### Property 15: Book Accounting Consistency
+### Property 29: Book Accounting Consistency
 ```
 Market-linked book and market fee/volume accounting update in lockstep
 Standalone books snapshot fee config at creation and accrue independently
 ```
 
-### Property 29b: Senior-Pool Fee Routing
+### Property 30: Senior-Pool Fee Routing
 ```
 seniorPoolShare accrues to the internal fee index only for the margin asset while active stored units exist
 seniorPoolAmount + treasuryFallback == seniorPoolShare (exhaustive)
 If internal Senior accounting is ineligible, the whole seniorPoolShare falls back to treasury
 ```
 
-### Property 15: eveUSD Pair Backing
+### Property 31: eveUSD Pair Backing
 ```
 Each deposit mints eveUSDMinted == sharesMinted against net collateral at series.collateralPerPairWad
 accountedCollateral (global) == Σ series.accountedCollateral
@@ -2321,14 +2323,14 @@ Recombining a full pair returns collateralOut ≤ series.accountedCollateral pro
 Fees are taken from the active collateral profile token only; senior/junior units are never minted unbacked
 ```
 
-### Property 15: eveUSD Series Isolation
+### Property 32: eveUSD Series Isolation
 ```
 Junior risk is ERC-1155 keyed by seriesId
 An OperatorRecoverable series never receives junior equity minted for a later series
 Successor-series activation never reopens the old series for deposits
 ```
 
-### Property 15: eveUSD Recovery Trigger Monotonicity
+### Property 33: eveUSD Recovery Trigger Monotonicity
 ```
 startRecovery requires oracle price ≤ startPrice × 10_000 / priceBandBps
 cancelRecovery requires price restored above the downside trigger
@@ -2336,7 +2338,7 @@ finalizeRecovery requires block.timestamp ≥ recoveryEndsAt AND price still ≤
 rolloverAppreciatedSeries requires oracle price ≥ startPrice × priceBandBps / 10_000
 ```
 
-### Property 15: eveUSD Recovery Claim Value Preservation
+### Property 34: eveUSD Recovery Claim Value Preservation
 ```
 Migration requires baseNewClaimCollateral ≤ oldClaimCollateral
 CollateralDifference: sharesMinted == returnedShares, collateralOut == oldClaimCollateral − baseNewClaimCollateral
@@ -2344,7 +2346,7 @@ MorePairs:            collateralMoved reflects the old-series collateral claim r
 No claim mode increases the holder's collateral-denominated value beyond oldClaimCollateral
 ```
 
-### Property 15: eveUSD Oracle Validity
+### Property 35: eveUSD Oracle Validity
 ```
 ethUsdPriceWad reverts on non-positive, future-dated, stale (> maxStaleness), or out-of-bounds prices
 When a sequencer feed is set, prices revert while the sequencer is down or within the grace period
