@@ -147,6 +147,7 @@ contract RobinhoodStaticsDollarLifecycleForkTest is CollateralRouterFixture, Sta
         view
         returns (IStaticsDollarGateway.PermitSignature memory signature)
     {
+        signature.value = amount;
         (signature.deadline, signature.v, signature.r, signature.s) =
             _signPermit(token, signer, signerKey, spender, amount);
     }
