@@ -135,6 +135,17 @@ fi
 if [[ "$MODE" == "dry-run" || "$MODE" == "broadcast" ]]; then
   git -C "$REPO_ROOT" submodule update --init --recursive
 
+  # A release must be reproducible from the checked-in source even when this
+  # reusable checkout contains artifacts from an earlier branch. Rebuild all
+  # production artifacts before the preflight and deployment scripts consume
+  # their creation/runtime bytecode. ConditionalTokens uses a separate compiler
+  # profile and is rebuilt immediately afterward because --force refreshes out/.
+  forge build --force \
+    script/Deploy.s.sol \
+    script/RobinhoodPreflight.s.sol \
+    script/VerifyRobinhoodRelease.s.sol \
+    script/ActivateSeniorCapital.s.sol
+
   conditional_tokens_args=(
     --rpc-url "$ROBINHOOD_TESTNET_RPC_URL"
   )
