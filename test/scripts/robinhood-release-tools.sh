@@ -71,8 +71,10 @@ cat >"$TEMP_DIR/bin/forge" <<'EOF'
 set -euo pipefail
 echo "${FOUNDRY_PROFILE:-}|${FOUNDRY_OUT:-}|$*" >>"$TOOL_LOG"
 if [[ "${1:-}" == "build" ]]; then
-  mkdir -p "$FOUNDRY_OUT/ConditionalTokens.sol"
-  echo '{"bytecode":{"object":"0x6000"},"deployedBytecode":{"object":"0x6000"}}' >"$FOUNDRY_OUT/ConditionalTokens.sol/ConditionalTokens.json"
+  if [[ "${FOUNDRY_PROFILE:-}" == "conditional-tokens" ]]; then
+    mkdir -p "$FOUNDRY_OUT/ConditionalTokens.sol"
+    echo '{"bytecode":{"object":"0x6000"},"deployedBytecode":{"object":"0x6000"}}' >"$FOUNDRY_OUT/ConditionalTokens.sol/ConditionalTokens.json"
+  fi
   exit 0
 fi
 if [[ "${1:-}" == "create" ]]; then
@@ -183,9 +185,12 @@ PATH="$TEMP_DIR/bin:$PATH" BLOCKSCOUT_VERIFY_ATTEMPTS=1 \
 grep -q '^CONDITIONAL_TOKENS=0x0000000000000000000000000000000000000002$' \
   "$TEMP_DIR/conditional-tokens.env"
 conditional_create_line="$(grep -n '|create conditional-tokens/contracts/ConditionalTokens.sol:ConditionalTokens ' "$TOOL_LOG" | cut -d: -f1)"
+release_build_line="$(grep -n '|build --force script/Deploy.s.sol script/RobinhoodPreflight.s.sol script/VerifyRobinhoodRelease.s.sol script/ActivateSeniorCapital.s.sol$' "$TOOL_LOG" | cut -d: -f1)"
 eves_deploy_line="$(grep -n '|script script/Deploy.s.sol:DeployScript ' "$TOOL_LOG" | cut -d: -f1)"
-if [[ -z "$conditional_create_line" || -z "$eves_deploy_line" || "$conditional_create_line" -ge "$eves_deploy_line" ]]; then
-  echo "release wrapper did not deploy ConditionalTokens before the Eves stack" >&2
+if [[ -z "$conditional_create_line" || -z "$release_build_line" || -z "$eves_deploy_line" \
+  || "$release_build_line" -ge "$conditional_create_line" \
+  || "$conditional_create_line" -ge "$eves_deploy_line" ]]; then
+  echo "release wrapper did not rebuild source before preparing ConditionalTokens and deploying Eves" >&2
   exit 1
 fi
 
