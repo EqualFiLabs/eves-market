@@ -61,6 +61,7 @@ PATH="$TEMP_DIR/bin:$PATH" BLOCKSCOUT_VERIFY_ATTEMPTS=1 \
 grep -q "confirmed for 3 contracts" "$TEMP_DIR/verification.out"
 
 PATH="$TEMP_DIR/bin:$PATH" BLOCKSCOUT_VERIFY_ATTEMPTS=1 \
+  ROBINHOOD_BROADCAST_RECEIPT_PATH="$TEMP_DIR/missing-broadcast.json" \
   "$REPO_ROOT/scripts/robinhood-testnet-release.sh" --check-verification \
   --manifest "$TEMP_DIR/manifest.json" >"$TEMP_DIR/wrapper-verification.out"
 grep -q "confirmed for 2 contracts" "$TEMP_DIR/wrapper-verification.out"
